@@ -100,7 +100,7 @@ pub(crate) fn get_project(context: &mut ToolContext) -> Result<Step, String> {
 
 /// Opening or starting a project loses unsaved changes: refused unless
 /// they are to be discarded (when the save question would be asked).
-fn refuse_unsaved(editor: &Editor, arguments: &Arguments) -> Result<(), String> {
+pub(crate) fn refuse_unsaved(editor: &Editor, arguments: &Arguments) -> Result<(), String> {
     let discard = arguments.boolean("discard_unsaved_changes")?.unwrap_or(false);
     let unsaved = editor.document.dirty && editor.document.can_undo();
     if unsaved && !discard {
@@ -111,7 +111,7 @@ fn refuse_unsaved(editor: &Editor, arguments: &Arguments) -> Result<(), String> 
 }
 
 /// The editor's latest status message (where failures are reported).
-fn last_message(editor: &Editor) -> String {
+pub(crate) fn last_message(editor: &Editor) -> String {
     editor.messages.last().cloned().unwrap_or_default()
 }
 
@@ -143,8 +143,16 @@ pub(crate) fn new_project(arguments: &Arguments, context: &mut ToolContext) -> R
 }
 
 pub(crate) fn save_project(arguments: &Arguments, context: &mut ToolContext) -> Result<Step, String> {
-    let editor = &mut *context.editor;
-    let path = match arguments.string("path")? {
+    let path = save_path(context.editor, arguments.string("path")?)?;
+    save_to(context.editor, &path)?;
+    let outcome = json!({"saved": path});
+    Ok(Step::Done(ToolResult::json(&outcome)))
+}
+
+/// Where Save (or Save As, given a path) writes: the path made a
+/// `.terrain` file in a folder that exists.
+pub(crate) fn save_path(editor: &Editor, given: Option<&str>) -> Result<PathBuf, String> {
+    let path = match given {
         Some(text) => {
             let mut path = PathBuf::from(text.trim());
             if path.is_relative() {
@@ -161,13 +169,17 @@ pub(crate) fn save_project(arguments: &Arguments, context: &mut ToolContext) -> 
     if !folder_exists {
         return Err(format!("The folder for {} does not exist.", path.display()));
     }
-    editor.save_to(&path);
-    let saved = !editor.document.dirty && editor.document.path.as_deref() == Some(path.as_path());
+    Ok(path)
+}
+
+/// Saves the open project to `path`, as File › Save As does.
+pub(crate) fn save_to(editor: &mut Editor, path: &std::path::Path) -> Result<(), String> {
+    editor.save_to(path);
+    let saved = !editor.document.dirty && editor.document.path.as_deref() == Some(path);
     if !saved {
         return Err(last_message(editor));
     }
-    let outcome = json!({"saved": path});
-    Ok(Step::Done(ToolResult::json(&outcome)))
+    Ok(())
 }
 
 pub(crate) fn set_project_settings(arguments: &Arguments, context: &mut ToolContext) -> Result<Step, String> {

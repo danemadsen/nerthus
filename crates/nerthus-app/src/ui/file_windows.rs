@@ -247,7 +247,7 @@ fn start_column(ui: &mut Ui, ctx: &egui::Context, editor: &mut Editor, memory: &
 
 /// The example projects Nerthus comes with (assets/examples) and their
 /// pictures, by file name.
-const BUNDLED_EXAMPLES: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/example-files.rs"));
+pub(crate) const BUNDLED_EXAMPLES: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/example-files.rs"));
 
 /// Where the examples are (`Paths.Root\Examples`): an Examples folder of
 /// projects beside the program, else the one in the user's Nerthus folder,

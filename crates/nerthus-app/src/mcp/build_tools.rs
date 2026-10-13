@@ -18,6 +18,8 @@ use serde_json::{json, Value};
 use super::arguments::Arguments;
 use super::graph_tools::output_port;
 use super::images::{self, ImageFormat};
+use super::jobs::{HistoryEntry, Job};
+use super::terrain_report::Heightfield;
 use super::{Step, ToolContext, ToolResult};
 use crate::editor::{Editor, PREVIEW_RESOLUTIONS};
 use crate::export_build::{ExportBuild, LogLine};
@@ -81,6 +83,19 @@ pub(crate) enum AfterBuild {
     Report,
     Image { port: Option<String>, style: Style, size: u32, format: ImageFormat },
     Write { port: Option<String>, path: PathBuf, format: FileFormat },
+    /// The output read as land (analyze_terrain).
+    Analyze { port: Option<String>, settings: TerrainSettings },
+}
+
+/// How analyze_terrain reads a heightfield: the terrain's width and the
+/// height a 1 stands for (metres), the steepest gentle ground (degrees)
+/// and the share taken as the middle.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TerrainSettings {
+    pub metres_across: f64,
+    pub metres_up: f64,
+    pub gentle_degrees: f64,
+    pub centre_fraction: f64,
 }
 
 /// A picture of the editor to take.
@@ -104,6 +119,8 @@ pub(crate) enum Wait {
     Thread(Receiver<ToolResult>),
     /// The Build and Export under way.
     Export,
+    /// Work on a thread of its own that reports how it goes.
+    Job(Job),
 }
 
 impl Wait {
@@ -114,6 +131,7 @@ impl Wait {
             Wait::Capture { .. } => CAPTURE_LIMIT,
             Wait::Thread(_) => THREAD_LIMIT,
             Wait::Export => EXPORT_LIMIT,
+            Wait::Job(job) => job.limit,
         }
     }
 
@@ -123,6 +141,14 @@ impl Wait {
             Wait::Settle { .. } | Wait::Capture { .. } => "The view could not be captured in time.",
             Wait::Thread(_) => "Making the answer took too long.",
             Wait::Export => "Build and Export is taking too long to wait for; it carries on (get_project shows how it is going).",
+            Wait::Job(_) => "The work ran past its time limit and was stopped.",
+        }
+    }
+
+    /// Its time ran out: a job stops; anything else carries on unheard.
+    pub fn time_out(&self) {
+        if let Wait::Job(job) = self {
+            job.stop();
         }
     }
 
@@ -133,6 +159,9 @@ impl Wait {
     /// The client gave up: a Build and Export it started stops; anything
     /// else simply finishes unheard.
     pub fn abandon(&self, context: &mut ToolContext) {
+        if let Wait::Job(job) = self {
+            job.stop();
+        }
         if let Wait::Export = self
             && let Some(build) = &context.editor.export_build
             && !build.finished
@@ -152,6 +181,7 @@ impl Wait {
                 let build = context.editor.export_build.as_ref()?;
                 Some((build.built as f64, Some(build.total as f64), build.current.clone()))
             }
+            Wait::Job(job) => job.progress(),
             _ => None,
         }
     }
@@ -177,14 +207,15 @@ impl Wait {
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => Some(Step::Done(ToolResult::error("The work stopped without an answer."))),
             },
-            Wait::Export => poll_export(context.editor),
+            Wait::Export => poll_export(context),
+            Wait::Job(job) => job.poll(context.history),
         }
     }
 }
 
 /// Previews `node` and asks for its build anew, so what comes back was
 /// built after the call.
-fn start_build(editor: &mut Editor, node: i32, port: Option<&str>, then: AfterBuild) -> Result<Step, String> {
+pub(crate) fn start_build(editor: &mut Editor, node: i32, port: Option<&str>, then: AfterBuild) -> Result<Step, String> {
     if !editor.engine_active {
         return Err(ENGINE_PAUSED.to_string());
     }
@@ -211,7 +242,28 @@ fn poll_build(node: i32, since: u64, then: &mut AfterBuild, context: &mut ToolCo
         return Some(Step::Done(ToolResult::error("The editor went on to preview another node before this one was built; try again.")));
     }
     let then = std::mem::replace(then, AfterBuild::Report);
+    context.history.record(build_record(editor, node));
     Some(finish_build(editor, node, then))
+}
+
+/// A node's build for the history.
+fn build_record(editor: &Editor, node: i32) -> HistoryEntry {
+    let mut entry = HistoryEntry::new("build_node");
+    entry.project = Some(editor.document.file_name());
+    entry.target = editor.document.node(node).map(|data| format!("{} ({node})", data.name));
+    entry.resolution = editor.preview_resolution;
+    entry.seconds = editor.last_build_seconds as f64;
+    for id in nerthus_engine::Engine::build_order(editor.document.terrain(), node) {
+        if let Some(error) = editor.status(id).error {
+            let name = editor.document.node(id).map(|data| data.name.clone()).unwrap_or_default();
+            entry.problems.push(format!("{name} ({id}): {error}"));
+        }
+    }
+    if let Some(error) = &editor.preview_error {
+        entry.problems.push(error.clone());
+    }
+    entry.success = entry.problems.is_empty() && !editor.outputs.is_empty();
+    entry
 }
 
 fn finish_build(editor: &Editor, node: i32, then: AfterBuild) -> Step {
@@ -233,6 +285,22 @@ fn finish_build(editor: &Editor, node: i32, then: AfterBuild) -> Step {
             };
             let options = editor.user.preferences.export_preferences().write;
             on_thread(move || write_result(&map, &path, format, &options))
+        }
+        AfterBuild::Analyze { port, settings } => {
+            let (port, map) = match output_map(editor, port.as_deref()) {
+                Ok(found) => found,
+                Err(problem) => return Step::Done(ToolResult::error(problem)),
+            };
+            on_thread(move || {
+                let field = Heightfield::of_map(&map);
+                let mut analysed = field.report(settings.metres_across, settings.metres_up, settings.gentle_degrees, settings.centre_fraction);
+                analysed["node"] = json!(node);
+                analysed["port"] = json!(port);
+                if map.channel_count() > 1 {
+                    analysed["note"] = json!("The output has several channels (a colour map); its first was read as heights.");
+                }
+                ToolResult::json(&analysed)
+            })
         }
     }
 }
@@ -396,14 +464,32 @@ fn capture_result(pixels: &CapturedPixels, capture: Capture) -> ToolResult {
     result
 }
 
-fn poll_export(editor: &Editor) -> Option<Step> {
+fn poll_export(context: &mut ToolContext) -> Option<Step> {
+    let editor = &*context.editor;
     let Some(build) = &editor.export_build else {
         return Some(Step::Done(ToolResult::error("The Build and Export went away before it finished.")));
     };
     if !build.finished {
         return None;
     }
-    Some(Step::Done(export_result(build)))
+    let mut entry = HistoryEntry::new("build_and_export");
+    entry.project = Some(editor.document.file_name());
+    entry.resolution = build.resolution;
+    entry.seconds = build.seconds() as f64;
+    entry.files = build.files;
+    entry.folder = build.folder.clone();
+    entry.success = build.succeeded();
+    entry.problems.extend(build.refusal.clone());
+    for line in &build.log {
+        match line {
+            LogLine::Failed { node, error } => entry.problems.push(format!("{node}: {error}")),
+            LogLine::Problem(problem) => entry.problems.push(problem.clone()),
+            _ => {}
+        }
+    }
+    let result = export_result(build);
+    context.history.record(entry);
+    Some(Step::Done(result))
 }
 
 /// A Build and Export's outcome: where it went and what it wrote.

@@ -67,6 +67,35 @@ The server only takes connections from this machine and has no other
 authentication, so while it is on, any program running on this machine can
 use it.
 
+Its tools:
+
+- **The project**: `get_project`, `open_project`, `new_project`,
+  `save_project`, `set_project_settings`, `list_variables`, `set_variable`.
+- **Node types**: `search_node_types`, `describe_node_type` (with how the
+  example projects use each type and what `calibrate_nodes` measured it to
+  make), `describe_modifier`, `suggest_nodes`. Types can also be named as
+  `.terrain` files name them (`Erosion2` for ErosionPro, `SatMap` for
+  SatelliteMap).
+- **Building graphs**: `create_graph` (a whole graph of nodes, modifiers,
+  export marks and connections as one undoable edit), `list_examples`,
+  `open_example`, `add_node`, `set_parameters`, `update_node`,
+  `connect_nodes`, `disconnect_input`, `delete_nodes`, `set_modifier`,
+  `undo`, `redo`.
+- **Checking graphs**: `list_nodes`, `get_node`, `select_node`,
+  `validate_graph` (the open project, a file or a proposed graph; it can fix
+  what is safe to fix and build it small to be sure), `analyze_graph`,
+  `optimize_parameters`.
+- **Building and looking**: `build_node`, `get_node_image`, `capture_view`,
+  `set_camera`, `export_node_map`, `mark_for_export`, `build_and_export`,
+  `run_project` (any saved project, with the command line's options:
+  resolution, build folder, profile, region, mutation seed, variables, one
+  node), `build_history`, `analyze_build`, `analyze_terrain` (relief in
+  metres, gentle ground, edges against the middle, profiles),
+  `calibrate_nodes`.
+- **Project files**: `get_project_file`, `list_projects`,
+  `repair_project_file`, `patch_project_file`, which change a `.terrain`
+  file without opening it in the editor.
+
 ## Not done yet
 
 These parts of Gaea 2.0 are not in Nerthus yet.

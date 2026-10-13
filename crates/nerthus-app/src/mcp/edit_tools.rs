@@ -20,11 +20,11 @@ use crate::ui::graph_canvas::node_extent;
 use crate::ui::UiState;
 
 /// A standard node's size, for nodes without a layout.
-const STANDARD_EXTENT: [f32; 2] = [230.0, 80.0];
+pub(crate) const STANDARD_EXTENT: [f32; 2] = [230.0, 80.0];
 /// The gap between a node and the node it feeds (`CreateNodeOnCanvas`).
-const FEED_GAP: f32 = 60.0;
+pub(crate) const FEED_GAP: f32 = 60.0;
 /// The gap between nodes stacked under one another.
-const STACK_GAP: f32 = 20.0;
+pub(crate) const STACK_GAP: f32 = 20.0;
 /// The gap above a new row of nodes.
 const ROW_GAP: f32 = 60.0;
 
@@ -38,7 +38,7 @@ fn done_with_notes(mut outcome: Value, notes: Vec<String>) -> Result<Step, Strin
 /// Where a new node goes, as the toolbox places one: right of the node
 /// feeding it (under what that node feeds already), else under the tab's
 /// nodes, else in the middle of the graph's view.
-fn placement(editor: &Editor, ui_state: &UiState, tab: usize, source: Option<i32>, added: i32) -> [f32; 2] {
+pub(crate) fn placement(editor: &Editor, ui_state: &UiState, tab: usize, source: Option<i32>, added: i32) -> [f32; 2] {
     let default_size = editor.user.options.default_node_size().to_string();
     let extent = |id: i32| editor.document.node(id).map_or(STANDARD_EXTENT, |node| node_extent(node, &default_size));
     if let Some(source) = source.and_then(|id| editor.document.node(id)) {
@@ -68,14 +68,14 @@ fn placement(editor: &Editor, ui_state: &UiState, tab: usize, source: Option<i32
 /// Parameter values as the property panel stores them, and notes on what
 /// changed on the way (clamping, rounding).
 #[derive(Default)]
-struct Converted {
-    values: Vec<(String, Value)>,
-    notes: Vec<String>,
+pub(crate) struct Converted {
+    pub values: Vec<(String, Value)>,
+    pub notes: Vec<String>,
 }
 
 /// Parameter values for a node of `spec` (`node` itself when it exists),
 /// each checked.
-fn converted_parameters(spec: &nerthus_engine::NodeSpec, given: &Map<String, Value>, node: Option<&NodeData>) -> Result<Converted, String> {
+pub(crate) fn converted_parameters(spec: &nerthus_engine::NodeSpec, given: &Map<String, Value>, node: Option<&NodeData>) -> Result<Converted, String> {
     let mut converted = Converted::default();
     for (name, value) in given {
         let parameter = values::find_parameter(spec, name)?;
@@ -222,7 +222,7 @@ pub(crate) fn update_node(arguments: &Arguments, context: &mut ToolContext) -> R
 }
 
 /// Which input a connection goes into.
-enum Feed {
+pub(crate) enum Feed {
     Existing(String),
     /// A mask input added first.
     AddedMask,
@@ -232,7 +232,7 @@ enum Feed {
 
 /// The input asked for, or the first free one: the main input, any
 /// other, a new one where the node grows them, else the main input again.
-fn choose_input(node: &NodeData, requested: Option<&str>) -> Result<Feed, String> {
+pub(crate) fn choose_input(node: &NodeData, requested: Option<&str>) -> Result<Feed, String> {
     if let Some(requested) = requested {
         let found = node.ports.iter().find(|port| port.is_input() && port.name.eq_ignore_ascii_case(requested));
         if let Some(port) = found {

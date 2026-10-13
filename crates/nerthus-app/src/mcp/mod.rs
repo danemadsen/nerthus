@@ -10,13 +10,20 @@
 //! that waits for a build holds the next ones back until it is done.
 
 mod arguments;
+mod authoring_tools;
 mod build_tools;
 mod catalogue_tools;
 mod edit_tools;
+mod file_tools;
 mod graph_tools;
 mod images;
+mod jobs;
+mod knowledge;
 mod project_tools;
+mod review_tools;
+mod run_tools;
 mod server;
+mod terrain_report;
 mod tools;
 mod values;
 
@@ -119,6 +126,8 @@ pub(crate) struct ToolContext<'a> {
     pub screenshots: &'a mut Screenshots,
     /// The id the next in-memory capture goes under.
     pub next_capture: &'a mut u64,
+    /// The builds the server ran.
+    pub history: &'a mut jobs::BuildHistory,
 }
 
 /// A call waiting on the editor.
@@ -139,6 +148,7 @@ impl ActiveCall {
             return None;
         }
         if self.started.elapsed() > self.wait.time_limit() {
+            self.wait.time_out();
             let result = ToolResult::error(self.wait.timeout_message());
             let _ = self.call.updates.send(CallUpdate::Finished(result));
             return None;
@@ -191,6 +201,7 @@ pub struct McpServer {
     queue: VecDeque<ToolCall>,
     active: Option<ActiveCall>,
     next_capture: u64,
+    history: jobs::BuildHistory,
 }
 
 impl McpServer {
@@ -288,6 +299,7 @@ impl Plugin for McpPlugin {
             queue: VecDeque::new(),
             active: None,
             next_capture: 0,
+            history: jobs::BuildHistory::default(),
         };
         app.insert_resource(server);
         app.add_systems(Update, serve);
@@ -314,6 +326,7 @@ fn serve(mut server: ResMut<McpServer>, mut editor: ResMut<Editor>, mut ui_state
         ui_state: &mut ui_state,
         screenshots: &mut screenshots,
         next_capture: &mut server.next_capture,
+        history: &mut server.history,
     };
     if let Some(active) = server.active.take() {
         server.active = active.advance(&mut context);

@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use serde_json::{json, Value};
 
 use super::arguments::Arguments;
-use super::{build_tools, catalogue_tools, edit_tools, graph_tools, project_tools};
+use super::{authoring_tools, build_tools, catalogue_tools, edit_tools, file_tools, graph_tools, project_tools, review_tools, run_tools};
 use super::{Step, ToolContext, ToolResult};
 
 /// What a tool does to the project, as the client is told.
@@ -142,18 +142,46 @@ fn catalogue_tools() -> Vec<Value> {
     );
 
     let describe_properties = json!({
-        "type": {"type": "string", "description": "The node type, e.g. \"Mountain\" or \"ErosionPro\"."},
+        "type": {"type": "string", "description": "The node type, e.g. \"Mountain\" or \"ErosionPro\" (the names .terrain files use, such as Erosion2 or SatMap, work too)."},
     });
     let describe_node_type = tool(
         "describe_node_type",
         "Describe Node Type",
-        "A node type's description, its input and output ports, and its parameters with their types, ranges, options, defaults and descriptions.",
+        "A node type's description, keywords and short code, its input and output ports, whether it is a generator or needs baking, and its parameters with their types, ranges, curves, options, defaults and descriptions. Also how the example projects Nerthus comes with use it (the values they chose, what usually feeds it and what it usually feeds), and what calibrate_nodes measured it to make.",
         describe_properties,
         &["type"],
         Effect::Reads,
     );
 
-    vec![search_node_types, describe_node_type]
+    let modifier_properties = json!({
+        "modifier": {"type": "string", "description": "The modifier, e.g. \"Height\"; left out (or \"*\"), every modifier."},
+        "label": {"type": "string", "description": "A parameter's label as the property panel shows it, e.g. \"Height Remap\", to find the modifier it belongs to."},
+    });
+    let describe_modifier = tool(
+        "describe_modifier",
+        "Describe Modifier",
+        "Node modifiers (the adjustments set_modifier adds to a node's output): what each does, whether it works off the node's input (and so makes nothing on a node nothing feeds), and its parameters with ranges and defaults. Give modifier for one, label to find one by a parameter's label, or neither for all.",
+        modifier_properties,
+        &[],
+        Effect::Reads,
+    );
+
+    let suggest_properties = json!({
+        "node": node_property("A node in the graph: what usually follows it in the example projects."),
+        "context": {"type": "string", "description": "What the terrain is meant to be, e.g. \"desert canyon\" or \"alpine glacier\": node types that fit it."},
+        "current_nodes": {"type": "array", "items": {"type": "string"}, "description": "Node types to judge instead of the open project's (for a graph being planned)."},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "description": "How many types each list names at most (8 when left out)."},
+    });
+    let suggest_nodes = tool(
+        "suggest_nodes",
+        "Suggest Nodes",
+        "Node types to add next: the stages the open project (or current_nodes) lacks (a generator, erosion, colour, an output), what usually follows a given node in the example projects, and types that fit a description of the terrain.",
+        suggest_properties,
+        &[],
+        Effect::Reads,
+    );
+
+    vec![search_node_types, describe_node_type, describe_modifier, suggest_nodes]
 }
 
 fn graph_tools() -> Vec<Value> {
@@ -436,6 +464,262 @@ fn build_tools() -> Vec<Value> {
     vec![build_node, get_node_image, capture_view, export_node_map, mark_for_export, build_and_export]
 }
 
+fn graph_spec_properties() -> (Value, Value) {
+    let node = json!({
+        "type": "object",
+        "properties": {
+            "id": {"type": ["integer", "string"], "description": "What connections call the node (its number in the list when left out)."},
+            "type": {"type": "string", "description": "The node type."},
+            "name": {"type": "string"},
+            "position": {"description": "[x, y] on the graph's canvas; laid out along the connections when left out."},
+            "parameters": {"type": "object", "description": "Parameter values by name, as set_parameters takes them."},
+            "modifiers": {"description": "Modifiers to add: [\"Autolevel\", {\"modifier\": \"Height\", \"parameters\": {…}}] or {\"Height\": {…}}."},
+            "export": {"description": "true, or {\"file_name\", \"format\"}: mark the node for Build and Export."},
+            "bypassed": {"type": "boolean"}
+        },
+        "required": ["type"]
+    });
+    let connection = json!({
+        "type": "object",
+        "properties": {
+            "from": {"type": ["integer", "string"], "description": "A node of the list by its id, or a node of the project."},
+            "from_port": {"type": "string", "description": "Its output; Out when left out."},
+            "to": {"type": ["integer", "string"]},
+            "to_port": {"type": "string", "description": "The input; the first free one when left out (\"Mask\" adds a mask input)."}
+        },
+        "required": ["from", "to"]
+    });
+    let nodes = json!({"type": "array", "items": node, "minItems": 1, "description": "The nodes to make."});
+    let connections = json!({"type": "array", "items": connection, "description": "Connections between them (or to the project's nodes); [from, to] pairs work too."});
+    (nodes, connections)
+}
+
+fn authoring_tools() -> Vec<Value> {
+    let (nodes, connections) = graph_spec_properties();
+    let create_properties = json!({
+        "nodes": nodes,
+        "connections": connections,
+        "new_project": {"type": "boolean", "description": "Start a new project for it (as new_project) instead of adding to the open one."},
+        "discard_unsaved_changes": discard_property(),
+        "tab": {"type": "integer", "description": "The graph tab to add to; the one shown when left out."},
+        "build_settings": {"type": "object", "description": "Build settings by member name, e.g. {\"Resolution\": 2048, \"ColorSpace\": \"sRGB\"}."},
+        "save_path": {"type": "string", "description": "Save the project here (absolute) once made."},
+    });
+    let create_graph = tool(
+        "create_graph",
+        "Create Graph",
+        "Makes a whole graph in one undoable edit: many nodes with their parameters, modifiers and export marks, and the connections between them (and to nodes already there). Everything is checked first, so a mistake changes nothing. Returns each node's id. The quickest way to build a project from a plan.",
+        create_properties,
+        &["nodes"],
+        Effect::Edits,
+    );
+    let list_examples = tool(
+        "list_examples",
+        "List Examples",
+        "The example projects Nerthus comes with (alpine valley, volcanic isle, desert dunes, rivers, glaciers…): each one's node types in build order and what it exports. open_example starts from one.",
+        json!({}),
+        &[],
+        Effect::Reads,
+    );
+    let open_properties = json!({
+        "name": {"type": "string", "description": "The example's name, e.g. \"Volcanic Isle\" (list_examples lists them)."},
+        "parameters": {"type": "object", "description": "Changes to make once it is open: {\"node name or id\": {\"Parameter\": value}}."},
+        "discard_unsaved_changes": discard_property(),
+        "save_path": {"type": "string", "description": "Save it here (absolute) once open."},
+    });
+    let open_example = tool(
+        "open_example",
+        "Open Example",
+        "Opens an example project as an untitled copy to start from (File › Examples), optionally changing parameters and saving it. Refuses while the open project has unsaved changes, unless discard_unsaved_changes is true.",
+        open_properties,
+        &["name"],
+        Effect::Destroys,
+    );
+    vec![create_graph, list_examples, open_example]
+}
+
+fn review_tools() -> Vec<Value> {
+    let (nodes, connections) = graph_spec_properties();
+    let validate_properties = json!({
+        "path": {"type": "string", "description": "Check this .terrain file (absolute) instead of the open project."},
+        "nodes": nodes,
+        "connections": connections,
+        "strict": {"type": "boolean", "description": "Also count nodes connected to nothing and a graph that exports nothing as errors."},
+        "fix": {"type": "boolean", "description": "Fix what is safe to fix in the open project, as one undoable edit: values out of range or of the wrong form, missing ports, duplicate export names, an unnamed build type."},
+        "runtime_check": {"type": "boolean", "description": "Also build it at 512 into a scratch folder (what feeds nothing, when nothing is marked for export) and report what fails."},
+    });
+    let validate_graph = tool(
+        "validate_graph",
+        "Validate Graph",
+        "Looks the open project over (or a .terrain file, or a graph given as nodes and connections as create_graph takes them, without making it) for what stops it building or makes it build nothing useful: unknown types, required inputs not connected, bad connections, loops, values out of range, modifiers with no input to work off, settings the panel hides, nothing to export, what Build and Export would refuse. Can fix what is safe to fix, and build it to be sure.",
+        validate_properties,
+        &[],
+        Effect::Edits,
+    );
+    let analyze_properties = json!({
+        "terrain_type": {"type": "string", "enum": crate::mcp::review_tools::terrain_kinds(), "description": "The kind of terrain meant, for suggestions that fit it (general when left out)."},
+    });
+    let analyze_graph = tool(
+        "analyze_graph",
+        "Analyze Graph",
+        "How the open project's graph is put together: nodes by category, generators, ends, exports, nodes no export uses, the longest chain, patterns (erosion stages, masks, data maps, combining, simulations, variables), the slowest nodes built so far, a complexity score, and what a terrain of the kind asked for usually adds.",
+        analyze_properties,
+        &[],
+        Effect::Reads,
+    );
+    let optimize_properties = json!({
+        "mode": {"type": "string", "enum": ["performance", "quality", "balanced"], "description": "performance: fastest processing; quality: finest; balanced (when left out): each type's default."},
+        "nodes": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Only these nodes; all when left out."},
+        "apply": {"type": "boolean", "description": "Make the changes (when left out), or only list them."},
+    });
+    let optimize_parameters = tool(
+        "optimize_parameters",
+        "Optimize Parameters",
+        "Sets how finely nodes process (each node's Quality and HighQuality settings) for speed or for quality, as one undoable edit, leaving what they make alone; suggests a preview resolution to match. Lists what it changes.",
+        optimize_properties,
+        &[],
+        Effect::Edits,
+    );
+    vec![validate_graph, analyze_graph, optimize_parameters]
+}
+
+fn run_tools() -> Vec<Value> {
+    let run_properties = json!({
+        "path": {"type": "string", "description": "The .terrain project to build (absolute); the open project's saved file when left out."},
+        "resolution": {"type": "integer", "description": "The build resolution (the project's when left out)."},
+        "build_path": {"type": "string", "description": "The folder to build into (absolute), in place of the project's destination."},
+        "profile": {"type": "string", "description": "Build with this build profile (Build Settings › Profiles)."},
+        "region": {"type": "string", "description": "Build this region of the terrain."},
+        "seed": {"type": "integer", "minimum": 0, "description": "Build a mutation: every node's seed moved on by this (0, none)."},
+        "variables": {"type": "object", "description": "Variables set for this build, by name, e.g. {\"Height\": 0.6}."},
+        "target_node": {"type": ["integer", "string"], "description": "Export only this node (by id or name), marked for it when it is not."},
+        "build_settings": {"type": "object", "description": "Build settings changed for this build, by member name, e.g. {\"Type\": \"Hybrid\"}."},
+        "ignore_cache": {"type": "boolean", "description": "Build baked nodes instead of reading their bakes."},
+        "silent": {"type": "boolean", "description": "Leave no report in the build folder."},
+        "use_unsaved_changes": {"type": "boolean", "description": "For the open project: build it as it is in the editor, unsaved changes and all."},
+        "timeout": {"type": "integer", "description": "Seconds to wait at most (4 hours when left out); the build stops then."},
+    });
+    let run_project = tool(
+        "run_project",
+        "Run Project",
+        "Builds a saved project and writes its exports as nerthus-build does, on a thread of its own without touching the editor, with the command line's options: resolution, build folder, profile, region, mutation seed, variables, one node only, settings. Returns the folder, the files written with their sizes, the nodes that failed, and what the first heightfield written looks like. Waits for the build.",
+        run_properties,
+        &[],
+        Effect::Edits,
+    );
+    let calibrate_properties = json!({
+        "nodes": {"type": "array", "items": {"type": "string"}, "description": "Node types to measure; every generator of the Primitive and Terrain categories when left out."},
+        "property": {"type": "string", "description": "A parameter to sweep across its range, e.g. \"Height\"; the defaults only when left out."},
+        "steps": {"type": "integer", "minimum": 2, "maximum": 9, "description": "Points along the sweep, both ends included (3 when left out)."},
+        "seeds": {"type": "array", "items": {"type": "integer"}, "description": "Seeds to build each point with ([1001, 2002, 3003] when left out); their spread shows how much the seed alone moves the result."},
+        "resolution": {"type": "integer", "enum": [256, 512, 1024, 2048], "description": "512 when left out."},
+    });
+    let calibrate_nodes = tool(
+        "calibrate_nodes",
+        "Calibrate Nodes",
+        "Builds generator types on their own and measures what they make: the share of the height range each output spans and its mean height, at the defaults or across a parameter's range, over several seeds. Answers \"how tall does this come out\", which no parameter range can. Keeps the measurements in the data folder; describe_node_type reports them. Waits for the builds.",
+        calibrate_properties,
+        &[],
+        Effect::Edits,
+    );
+    let history_properties = json!({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "How many of the latest builds to list (10 when left out)."}});
+    let build_history = tool(
+        "build_history",
+        "Build History",
+        "The builds these tools ran this session (build_node, get_node_image, build_and_export, run_project, runtime checks, calibrations): when, what, resolution, time, files, problems; with counts of successes and failures and the average time.",
+        history_properties,
+        &[],
+        Effect::Reads,
+    );
+    let analyze_build_properties = json!({
+        "build_dir": {"type": "string", "description": "The build folder (absolute); the latest build's when left out."},
+        "expected_files": {"type": "array", "items": {"type": "string"}, "description": "File names that should be there; each is reported present or missing."},
+    });
+    let analyze_build = tool(
+        "analyze_build",
+        "Analyze Build",
+        "Reads a build folder: the files with their sizes, the build report (result, time, slowest nodes), the nodes that failed and the first fault in CRASH_LOG.txt (everything after it fails only for want of input), expected files, and what the first heightfield looks like.",
+        analyze_build_properties,
+        &[],
+        Effect::Reads,
+    );
+    let analyze_terrain_properties = json!({
+        "node": node_property("A node to build (as build_node does) and read."),
+        "port": {"type": "string", "description": "The node's output to read; its main one when left out."},
+        "path": {"type": "string", "description": "A heightfield file to read instead (absolute): .r16, .raw, .r32, .graw, PNG, TIFF, EXR…"},
+        "encoding": {"type": "string", "enum": ["ushort", "half", "float"], "description": "How a .raw or .r16 file stores its heights, when not 16-bit whole numbers (a .raw of floats is told by its size)."},
+        "metres_across": {"type": "number", "description": "The terrain's width in metres (the project's when left out)."},
+        "metres_up": {"type": "number", "description": "The height a 1 stands for, in metres (the project's when left out)."},
+        "gentle_degrees": {"type": "number", "description": "The steepest slope counted as gentle (5 when left out)."},
+        "centre_fraction": {"type": "number", "minimum": 0.1, "maximum": 1, "description": "The share of each side taken as the middle; the rest is the edge (0.6 when left out)."},
+    });
+    let analyze_terrain = tool(
+        "analyze_terrain",
+        "Analyze Terrain",
+        "Reads a heightfield as land: a node's output, or a file a build wrote. Relief and heights in metres, how much of the range it fills, how much of the middle and of the whole is gentle, the mean slope, whether the edges stand above the middle (a basin) or below it (a mound), the split into low, middle and high ground, and a height profile along each axis. Says outright when it is flat.",
+        analyze_terrain_properties,
+        &[],
+        Effect::Reads,
+    );
+    vec![run_project, calibrate_nodes, build_history, analyze_build, analyze_terrain]
+}
+
+fn file_tools() -> Vec<Value> {
+    let get_properties = json!({
+        "path": {"type": "string", "description": "A .terrain file (absolute); the open project as it would be saved now when left out."},
+        "encoding": {"type": "string", "enum": ["raw", "base64"], "description": "raw (the JSON text, when left out) or base64."},
+    });
+    let get_project_file = tool(
+        "get_project_file",
+        "Get Project File",
+        "A project's .terrain text: the open project's as saving would write it now, or a file's.",
+        get_properties,
+        &[],
+        Effect::Reads,
+    );
+    let list_properties = json!({
+        "directory": {"type": "string", "description": "List the projects in this folder (absolute)."},
+        "recursive": {"type": "boolean", "description": "Look in its folders too."},
+    });
+    let list_projects = tool(
+        "list_projects",
+        "List Projects",
+        "Project files, newest first, with their sizes and when they changed: those in a folder, or (with no folder) the recent projects, the projects beside the open one, and the examples.",
+        list_properties,
+        &[],
+        Effect::Reads,
+    );
+    let repair_properties = json!({
+        "path": {"type": "string", "description": "The .terrain file (absolute); not the open project's."},
+        "create_backup": {"type": "boolean", "description": "Copy it to .terrain.backup first (when left out)."},
+        "write": {"type": "boolean", "description": "Write the repairs (when left out), or only list them."},
+        "drop_unknown_nodes": {"type": "boolean", "description": "Write it even though it has nodes of types Nerthus does not know, leaving them out."},
+    });
+    let repair_project_file = tool(
+        "repair_project_file",
+        "Repair Project File",
+        "Repairs a .terrain file without opening it in the editor, as opening and saving it would plus the safe fixes validate_graph makes: retired names and old node versions migrated, export marks given their node, missing ports added, values brought into range, duplicate export names renamed, the build type named. Leaves the file alone when there is nothing to repair; reports what is still wrong.",
+        repair_properties,
+        &["path"],
+        Effect::Edits,
+    );
+    let patch_properties = json!({
+        "path": {"type": "string", "description": "The .terrain file (absolute); not the open project's."},
+        "patches": {"type": "array", "description": "One entry per node: {\"node\": id or name, \"parameters\": {…}, \"export\": true, false or {\"file_name\", \"format\", \"enabled\"}, \"bypassed\": bool, \"name\": text}.", "items": {"type": "object"}},
+        "build_settings": {"type": "object", "description": "Build settings by member name."},
+        "create_backup": {"type": "boolean", "description": "Copy it to .terrain.backup first (when left out)."},
+    });
+    let patch_project_file = tool(
+        "patch_project_file",
+        "Patch Project File",
+        "Changes a .terrain file in place without opening it in the editor: node parameters (checked and stored as the property panel stores them), export marks, names, bypassing and build settings. Changes that are wrong are rejected and the rest made; the file is written only when something changed.",
+        patch_properties,
+        &["path"],
+        Effect::Edits,
+    );
+    vec![get_project_file, list_projects, repair_project_file, patch_project_file]
+}
+
 /// Every tool, as `tools/list` gives them.
 pub(crate) fn definitions() -> &'static [Value] {
     static DEFINITIONS: OnceLock<Vec<Value>> = OnceLock::new();
@@ -444,8 +728,12 @@ pub(crate) fn definitions() -> &'static [Value] {
         all.extend(catalogue_tools());
         all.extend(graph_tools());
         all.extend(edit_tools());
+        all.extend(authoring_tools());
+        all.extend(review_tools());
         all.extend(variable_tools());
         all.extend(build_tools());
+        all.extend(run_tools());
+        all.extend(file_tools());
         all
     })
 }
@@ -473,6 +761,8 @@ fn run(name: &str, arguments: &Arguments, context: &mut ToolContext) -> Result<S
         "set_project_settings" => project_tools::set_project_settings(arguments, context),
         "search_node_types" => catalogue_tools::search_node_types(arguments),
         "describe_node_type" => catalogue_tools::describe_node_type(arguments),
+        "describe_modifier" => catalogue_tools::describe_modifier(arguments),
+        "suggest_nodes" => catalogue_tools::suggest_nodes(arguments, context),
         "list_nodes" => graph_tools::list_nodes(arguments, context),
         "get_node" => graph_tools::get_node(arguments, context),
         "select_node" => graph_tools::select_node(arguments, context),
@@ -494,6 +784,21 @@ fn run(name: &str, arguments: &Arguments, context: &mut ToolContext) -> Result<S
         "export_node_map" => build_tools::export_node_map(arguments, context),
         "mark_for_export" => build_tools::mark_for_export(arguments, context),
         "build_and_export" => build_tools::build_and_export(arguments, context),
+        "create_graph" => authoring_tools::create_graph(arguments, context),
+        "list_examples" => authoring_tools::list_examples(arguments),
+        "open_example" => authoring_tools::open_example(arguments, context),
+        "validate_graph" => review_tools::validate_graph(arguments, context),
+        "analyze_graph" => review_tools::analyze_graph(arguments, context),
+        "optimize_parameters" => review_tools::optimize_parameters(arguments, context),
+        "run_project" => run_tools::run_project(arguments, context),
+        "calibrate_nodes" => run_tools::calibrate_nodes(arguments, context),
+        "build_history" => run_tools::build_history(arguments, context),
+        "analyze_build" => run_tools::analyze_build(arguments, context),
+        "analyze_terrain" => run_tools::analyze_terrain(arguments, context),
+        "get_project_file" => file_tools::get_project_file(arguments, context),
+        "list_projects" => file_tools::list_projects(arguments, context),
+        "repair_project_file" => file_tools::repair_project_file(arguments, context),
+        "patch_project_file" => file_tools::patch_project_file(arguments, context),
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -520,6 +825,152 @@ mod tests {
         }
         assert!(exists("add_node"));
         assert!(!exists("nonsense"));
+    }
+
+    /// An editor and what tools work with, driven through `start` as the
+    /// server drives them.
+    struct Harness {
+        editor: crate::editor::Editor,
+        ui_state: crate::ui::UiState,
+        screenshots: nerthus_render::Screenshots,
+        next_capture: u64,
+        history: super::super::jobs::BuildHistory,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self {
+                editor: crate::editor::Editor::new(crate::document::Document::new()),
+                ui_state: crate::ui::UiState::default(),
+                screenshots: nerthus_render::Screenshots::default(),
+                next_capture: 0,
+                history: super::super::jobs::BuildHistory::default(),
+            }
+        }
+
+        /// The call's answer, waited for; its JSON, or the error's text.
+        fn call(&mut self, name: &str, arguments: Value) -> Result<Value, String> {
+            let mut context = ToolContext {
+                editor: &mut self.editor,
+                ui_state: &mut self.ui_state,
+                screenshots: &mut self.screenshots,
+                next_capture: &mut self.next_capture,
+                history: &mut self.history,
+            };
+            let mut step = start(name, &arguments, &mut context);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+            let result = loop {
+                match step {
+                    Step::Done(result) => break result,
+                    Step::Wait(mut wait) => loop {
+                        assert!(std::time::Instant::now() < deadline, "{name} took too long");
+                        if let Some(next) = wait.poll(&mut context) {
+                            step = next;
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    },
+                }
+            };
+            let text = result.content[0]["text"].as_str().unwrap_or_default().to_string();
+            if result.is_error {
+                return Err(text);
+            }
+            Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        }
+    }
+
+    #[test]
+    fn the_new_tools_work_end_to_end() {
+        let folder = std::env::temp_dir().join(format!("nerthus-mcp-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut harness = Harness::new();
+
+        // A graph in one call, named as .terrain files name the types.
+        let created = harness
+            .call(
+                "create_graph",
+                json!({
+                    "nodes": [
+                        {"id": "base", "type": "Mountain", "parameters": {"Scale": 0.7}},
+                        {"id": "erode", "type": "Erosion2", "modifiers": ["Autolevel"]},
+                        {"id": "colour", "type": "SatMap"}
+                    ],
+                    "connections": [{"from": "base", "to": "erode"}, ["erode", "colour"]],
+                    "build_settings": {"Resolution": 512}
+                }),
+            )
+            .unwrap();
+        let ids: Vec<i64> = created["created"].as_array().unwrap().iter().map(|node| node["id"].as_i64().unwrap()).collect();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(harness.editor.document.undo_labels()[0], "Create 3 nodes");
+        // A bad graph changes nothing.
+        let nodes_before = harness.editor.document.terrain().nodes.len();
+        let refused = harness.call("create_graph", json!({"nodes": [{"type": "Mountain"}], "connections": [{"from": 1, "to": 77777}]}));
+        assert!(refused.is_err());
+        assert_eq!(harness.editor.document.terrain().nodes.len(), nodes_before);
+
+        // Nothing marked for export: a warning; a proposed graph is checked
+        // without being made.
+        let checked = harness.call("validate_graph", json!({})).unwrap();
+        assert_eq!(checked["valid"], json!(true), "{checked}");
+        assert!(checked["warnings"].to_string().contains("export"));
+        let proposed = harness.call("validate_graph", json!({"nodes": [{"type": "Blur"}]})).unwrap();
+        assert_eq!(proposed["valid"], json!(false), "{proposed}");
+        assert_eq!(harness.editor.document.terrain().nodes.len(), nodes_before);
+
+        let analysed = harness.call("analyze_graph", json!({"terrain_type": "mountain"})).unwrap();
+        assert_eq!(analysed["nodes"], json!(3));
+        assert!(!analysed["patterns"].as_array().unwrap().is_empty(), "{analysed}");
+        let optimized = harness.call("optimize_parameters", json!({"mode": "quality", "apply": false})).unwrap();
+        assert_eq!(optimized["applied"], json!(false));
+        let suggested = harness.call("suggest_nodes", json!({"node": ids[0], "context": "snowy alpine peaks"})).unwrap();
+        assert!(suggested["for_context"].as_array().is_some_and(|types| !types.is_empty()), "{suggested}");
+        let modifier = harness.call("describe_modifier", json!({"label": "Height Remap"})).unwrap();
+        assert_eq!(modifier["modifier"], json!("Multiplier"));
+        let described = harness.call("describe_node_type", json!({"type": "Erosion2"})).unwrap();
+        assert_eq!(described["type"], json!("ErosionPro"));
+        assert_eq!(described["file_type_name"], json!("Erosion2"));
+
+        // Marked and saved, the project builds on its own thread.
+        harness.call("mark_for_export", json!({"node": ids[1], "format": "ushort_r16"})).unwrap();
+        let path = folder.join("Tools.terrain");
+        harness.call("save_project", json!({"path": path})).unwrap();
+        let text = harness.call("get_project_file", json!({})).unwrap();
+        assert!(text["content"].as_str().unwrap().contains("Erosion2"));
+        let ran = harness.call("run_project", json!({"build_path": folder.join("build"), "resolution": 256, "seed": 2})).unwrap();
+        let files = ran["files"].as_array().unwrap();
+        // ErosionPro writes each of its outputs: Out, Flow, Wear, Deposits.
+        assert_eq!(files.len(), 4, "{ran}");
+        assert!(ran["terrain"]["file"].as_str().unwrap().ends_with("_Out.r16"), "{ran}");
+        assert!(ran["terrain"]["relief_metres"].as_f64().unwrap() > 0.0, "{ran}");
+        let history = harness.call("build_history", json!({})).unwrap();
+        assert_eq!(history["total"], json!(1));
+        let build = harness.call("analyze_build", json!({"expected_files": ["nothing.png"]})).unwrap();
+        assert_eq!(build["file_count"].as_u64().unwrap() as usize, std::fs::read_dir(folder.join("build")).unwrap().count());
+        assert_eq!(build["expected_files"][0]["present"], json!(false));
+        let written = files[0]["path"].as_str().unwrap();
+        let terrain = harness.call("analyze_terrain", json!({"path": written})).unwrap();
+        assert_eq!(terrain["resolution"], json!([256, 256]));
+
+        // Another file, changed and repaired without opening it.
+        let other = folder.join("Other.terrain");
+        std::fs::copy(&path, &other).unwrap();
+        let patched = harness
+            .call("patch_project_file", json!({"path": other, "patches": [{"node": ids[0], "parameters": {"Scale": 0.2, "Nonsense": 1}}, {"node": ids[2], "export": {"file_name": "colour", "format": "PNG8"}}], "create_backup": false}))
+            .unwrap();
+        assert_eq!(patched["changed"], json!(true));
+        assert_eq!(patched["rejected"].as_array().unwrap().len(), 1, "{patched}");
+        let reopened = crate::document::Document::open(&other).unwrap();
+        assert_eq!(reopened.node(ids[0] as i32).unwrap().values["Scale"], json!(0.2));
+        assert!(reopened.export_settings(ids[2] as i32).is_some());
+        let repaired = harness.call("repair_project_file", json!({"path": other, "write": false})).unwrap();
+        assert_eq!(repaired["changed"], json!(false), "{repaired}");
+        // The open project's own file is left to the editor's tools.
+        assert!(harness.call("patch_project_file", json!({"path": path, "patches": [{"node": ids[0], "parameters": {"Scale": 0.3}}]})).is_err());
+        let listed = harness.call("list_projects", json!({"directory": folder})).unwrap();
+        assert_eq!(listed["count"], json!(2));
+        std::fs::remove_dir_all(&folder).ok();
     }
 
     #[test]

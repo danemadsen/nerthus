@@ -153,7 +153,17 @@ pub(crate) fn pair_of(value: &Value) -> Option<[f64; 2]> {
 /// A node by id (a number, or text holding one) or by its name, which must
 /// be unique (any case).
 pub(crate) fn find_node(editor: &Editor, value: &Value) -> Result<i32, String> {
-    let nodes = &editor.document.terrain().nodes;
+    find_in(&editor.document, value)
+}
+
+/// [`find_node`] in any project.
+pub(crate) fn find_in(document: &crate::document::Document, value: &Value) -> Result<i32, String> {
+    find_in_terrain(document.terrain(), value)
+}
+
+/// [`find_node`] in any terrain.
+pub(crate) fn find_in_terrain(terrain: &nerthus_engine::Terrain, value: &Value) -> Result<i32, String> {
+    let nodes = &terrain.nodes;
     let id = match value {
         Value::Number(number) => number.as_i64(),
         Value::String(text) => text.trim().parse::<i64>().ok(),
