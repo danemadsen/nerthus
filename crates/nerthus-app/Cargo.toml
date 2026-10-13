@@ -1,0 +1,48 @@
+[package]
+name = "nerthus-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nerthus"
+path = "src/main.rs"
+
+[dependencies]
+nerthus-compute.workspace = true
+nerthus-engine.workspace = true
+nerthus-export.workspace = true
+nerthus-nodes.workspace = true
+nerthus-render.workspace = true
+bevy = { workspace = true, features = ["default"] }
+bevy_egui = { workspace = true, features = ["default"] }
+egui.workspace = true
+egui_extras.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+crossbeam-channel.workspace = true
+image.workspace = true
+indexmap.workspace = true
+rfd.workspace = true
+log.workspace = true
+resvg.workspace = true
+serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
+toml.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+objc2.workspace = true
+objc2-app-kit = { workspace = true, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { workspace = true, features = ["std", "NSData"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+winit.workspace = true
+
+# build.rs embeds the icon in the executable when building on Windows.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+resvg.workspace = true

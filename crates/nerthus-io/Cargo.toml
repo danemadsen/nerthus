@@ -1,0 +1,29 @@
+[package]
+name = "nerthus-io"
+description = "File formats for Nerthus: .tor projects, presets, heightmap and mesh export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+nerthus-core.workspace = true
+nerthus-image.workspace = true
+png.workspace = true
+anyhow.workspace = true
+roxmltree.workspace = true
+flate2.workspace = true
+base64.workspace = true
+image.workspace = true
+image-webp.workspace = true
+jpeg2k.workspace = true
+resvg.workspace = true
+tiff.workspace = true
+exr.workspace = true
+half.workspace = true
+rayon.workspace = true
+uuid.workspace = true
+smallvec.workspace = true
+chrono.workspace = true
+gethostname.workspace = true
+directories.workspace = true

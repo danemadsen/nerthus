@@ -1,0 +1,16 @@
+[package]
+name = "nerthus-core"
+description = "Core data model for Nerthus: fields, parameters, ports, nodes and projects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+uuid.workspace = true
+serde.workspace = true
+parking_lot.workspace = true
+log.workspace = true

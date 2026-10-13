@@ -1,0 +1,20 @@
+[package]
+name = "nerthus-cli"
+description = "Builds and exports Nerthus terrain projects from the command line"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nerthus-build"
+path = "src/main.rs"
+
+[dependencies]
+nerthus-compute.workspace = true
+nerthus-engine.workspace = true
+nerthus-export.workspace = true
+nerthus-nodes.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true

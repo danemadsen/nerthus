@@ -1,0 +1,11 @@
+[package]
+name = "nerthus-assimp"
+description = "The parts of Assimp that Nerthus's mesh loading and mesh exports use"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+flate2.workspace = true

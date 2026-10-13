@@ -1,0 +1,55 @@
+//! The colour library (`data/color/*.clut`):
+//! categories of 512-entry RGB palettes, as SatMap and the texture nodes
+//! use them. Each file is an `i32` palette count followed by the palettes'
+//! RGB bytes.
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+/// One palette: 512 RGB colours from low to high.
+pub type Palette = [[u8; 3]; 512];
+
+const PALETTE_BYTES: usize = 512 * 3;
+
+const FILES: [(&str, &[u8]); 8] = [
+    ("2D", include_bytes!("../data/color/2D.clut")),
+    ("Blue", include_bytes!("../data/color/Blue.clut")),
+    ("Color", include_bytes!("../data/color/Color.clut")),
+    ("Green", include_bytes!("../data/color/Green.clut")),
+    ("Masks", include_bytes!("../data/color/Masks.clut")),
+    ("New", include_bytes!("../data/color/New.clut")),
+    ("Rock", include_bytes!("../data/color/Rock.clut")),
+    ("Sand", include_bytes!("../data/color/Sand.clut")),
+];
+
+fn parse(bytes: &[u8]) -> Vec<Palette> {
+    let count_bytes: [u8; 4] = bytes[0..4].try_into().unwrap();
+    let count = i32::from_le_bytes(count_bytes).max(0) as usize;
+    let mut palettes = Vec::with_capacity(count);
+    for index in 0..count {
+        let start = 4 + index * PALETTE_BYTES;
+        let raw = &bytes[start..start + PALETTE_BYTES];
+        let mut palette = [[0u8; 3]; 512];
+        let (colours, _) = raw.as_chunks::<3>();
+        for (entry, rgb) in palette.iter_mut().zip(colours) {
+            *entry = *rgb;
+        }
+        palettes.push(palette);
+    }
+    palettes
+}
+
+fn library() -> &'static HashMap<&'static str, Vec<Palette>> {
+    static LIBRARY: OnceLock<HashMap<&'static str, Vec<Palette>>> = OnceLock::new();
+    LIBRARY.get_or_init(|| FILES.iter().map(|(name, bytes)| (*name, parse(bytes))).collect())
+}
+
+/// The palettes of a category (the file name without `.clut`).
+pub fn category(name: &str) -> Option<&'static [Palette]> {
+    library().get(name).map(Vec::as_slice)
+}
+
+/// Palette `index` of category `name`.
+pub fn palette(name: &str, index: usize) -> Option<&'static Palette> {
+    category(name)?.get(index)
+}

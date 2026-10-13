@@ -1,0 +1,12 @@
+[package]
+name = "nerthus-image"
+description = "ImageMagick-compatible raster operations used by Nerthus nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rayon.workspace = true
+nerthus-core.workspace = true
+sha2.workspace = true

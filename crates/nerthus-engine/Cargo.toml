@@ -1,0 +1,19 @@
+[package]
+name = "nerthus-engine"
+description = "Engine model for Nerthus: maps, node catalogue, projects and graph evaluation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+base64.workspace = true
+directories.workspace = true
+flate2.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
+rayon.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
+thiserror.workspace = true
+# The node catalogue's tables keep their order: defaults are saved in it.
+toml = { workspace = true, features = ["preserve_order"] }

@@ -1,0 +1,10 @@
+[package]
+name = "nerthus-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+nerthus-engine.workspace = true
+bevy = { workspace = true, features = ["default"] }

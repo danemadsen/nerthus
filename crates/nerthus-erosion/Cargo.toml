@@ -1,0 +1,14 @@
+[package]
+name = "nerthus-erosion"
+description = "Hydraulic and thermal erosion engines for Nerthus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+nerthus-noise.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

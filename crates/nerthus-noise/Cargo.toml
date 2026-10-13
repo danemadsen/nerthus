@@ -1,0 +1,10 @@
+[package]
+name = "nerthus-noise"
+description = "Noise generators for Nerthus (FastNoiseSIMD-compatible port and terrain noise helpers)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rayon.workspace = true

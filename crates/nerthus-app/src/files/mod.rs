@@ -1,0 +1,659 @@
+//! What the File menu and the title bar's file box do beyond a plain
+//! open and save (`Shell`): opening with the usual checks, Save
+//! Incremental, safety autosaves and recovery copies, the macro collection,
+//! project thumbnails, the examples, and projects dropped on the window or
+//! a close asked for by the system. The menus, prompts and windows that use
+//! this live in `ui::file_commands` and `ui::file_windows`.
+
+mod autosave;
+mod collection;
+mod thumbnail;
+
+use std::path::{Path, PathBuf};
+
+use bevy::ecs::system::NonSendMarker;
+use bevy::prelude::*;
+use bevy::window::{FileDragAndDrop, PrimaryWindow, WindowCloseRequested};
+
+use crate::document::Document;
+use crate::editor::Editor;
+
+pub use autosave::{install_disaster_recovery, Autosave, AUTOSAVE_CHOICES};
+pub use collection::{add_macro, all_recent, consume_documents, export_to, install, installed_macros, ExportForm, MacroCollection};
+pub use thumbnail::thumbnail_path;
+
+/// A folder in the user's Nerthus folder (`Paths.Autosaves`,
+/// `Paths.Macros`, …).
+pub fn data_subfolder(name: &str) -> Option<PathBuf> {
+    crate::user::data_folder().map(|folder| folder.join(name))
+}
+
+/// `Paths.Autosaves`.
+pub fn autosaves_folder() -> Option<PathBuf> {
+    data_subfolder("Autosaves")
+}
+
+/// `Paths.Macros`: the macro collection.
+pub fn macros_folder() -> Option<PathBuf> {
+    data_subfolder("Macros")
+}
+
+/// Where a project's macros are looked for: the collection, then (as
+/// Nerthus did before it had one) a `Macros` folder beside the project.
+pub fn macro_folders(project: Option<&Path>) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = macros_folder().into_iter().collect();
+    if let Some(folder) = project.and_then(Path::parent) {
+        folders.push(folder.join("Macros"));
+    }
+    folders
+}
+
+/// Something File, the title bar or the system asked for. Most go through
+/// `ui::file_commands::run`, which asks to save changes where needed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileCommand {
+    /// File › New (Ctrl N).
+    New,
+    /// File › Open… (Ctrl O).
+    Open,
+    /// A file from Open Recent, the latest one (Ctrl Shift O), or a
+    /// project dropped on the window.
+    OpenRecent(PathBuf),
+    OpenLatest,
+    Dropped(PathBuf),
+    /// File › Save incremental and the file box's button.
+    SaveIncremental,
+    /// The Autosave menu: an interval in minutes (`Tag`), Reset Timer, an
+    /// autosave of this session, Open Autosave… and Revert to Saved.
+    SetAutosaveInterval(i64),
+    ResetAutosaveTimer,
+    OpenAutosaveEntry(PathBuf),
+    OpenAutosave,
+    RevertToSaved,
+    RevertConfirmed,
+    /// File › Repair File…, Open Examples…, Start Dialog.
+    RepairFile,
+    OpenExamples,
+    StartDialog,
+    /// File › Import and Export.
+    ImportMacro,
+    ImportGraph,
+    ImportTorlet,
+    ImportImage,
+    ExportMacro,
+    ExportTorlet,
+    /// File › Exit, the window's close button.
+    Exit,
+    /// The save question's answers (`SavePromptResult`), and Yes to "Nodes
+    /// are building".
+    SaveFirst,
+    DiscardChanges,
+    ContinueWhileBuilding,
+    /// The macro install question's Yes.
+    InstallMacro(PathBuf),
+    /// A macro from the toolbox's Macro menu, by id.
+    AddMacro(String),
+    /// The Start dialog and the examples: a new file with no questions
+    /// (`SetupNewFile`), the open dialog (`OpenFileDialog`), a file opened
+    /// as it is (`Shell.OpenFile`), an example opened as an untitled copy.
+    StartNew,
+    StartOpen,
+    OpenDirect { path: PathBuf, mode: OpenMode },
+    OpenExample { path: PathBuf, mode: OpenMode },
+    /// Export Macro's questions are answered: save it.
+    ExportMacroChecked,
+}
+
+/// How a file from the Start dialog or the examples opens (their buttons'
+/// menu: `LoadingMechanism`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenMode {
+    Normal,
+    /// "Force low resolution": the preview at 512.
+    LowResolution,
+    /// "Open and suspend engine": nothing builds until the engine resumes.
+    SuspendEngine,
+}
+
+/// An action that waits on the usual questions: whether to save changes
+/// (`SavePrompt`, or `Shell_Closing`'s for Exit) and, where it applies,
+/// whether to close while nodes build (`PreventCloseWhileBuilding`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileAction {
+    New,
+    Open,
+    OpenPath(PathBuf),
+    Repair,
+    Examples,
+    Exit,
+}
+
+/// A `FileAction` and the questions already answered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pending {
+    pub action: FileAction,
+    pub save_answered: bool,
+    pub building_answered: bool,
+}
+
+/// A file dialog `ui::file_commands` asked for (dialogs block, so a
+/// main-thread system shows them).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileDialog {
+    /// `OpenFileDialog`, from a folder (the autosaves for Open Autosave…).
+    Open { folder: Option<PathBuf> },
+    /// Save As for a pending action: it goes on once saved.
+    SaveAsThenContinue,
+    Repair,
+    InstallMacro,
+    ImportGraph,
+    ImportTorlet,
+    /// File › Import › Image: a File node for it on graph tab `tab` at
+    /// `position`.
+    ImportImage { tab: usize, position: [f32; 2] },
+    /// File › Export › TORLET: graph tab `tab`.
+    ExportTorlet { tab: usize },
+    /// Export Macro's Save as file.
+    ExportMacro { id: String },
+}
+
+/// A message for the interface to show (`MessageBox.Show`, `MBox`): with
+/// OK, or with Yes and No when it asks something.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Message {
+    pub caption: String,
+    pub text: String,
+    /// The task dialog's footer (`MBox`'s footnote).
+    pub footnote: Option<String>,
+    /// What Yes does; none for a plain message.
+    pub yes: Option<FileCommand>,
+}
+
+impl Message {
+    pub fn new(caption: &str, text: &str) -> Self {
+        Self { caption: caption.to_string(), text: text.to_string(), footnote: None, yes: None }
+    }
+}
+
+/// The files side of the editor (`Editor::files`).
+#[derive(Default)]
+pub struct FileState {
+    pub pending: Option<Pending>,
+    pub autosave: Autosave,
+    pub macros: MacroCollection,
+    pub dialog: Option<FileDialog>,
+    /// Commands for `ui::file_commands` from outside the interface (a
+    /// drop, the close button, a finished Save As).
+    pub requests: Vec<FileCommand>,
+    /// Messages to show.
+    pub messages: Vec<Message>,
+    /// Windows the interface shows: the Start dialog and the examples.
+    pub start_dialog_open: bool,
+    pub examples_open: bool,
+    /// Export Macro's form, once a file has been chosen to save it to.
+    pub export_macro: Option<ExportForm>,
+    /// The project being saved needs a thumbnail.
+    pub thumbnail_request: Option<PathBuf>,
+    /// The latest folders the open and save dialogs used
+    /// (`MRULocations`).
+    pub last_open_folder: Option<PathBuf>,
+    pub last_save_folder: Option<PathBuf>,
+    /// Exit was answered: the app closes this frame.
+    pub exit_now: bool,
+    /// A graph tab to show once an import added it, and whether to frame
+    /// its nodes (`ImportTorlet` zooms to extents).
+    pub show_tab: Option<(usize, bool)>,
+}
+
+impl FileState {
+    pub fn show_message(&mut self, caption: &str, text: &str) {
+        self.messages.push(Message::new(caption, text));
+    }
+}
+
+/// `Shell.OpenFile(fileName)`: the session's autosaves forgotten, then the
+/// file opened (`Session.Open`): a file whose macros are
+/// not installed does not open, nor does one that cannot be read. Returns
+/// whether it opened.
+pub fn open_project(editor: &mut Editor, path: &Path) -> bool {
+    open_with(editor, path, true)
+}
+
+/// An example opened as an untitled copy named after it, left out of the
+/// recent files (`Session.IsExample`).
+pub fn open_example(editor: &mut Editor, path: &Path) -> bool {
+    if !open_with(editor, path, false) {
+        return false;
+    }
+    let stem = path.file_stem().map(|stem| stem.to_string_lossy().to_string());
+    editor.document.path = None;
+    editor.document.untitled_name = stem;
+    true
+}
+
+fn open_with(editor: &mut Editor, path: &Path, remember: bool) -> bool {
+    editor.files.start_dialog_open = false;
+    editor.files.autosave.clear_entries();
+    let document = match Document::open(path) {
+        Ok(document) => document,
+        Err(error) => {
+            open_failed(editor, path, &format!("{error:#}"));
+            return false;
+        }
+    };
+    if let Some(missing) = missing_macro(&document, path) {
+        let reason = format!("This file depends on the macro [{missing}], which is not installed. Please install this macro and try again.");
+        open_failed(editor, path, &reason);
+        return false;
+    }
+    let unknown = document.project.unknown_types.clone();
+    autosave::save_migration_copy(&document, path);
+    editor.set_document(document);
+    if remember {
+        editor.user.add_recent(path);
+        collection::add_to_all_recent(path);
+    }
+    editor.files.autosave.reset_timer();
+    editor.report(format!("Opened {}", path.display()));
+    if !unknown.is_empty() {
+        editor.report(format!("Unknown node types: {}", unknown.join(", ")));
+    }
+    true
+}
+
+/// `Session_FileOpenFailed`: "Failed to open file: …" with the reason.
+fn open_failed(editor: &mut Editor, path: &Path, reason: &str) {
+    let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+    editor.report(format!("Failed to open {}: {reason}", path.display()));
+    let caption = format!("Failed to open file: {name}");
+    let text = format!("Failed to open file.\n\n{reason}\n\n{}", path.display());
+    editor.files.show_message(&caption, &text);
+}
+
+/// The first macro the project uses that is neither in the collection nor
+/// beside the project (`Session.Open`'s check of `Project.Macros`).
+fn missing_macro(document: &Document, path: &Path) -> Option<String> {
+    let folders = macro_folders(Some(path));
+    let ids = document.project.macro_ids();
+    ids.into_iter().find(|id| nerthus_engine::macros::find_macro_file(id, &folders).is_none())
+}
+
+/// `Shell.SetupNewFile`: a new, empty project; the session's autosaves
+/// forgotten and the autosave timer started again.
+pub fn new_project(editor: &mut Editor) {
+    editor.set_document(Document::new());
+    editor.files.autosave.clear_entries();
+    editor.files.autosave.reset_timer();
+}
+
+/// After a save went through (`Shell.SaveFile`'s tail): the autosave
+/// timer and the file name's reminder start again, the project's
+/// thumbnail is taken, and the file joins the searchable recent files.
+pub fn saved(editor: &mut Editor, path: &Path) {
+    editor.files.autosave.reset_timer();
+    editor.files.autosave.reminder = false;
+    collection::add_to_all_recent(path);
+    editor.files.thumbnail_request = Some(path.to_path_buf());
+}
+
+/// `Shell.Increment`: the next free name in
+/// the project's folder — `Name001`, or the number after one it ends in
+/// (`Name004` after `Name003`).
+pub fn incremented_path(path: &Path) -> PathBuf {
+    let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let extension = path.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default();
+    let stem = path.file_stem().map(|stem| stem.to_string_lossy().to_string()).unwrap_or_default();
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+    let characters: Vec<char> = stem.chars().collect();
+    let tail: String = if characters.len() <= 3 { String::new() } else { characters[characters.len() - 3..].iter().collect() };
+    let (base, mut number) = match dotnet_int_parse(&tail) {
+        Some(number) => (characters[..characters.len() - 3].iter().collect::<String>(), number),
+        None => (stem.clone(), 0),
+    };
+    if number == 0 {
+        number = 1;
+    }
+    loop {
+        let candidate = folder.join(format!("{base}{}{extension}", dotnet_format_000(number)));
+        if !candidate.exists() {
+            return candidate;
+        }
+        number += 1;
+    }
+}
+
+/// `int.TryParse` (`NumberStyles.Integer`): optional white space around an
+/// optional sign and digits.
+fn dotnet_int_parse(text: &str) -> Option<i64> {
+    let trimmed = text.trim_matches(|character: char| character.is_whitespace());
+    let (negative, digits) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    let value: i64 = digits.parse().ok()?;
+    Some(if negative { -value } else { value })
+}
+
+/// `ToString("000")`: at least three digits, the sign before them.
+fn dotnet_format_000(number: i64) -> String {
+    if number < 0 {
+        return format!("-{:03}", -number);
+    }
+    format!("{number:03}")
+}
+
+/// Startup work: an old recovery copy kept aside (`RecoverOldFile`),
+/// files older than 45 days cleared (`PassiveCleanup`, when Clear Old Files
+/// is on), the macro collection read and the crash handler installed.
+pub fn start(editor: &mut Editor) {
+    autosave::recover_old_file();
+    if editor.user.options.clear_old_files() {
+        autosave::passive_cleanup();
+    }
+    editor.files.macros.reload();
+    editor.files.autosave.load_interval(editor.user.options.autosave_interval());
+    install_disaster_recovery();
+    // The Start dialog greets a plain start; a project or a launch option
+    // (captures, `--show`) goes straight to the editor.
+    editor.files.start_dialog_open = std::env::args().len() == 1;
+}
+
+/// The files plugin: the timers, drops, close requests, dialogs and
+/// thumbnails.
+pub struct FilePlugin;
+
+impl Plugin for FilePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (tick, take_window_events));
+        app.add_systems(Update, show_dialogs);
+        app.add_systems(Update, (thumbnail::start_capture, thumbnail::finish_capture));
+    }
+}
+
+/// `Shell.passiveTimer`'s work (every 5 seconds): the safety autosave and
+/// the recovery copy. Also closes the app once Exit was answered.
+fn tick(mut editor: ResMut<Editor>, time: Res<Time<Real>>, mut exit: MessageWriter<AppExit>) {
+    if editor.files.exit_now {
+        editor.files.exit_now = false;
+        exit.write(AppExit::Success);
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    autosave::passive_tick(&mut editor, now);
+}
+
+/// Files dropped on the window (`Shell_Drop`: the first, when it is a
+/// project) and the window's close button (`Shell_Closing`).
+fn take_window_events(mut editor: ResMut<Editor>, mut drops: MessageReader<FileDragAndDrop>, mut closes: MessageReader<WindowCloseRequested>, primary: Query<(), With<PrimaryWindow>>) {
+    let mut dropped = Vec::new();
+    for event in drops.read() {
+        if let FileDragAndDrop::DroppedFile { path_buf, .. } = event {
+            dropped.push(path_buf.clone());
+        }
+    }
+    // A project opens (`Shell_Drop`); a macro is offered for installing,
+    // as Export Macro's text promises.
+    let first = dropped.into_iter().next();
+    if let Some(path) = first {
+        let name = path.to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".terrain") {
+            editor.files.requests.push(FileCommand::Dropped(path));
+        } else if name.ends_with(".macro") {
+            collection::ask_to_install(&mut editor, &path);
+        }
+    }
+    for request in closes.read() {
+        if primary.contains(request.window) {
+            editor.files.requests.push(FileCommand::Exit);
+        }
+    }
+}
+
+/// The open dialog's filter.
+const PROJECT_FILTER: (&str, &[&str]) = ("Nerthus Project File (*.terrain)", &["terrain"]);
+
+/// File dialogs block and must run on the main thread (macOS).
+fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
+    let Some(request) = editor.files.dialog.take() else {
+        return;
+    };
+    let editor = editor.as_mut();
+    match request {
+        FileDialog::Open { folder } => {
+            let start = folder.or_else(|| editor.files.last_open_folder.clone()).unwrap_or_else(|| editor.user.preferences.projects_folder());
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
+            if start.is_dir() {
+                dialog = dialog.set_directory(&start);
+            }
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
+            open_project(editor, &path);
+        }
+        FileDialog::SaveAsThenContinue => {
+            let file_name = editor.document.file_name();
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
+            dialog = dialog.set_file_name(file_name);
+            if let Some(folder) = editor.files.last_save_folder.clone().filter(|folder| folder.is_dir()) {
+                dialog = dialog.set_directory(folder);
+            }
+            let Some(path) = dialog.save_file() else {
+                // Cancelled: nothing more happens, so no changes are lost.
+                editor.files.pending = None;
+                return;
+            };
+            let path = with_extension(path, "terrain");
+            editor.files.last_save_folder = path.parent().map(Path::to_path_buf);
+            editor.save_to(&path);
+            if editor.document.dirty {
+                editor.files.pending = None;
+                return;
+            }
+            editor.files.requests.push(FileCommand::DiscardChanges);
+        }
+        FileDialog::Repair => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
+            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+                dialog = dialog.set_directory(folder);
+            }
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            repair(editor, &path);
+        }
+        FileDialog::InstallMacro => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.set_title("Install Macro");
+            dialog = dialog.add_filter("Nerthus Macro (.macro)", &["macro"]);
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            collection::ask_to_install(editor, &path);
+        }
+        FileDialog::ImportGraph => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter("Nerthus Project File (*.terrain)", &["terrain"]);
+            dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
+            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+                dialog = dialog.set_directory(folder);
+            }
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            import_graph(editor, &path);
+        }
+        FileDialog::ImportTorlet => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
+            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+                dialog = dialog.set_directory(folder);
+            }
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
+            import_graph(editor, &path);
+        }
+        FileDialog::ImportImage { tab, position } => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter("All Image Formats", &IMAGE_EXTENSIONS);
+            let start = editor.files.last_open_folder.clone().unwrap_or_else(|| editor.user.preferences.projects_folder());
+            if start.is_dir() {
+                dialog = dialog.set_directory(start);
+            }
+            let Some(path) = dialog.pick_file() else {
+                return;
+            };
+            import_image(editor, &path, tab, position);
+        }
+        FileDialog::ExportTorlet { tab } => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
+            if let Some(folder) = editor.files.last_save_folder.clone().filter(|folder| folder.is_dir()) {
+                dialog = dialog.set_directory(folder);
+            }
+            let Some(path) = dialog.save_file() else {
+                return;
+            };
+            let path = with_extension(path, "tfrag");
+            editor.files.last_save_folder = path.parent().map(Path::to_path_buf);
+            let fragment = editor.document.graph_fragment(tab);
+            let text = nerthus_engine::to_fragment_json(&fragment);
+            if let Err(error) = std::fs::write(&path, text) {
+                editor.report(format!("Cannot write {}: {error}", path.display()));
+            }
+        }
+        FileDialog::ExportMacro { id } => {
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.set_title("Export Macro");
+            dialog = dialog.add_filter("Nerthus Macro (.macro)", &["macro"]);
+            dialog = dialog.set_file_name(format!("{id}.macro"));
+            let Some(path) = dialog.save_file() else {
+                return;
+            };
+            let path = with_extension(path, "macro");
+            let into_collection = macros_folder().is_some_and(|folder| path.starts_with(folder));
+            if into_collection {
+                let text = "You cannot export a macro directly into the Macros folder. Check \"Install in Nerthus\" to do this.\n\nPlease choose a different location.";
+                editor.files.show_message("Invalid Location", text);
+                return;
+            }
+            collection::export_to(editor, Some(path));
+        }
+    }
+}
+
+/// The image formats File › Import › Image offers (the `FileFormats`
+/// readers).
+pub const IMAGE_EXTENSIONS: [&str; 21] = ["exr", "graw", "jpg", "png", "r16", "r32", "raw", "tif", "jpeg", "webp", "tiff", "svg", "rgb", "miff", "jp2", "hdr", "eps", "emf", "dds", "dng", "bmp"];
+
+/// File › Import › Image (`ImportImage`): a File node reading the image,
+/// in the middle of the graph's view, selected.
+fn import_image(editor: &mut Editor, path: &Path, tab: usize, position: [f32; 2]) {
+    editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
+    let Some(id) = editor.document.add_node("File", position) else {
+        return;
+    };
+    let file_name = serde_json::Value::String(path.to_string_lossy().to_string());
+    editor.document.apply_build_update(id, "FileName", file_name);
+    if tab != 0 {
+        editor.document.apply_build_update(id, "GraphIndex", serde_json::Value::from(tab as i64));
+    }
+    editor.document.apply_node_display(&[id], &editor.user.options);
+    editor.select(Some(id));
+    editor.changed();
+}
+
+/// File › Import › Graph or TORLET (`ImportGraph`, `ImportTorlet`): a
+/// project's or fragment's graph tabs added to this project, the last one
+/// shown.
+fn import_graph(editor: &mut Editor, path: &Path) {
+    let stem = path.file_stem().map(|stem| stem.to_string_lossy().to_string()).unwrap_or_default();
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            editor.report(format!("Cannot read {}: {error}", path.display()));
+            return;
+        }
+    };
+    let is_fragment = path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("tfrag"));
+    let terrain = if is_fragment {
+        nerthus_engine::fragment::parse_fragment(&text).map(|(terrain, _)| terrain)
+    } else {
+        nerthus_engine::Project::parse(&text).map(|project| project.assets[0].terrain.clone())
+    };
+    let terrain = match terrain {
+        Ok(terrain) => terrain,
+        Err(error) => {
+            editor.report(format!("Cannot import {}: {error}", path.display()));
+            return;
+        }
+    };
+    if let Some(tab) = editor.document.import_terrain(&terrain, &stem) {
+        editor.files.show_tab = Some((tab, is_fragment));
+        editor.changed();
+    }
+}
+
+/// File › Repair File… (`RepairFile`): a new project holding the chosen
+/// file's graph, read as File › Open reads it and imported tab by tab, in
+/// place of the new project's empty first tab.
+fn repair(editor: &mut Editor, path: &Path) {
+    let stem = path.file_stem().map(|stem| stem.to_string_lossy().to_string()).unwrap_or_default();
+    let project = std::fs::read_to_string(path).map_err(anyhow::Error::from).and_then(|text| nerthus_engine::Project::parse(&text).map_err(anyhow::Error::from));
+    let project = match project {
+        Ok(project) => project,
+        Err(error) => {
+            log::error!("Failed to repair file. {error:#}");
+            editor.report("Fail: Repair attempt failed.");
+            return;
+        }
+    };
+    editor.document.import_terrain(project.terrain(), &stem);
+    editor.document.delete_graph_tab(0);
+    editor.changed();
+    editor.report("Repaired: Repair attempt was successful.");
+}
+
+fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
+    if path.extension().is_some() {
+        return path;
+    }
+    path.with_extension(extension)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incremental_names_count_up() {
+        let folder = std::env::temp_dir().join(format!("nerthus-increment-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let project = folder.join("Ridge.terrain");
+        assert_eq!(incremented_path(&project), project);
+        std::fs::write(&project, "").unwrap();
+        assert_eq!(incremented_path(&project), folder.join("Ridge001.terrain"));
+        std::fs::write(folder.join("Ridge001.terrain"), "").unwrap();
+        assert_eq!(incremented_path(&project), folder.join("Ridge002.terrain"));
+        let numbered = folder.join("Ridge001.terrain");
+        assert_eq!(incremented_path(&numbered), folder.join("Ridge002.terrain"));
+        let short = folder.join("Abc.terrain");
+        std::fs::write(&short, "").unwrap();
+        assert_eq!(incremented_path(&short), folder.join("Abc001.terrain"));
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(dotnet_int_parse(" 12"), Some(12));
+        assert_eq!(dotnet_int_parse("-12"), Some(-12));
+        assert_eq!(dotnet_int_parse("a12"), None);
+        assert_eq!(dotnet_format_000(-12), "-012");
+    }
+}

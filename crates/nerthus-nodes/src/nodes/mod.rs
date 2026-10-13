@@ -1,0 +1,242 @@
+//! Node implementations, grouped like the toolbox.
+
+mod adjust;
+mod assets;
+mod blend;
+mod cartography;
+mod colorize;
+mod derive;
+mod effects;
+mod erosion;
+mod filters;
+mod gradient;
+mod landscape;
+mod mesh;
+mod modifiers;
+mod noise;
+mod primitive;
+mod profile;
+mod render;
+mod routing;
+mod scatter;
+mod structure;
+mod transform;
+mod utilities;
+mod vegetation;
+mod warp;
+
+use nerthus_engine::Registry;
+
+// What the editor's node commands compute (Fit Curve, Synthesize Colors).
+pub use profile::fit_curve;
+pub use utilities::{synth_sample_count, synth_samples};
+// What the graph asks of dropped files.
+pub use assets::is_tile_set;
+
+pub fn register(registry: &mut Registry) {
+    modifiers::register(registry);
+    registry.add_node("LinearGradient", gradient::LinearGradient);
+    registry.add_node("RadialGradient", gradient::RadialGradient);
+    registry.add_node("Cone", gradient::Cone);
+    registry.add_node("Hemisphere", gradient::Hemisphere);
+    registry.add_node("Constant", gradient::Constant);
+
+    registry.add_node("Perlin", noise::Perlin);
+    registry.add_node("Voronoi", noise::Voronoi);
+    registry.add_node("Cellular", noise::Cellular);
+    registry.add_node("Noise", noise::Noise);
+    registry.add_node("CutNoise", noise::CutNoise);
+    registry.add_node("Gabor", noise::Gabor);
+    registry.add_node("Cracks", noise::Cracks);
+    registry.add_node("DotNoise", noise::DotNoise);
+    registry.add_node("LineNoise", noise::LineNoise);
+    registry.add_node("MultiFractal", noise::MultiFractal);
+    registry.add_node("DriftNoise", noise::DriftNoise);
+    registry.add_node("WaveShine", noise::WaveShine);
+    registry.add_node("Warp", warp::Warp);
+    registry.add_node("DirectionalWarp", warp::DirectionalWarp);
+    registry.add_node("TriplanarDisplacement", warp::TriplanarDisplacement);
+
+    registry.add_node("Adjust", adjust::Adjust);
+    registry.add_node("Autolevel", adjust::Autolevel);
+    registry.add_node("Clamp", adjust::Clamp);
+    registry.add_node("Clip", adjust::Clip);
+    registry.add_node("Equalize", adjust::Equalize);
+    registry.add_node("Extend", adjust::Extend);
+    registry.add_node("SoftClip", adjust::SoftClip);
+    registry.add_node("Invert", adjust::Invert);
+    registry.add_node("Transpose", adjust::Transpose);
+    registry.add_node("Match", adjust::Match);
+
+    registry.add_node("Height", derive::Height);
+    registry.add_node("Threshold", derive::Threshold);
+    registry.add_node("Angle", derive::Angle);
+    registry.add_node("Slope", derive::Slope);
+    registry.add_node("Curvature", derive::Curvature);
+    registry.add_node("Normals", derive::Normals);
+    registry.add_node("RockMap", derive::RockMap);
+    registry.add_node("Occlusion", derive::Occlusion);
+    registry.add_node("FlowMapClassic", derive::FlowMapClassic);
+    registry.add_node("FlowMap", derive::FlowMap);
+    registry.add_node("TextureBase", derive::TextureBase);
+    registry.add_node("Texturizer", derive::Texturizer);
+    registry.add_node("Soil", derive::Soil);
+    registry.add_node("Accumulator", derive::Accumulator);
+
+    registry.add_node("Terraces", profile::Terraces);
+    registry.add_node("FractalTerraces", profile::FractalTerraces);
+    registry.add_node("Stratify", profile::Stratify);
+    registry.add_node("Shaper", profile::Shaper);
+    registry.add_node("ThermalShaper", profile::ThermalShaper);
+    registry.add_node("Curve", profile::Curve);
+    registry.add_node("Deflate", profile::Deflate);
+    registry.add_node("Fold", profile::Fold);
+    registry.add_node("Recurve", profile::Recurve);
+
+    registry.add_node("Combine", blend::Combine);
+    registry.add_node("Mask", blend::Mask);
+    registry.add_node("Layers", blend::Layers);
+    registry.add_node("Mixer", blend::Mixer);
+
+    registry.add_node("Blur", filters::Blur);
+    registry.add_node("Median", filters::Median);
+    registry.add_node("Sharpen", filters::Sharpen);
+    registry.add_node("Denoise", filters::Denoise);
+    registry.add_node("Filter", filters::Filter);
+    registry.add_node("GraphicEQ", filters::GraphicEq);
+    registry.add_node("Peaks", filters::Peaks);
+    registry.add_node("SlopeBlur", filters::SlopeBlur);
+    registry.add_node("SlopeWarp", filters::SlopeWarp);
+    registry.add_node("VariableBlur", filters::VariableBlur);
+
+    registry.add_node("Flip", effects::Flip);
+    registry.add_node("Pixelate", effects::Pixelate);
+    registry.add_node("Swirl", effects::Swirl);
+    registry.add_node("Edge", effects::Edge);
+
+    registry.add_node("Transform", transform::Transform);
+    registry.add_node("Transform3D", transform::Transform3D);
+    registry.add_node("Dilate", transform::Dilate);
+    registry.add_node("Distance", transform::Distance);
+    registry.add_node("Aperture", transform::Aperture);
+    registry.add_node("Construction", transform::Construction);
+
+    registry.add_node("Repeat", structure::Repeat);
+    registry.add_node("Seamless", structure::Seamless);
+    registry.add_node("Shatter", structure::Shatter);
+
+    registry.add_node("Slump", landscape::Slump);
+    registry.add_node("Ridge", landscape::Ridge);
+    registry.add_node("Rugged", landscape::Rugged);
+    registry.add_node("Mountain", landscape::Mountain);
+    registry.add_node("MountainSide", landscape::MountainSide);
+    registry.add_node("Canyon", landscape::Canyon);
+    registry.add_node("Uplift", landscape::Uplift);
+    registry.add_node("Volcano", landscape::Volcano);
+    registry.add_node("Pond", landscape::Pond);
+    registry.add_node("Rockscape", landscape::Rockscape);
+    registry.add_node("RockNoise", landscape::RockNoise);
+    registry.add_node("Crater", landscape::Crater);
+    registry.add_node("CraterField", landscape::CraterField);
+    registry.add_node("Sandstone", landscape::Sandstone);
+    registry.add_node("Steps", landscape::Steps);
+    registry.add_node("Plates", landscape::Plates);
+    registry.add_node("Glacier", landscape::Glacier);
+    registry.add_node("Stones", landscape::Stones);
+    registry.add_node("Scree", landscape::Scree);
+    registry.add_node("Craggy", landscape::Craggy);
+    registry.add_node("Bulbous", landscape::Bulbous);
+    registry.add_node("Roughen", landscape::Roughen);
+    registry.add_node("Distress", landscape::Distress);
+    registry.add_node("GroundTexture", landscape::GroundTexture);
+    registry.add_node("MountainRange", landscape::MountainRange);
+    registry.add_node("DuneSea", landscape::DuneSea);
+    registry.add_node("Sand", landscape::Sand);
+    registry.add_node("Outcrops", landscape::Outcrops);
+
+    registry.add_node("Contours", cartography::Contours);
+    registry.add_node("Grid", cartography::Grid);
+
+    registry.add_node("Erosion2", erosion::Erosion2);
+    registry.add_node("EasyErosion", erosion::EasyErosion);
+    registry.add_node("Hillify", erosion::Hillify);
+    registry.add_node("Lichtenberg", erosion::Lichtenberg);
+    registry.add_node("Sediments", erosion::Sediments);
+    registry.add_node("Shear", erosion::Shear);
+    registry.add_node("Wizard2", erosion::Wizard2);
+    registry.add_node("Anastomosis", erosion::Anastomosis);
+    registry.add_node("HydroFix", erosion::HydroFix);
+    registry.add_node("Rivers", erosion::Rivers);
+    registry.add_node("Erosion", erosion::Erosion);
+    registry.add_node("Wizard", erosion::Wizard);
+    registry.add_node("Thermal", erosion::Thermal);
+    registry.add_node("Thermal2", erosion::Thermal2);
+    registry.add_node("Snow", erosion::Snow);
+    registry.add_node("Snowfield", erosion::Snowfield);
+    registry.add_node("Sea", erosion::Sea);
+    registry.add_node("Lake", erosion::Lake);
+    registry.add_node("IceFloe", erosion::IceFloe);
+    registry.add_node("Dusting", erosion::Dusting);
+    registry.add_node("Trees", vegetation::Trees);
+    registry.add_node("Shrubs", vegetation::Shrubs);
+    registry.add_node("Crumble", erosion::Crumble);
+
+    registry.add_node("Island", primitive::Island);
+    registry.add_node("Shape", primitive::Shape);
+    registry.add_node("Draw", primitive::Draw);
+    registry.add_node("Cellular3D", primitive::Cellular3d);
+    registry.add_node("Pattern", primitive::Pattern);
+    registry.add_node("Pockmarks", scatter::Pockmarks);
+    registry.add_node("Bomber", scatter::Bomber);
+    registry.add_node("SBomber", scatter::SBomber);
+    registry.add_node("Debris", scatter::Debris);
+    registry.add_node("RGBSplit", utilities::RgbSplit);
+    registry.add_node("Tint", utilities::Tint);
+    registry.add_node("CLUTer", utilities::Cluter);
+    registry.add_node("DataExtractor", utilities::DataExtractor);
+    registry.add_node("Var", utilities::Var);
+    registry.add_node("MathX", utilities::MathX);
+    registry.add_node("HSL", utilities::Hsl);
+    registry.add_node("SatMap", colorize::SatMap);
+    registry.add_node("ColorErosion", colorize::ColorErosion);
+    registry.add_node("SuperColor", colorize::SuperColor);
+    registry.add_node("Weathering", colorize::Weathering);
+    registry.add_node("RGBMerge", utilities::RgbMerge);
+    registry.add_node("Splat", utilities::Splat);
+    registry.add_node("Synth", utilities::Synth);
+    registry.add_node("WaterColor", utilities::WaterColor);
+    registry.add_node("Sunlight", utilities::Sunlight);
+    registry.add_node("Shade", render::Shade);
+    registry.add_node("Gamma", adjust::Gamma);
+    registry.add_node("Whorl", effects::Whorl);
+    registry.add_node("Heal", utilities::Heal);
+    registry.add_node("Origami", effects::Origami);
+    registry.add_node("BlobRemover", utilities::BlobRemover);
+    registry.add_node("ColorThreshold", utilities::ColorThreshold);
+    registry.add_node("AO", render::Ao);
+    registry.add_node("LightX", render::LightX);
+    registry.add_node("Halftone", render::Halftone);
+    registry.add_node("Cartography", render::Cartography);
+
+    registry.add_node("Chokepoint", routing::PassThrough);
+    registry.add_node("Gate", routing::PassThrough);
+    registry.add_node("Route", routing::Route);
+    registry.add_node("Compare", routing::Compare);
+    registry.add_node("Switch", routing::Switch);
+    registry.add_node("Reseed", routing::Reseed);
+    registry.add_node("LoopBegin", routing::LoopBegin);
+    registry.add_node("LoopEnd", routing::LoopEnd);
+    registry.add_node("Macro", routing::Macro);
+    registry.add_node("MacroPort", routing::MacroPort);
+    registry.add_node("MacroDefinition", routing::MacroDefinition);
+    registry.add_node("File", assets::File);
+    registry.add_node("Object", assets::Object);
+    registry.add_node("FileSequence", assets::FileSequence);
+    registry.add_node("TileInput", assets::TileInput);
+    registry.add_node("Export", assets::Export);
+    registry.add_node("Mesher", mesh::Mesher);
+    registry.add_node("Meshify", mesh::Meshify);
+    registry.add_node("PointCloud", mesh::PointCloud);
+    registry.add_node("MeshWarp", mesh::MeshWarp);
+    registry.add_node("TextureBaker", mesh::TextureBaker);
+}

@@ -1,0 +1,259 @@
+# The node modifiers: each one's parameters and the defaults of a fresh
+# one. Written by tools/re/gen-specs.py.
+
+[Autolevel]
+name = "Autolevel"
+type = "Autolevel"
+order = 0
+has_ui = false
+
+[Blur]
+name = "Blur"
+type = "Blur"
+order = 0
+has_ui = true
+
+[Blur.defaults]
+Factor = 0.1
+
+[[Blur.parameters]]
+name = "Factor"
+type = "float"
+kind = "Standard"
+label = "Blur"
+min = 0.0001
+max = 5
+curve = [2.5]
+
+[Clamp]
+name = "Clamp"
+type = "Clamp"
+order = 0
+has_ui = true
+
+[Clamp.defaults]
+Value = { X = 0.0, Y = 1.0 }
+
+[[Clamp.parameters]]
+name = "Value"
+type = "float2"
+kind = "Standard"
+label = "Clamp"
+min = 0
+max = 1
+
+[Clip]
+name = "Clip"
+type = "Clip"
+order = 0
+has_ui = true
+
+[Clip.defaults]
+Value = { X = 0.0, Y = 1.0 }
+
+[[Clip.parameters]]
+name = "Value"
+type = "float2"
+kind = "Standard"
+label = "Clip"
+min = 0
+max = 1
+
+[Difference]
+name = "Difference"
+type = "Difference"
+order = 0
+has_ui = false
+
+[Drop]
+name = "Drop"
+type = "Drop"
+order = 0
+has_ui = false
+
+[Equalize]
+name = "Equalize"
+type = "Equalize"
+order = 0
+has_ui = false
+
+[Height]
+name = "Height"
+type = "Height"
+order = 0
+has_ui = true
+
+[Height.defaults]
+Range = { X = 0.45, Y = 0.65 }
+Falloff = 0.15
+Distort = 0.0
+
+[[Height.parameters]]
+name = "Range"
+type = "float2"
+kind = "Standard"
+label = "Height"
+min = 0
+max = 1
+
+[[Height.parameters]]
+name = "Falloff"
+type = "float"
+kind = "Standard"
+min = 0.0001
+max = 1
+
+[[Height.parameters]]
+name = "Distort"
+type = "float"
+kind = "Standard"
+min = 0
+max = 1
+
+[Influence]
+name = "Influence"
+type = "Influence"
+order = 0
+has_ui = true
+
+[Influence.defaults]
+Factor = 1.0
+
+[[Influence.parameters]]
+name = "Factor"
+type = "float"
+kind = "Standard"
+label = "Influence"
+min = 0
+max = 1
+
+[Invert]
+name = "Invert"
+type = "Invert"
+order = 0
+has_ui = false
+
+[MatchHeight]
+name = "MatchHeight"
+type = "MatchHeight"
+order = 0
+has_ui = false
+
+[Max]
+name = "Max"
+type = "Max"
+order = 66
+has_ui = false
+
+[Min]
+name = "Min"
+type = "Min"
+order = 66
+has_ui = false
+
+[Multiplier]
+name = "Multiplier"
+type = "Multiplier"
+order = 0
+has_ui = true
+
+[Multiplier.defaults]
+Value = { X = 0.0, Y = 1.0 }
+
+[[Multiplier.parameters]]
+name = "Value"
+type = "float2"
+kind = "Standard"
+label = "Height Remap"
+min = 0
+max = 4
+
+[Shaper]
+name = "Shaper"
+type = "Shaper"
+order = 0
+has_ui = true
+
+[Shaper.defaults]
+Shape = 0.0
+
+[[Shaper.parameters]]
+name = "Shape"
+type = "float"
+kind = "Standard"
+label = "Shaper"
+min = -1
+max = 1
+
+[Slope]
+name = "Slope"
+type = "Slope"
+order = 0
+has_ui = true
+
+[Slope.defaults]
+Range = { X = 0.0, Y = 30.0 }
+Falloff = 15.0
+
+[[Slope.parameters]]
+name = "Range"
+type = "float2"
+kind = "Standard"
+label = "Slope"
+min = 0
+max = 90
+
+[[Slope.parameters]]
+name = "Falloff"
+type = "float"
+kind = "Standard"
+min = 0.0001
+max = 90
+
+[Strong]
+name = "Strong"
+type = "Strong"
+order = 0
+has_ui = false
+
+[Threshold]
+name = "Threshold"
+type = "Threshold"
+order = 0
+has_ui = true
+
+[Threshold.defaults]
+Level = 0.5
+
+[[Threshold.parameters]]
+name = "Level"
+type = "float"
+kind = "Standard"
+label = "Threshold"
+min = 0
+max = 1
+
+[Warp]
+name = "Warp"
+type = "Warp"
+order = 0
+has_ui = true
+
+[Warp.defaults]
+Size = 0.5
+Strength = 0.5
+
+[[Warp.parameters]]
+name = "Size"
+type = "float"
+kind = "Standard"
+label = "Warp Size"
+min = 0
+max = 1
+
+[[Warp.parameters]]
+name = "Strength"
+type = "float"
+kind = "Standard"
+min = 0
+max = 1

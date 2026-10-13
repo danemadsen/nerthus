@@ -1,0 +1,114 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/nerthus-core",
+    "crates/nerthus-engine",
+    "crates/nerthus-noise",
+    "crates/nerthus-image",
+    "crates/nerthus-erosion",
+    "crates/nerthus-compute",
+    "crates/nerthus-nodes",
+    "crates/nerthus-assimp",
+    "crates/nerthus-io",
+    "crates/nerthus-export",
+    "crates/nerthus-render",
+    "crates/nerthus-app",
+    "crates/nerthus-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+authors = ["Dane Madsen <danemadsen96@gmail.com>"]
+repository = "https://github.com/danemadsen/nerthus"
+
+[workspace.dependencies]
+nerthus-core = { path = "crates/nerthus-core" }
+nerthus-engine = { path = "crates/nerthus-engine" }
+nerthus-noise = { path = "crates/nerthus-noise" }
+nerthus-image = { path = "crates/nerthus-image" }
+nerthus-erosion = { path = "crates/nerthus-erosion" }
+nerthus-compute = { path = "crates/nerthus-compute" }
+nerthus-nodes = { path = "crates/nerthus-nodes" }
+nerthus-assimp = { path = "crates/nerthus-assimp" }
+nerthus-io = { path = "crates/nerthus-io" }
+nerthus-export = { path = "crates/nerthus-export" }
+nerthus-render = { path = "crates/nerthus-render" }
+
+anyhow = "1.0.104"
+libc = "0.2.190"
+thiserror = "2.0.21"
+rayon = "1.12.0"
+glam = "0.33.2"
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
+roxmltree = "0.21.1"
+flate2 = "1.1.10"
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "tga", "hdr", "webp"] }
+# JPEG 2000 through openjp2, the Rust port of OpenJPEG (the decoder
+# ImageMagick reads it with).
+jpeg2k = { version = "0.10.1", default-features = false, features = ["openjp2"] }
+# WebP as libwebp decodes it (fancy upsampling), the decoder the `image`
+# crate uses.
+image-webp = "0.2.4"
+png = "0.18.1"
+sha2 = "0.10.9"
+tiff = "0.11.3"
+exr = "1.74.2"
+half = "2.7.1"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+parking_lot = "0.12.5"
+crossbeam-channel = "0.5.17"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1.8"
+smallvec = "1.16.3"
+rustc-hash = "2.1.3"
+indexmap = "2.14.2"
+log = "0.4.34"
+env_logger = "0.11.11"
+directories = "6.0.0"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+gethostname = "1.1.0"
+clap = { version = "4.6.7", features = ["derive"] }
+rfd = "0.17.2"
+# GPU compute for the nodes that run as SYCL-style kernels: the wgpu Bevy
+# draws with, with the same features, so one build of it serves both.
+wgpu = { version = "30.0.1", default-features = false, features = ["wgsl", "dx12", "metal", "vulkan"] }
+pollster = "0.4.0"
+
+bevy = { version = "0.20.0", default-features = false }
+# UI: egui inside Bevy (one window and wgpu device for the viewport and the
+# editor). egui-snarl draws the node graph, egui_dock the panel layout.
+bevy_egui = { version = "0.43.1", default-features = false }
+egui = "0.36.2"
+egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
+egui-snarl = "0.12.0"
+egui_dock = "0.21.1"
+
+# The app icon, drawn from its SVG: resvg is the one egui_extras draws SVGs
+# with, winit is Bevy's (window icons), objc2 sets the macOS Dock icon and
+# embed-resource puts the icon in Windows executables.
+resvg = { version = "0.45.1", default-features = false }
+winit = { version = "0.30.13", default-features = false }
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false }
+embed-resource = "3.0.12"
+
+[profile.dev]
+opt-level = 1
+# Line tables keep backtraces readable; full debug info for Bevy and the
+# rest made target/ grow past 40 GB.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
