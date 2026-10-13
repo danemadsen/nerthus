@@ -1,15 +1,17 @@
-//! Build and Export: the confirmation (`B.VerifyAndBuild`'s task dialog)
-//! and the window that follows a build (the build's console).
+//! Build and Export: the confirmation (`B.VerifyAndBuild`'s task dialog),
+//! the window that follows a build (the build's console), and Save cached
+//! build's progress window.
 
 use egui::{Align, Color32, Layout, RichText, ScrollArea, Ui, Vec2};
 use nerthus_engine::StateOverride;
 use nerthus_export::build::BuildType;
 
 use crate::editor::Editor;
-use crate::export_build::LogLine;
+use crate::export_build::{ExportKind, LogLine};
 use crate::icons;
 use crate::theme;
 use crate::ui::commands::Command;
+use crate::ui::memory_dialogs;
 use crate::ui::UiState;
 
 /// The build log's height in the progress window.
@@ -43,8 +45,12 @@ fn command_link(ui: &mut Ui, title: &str, note: &str) -> bool {
 }
 
 /// "Build and Export?": what will be built, a link to the build settings,
-/// Start Build or Cancel.
+/// Start Build, Close Nerthus and Build, or Cancel. A choice that waited
+/// for Save As goes on from here once the project is saved.
 pub fn confirm(ctx: &egui::Context, editor: &Editor, ui_state: &mut UiState, commands: &mut Vec<Command>) {
+    if let Some(choice) = editor.resume_build {
+        commands.push(Command::StartBuild { open_folder: choice.open_folder, close: choice.close });
+    }
     let Some(confirm) = ui_state.build_confirm.as_mut() else {
         return;
     };
@@ -53,6 +59,7 @@ pub fn confirm(ctx: &egui::Context, editor: &Editor, ui_state: &mut UiState, com
     // `Total nodes to build`: the nodes neither baked nor bypassed.
     let unlocked = terrain.nodes.values().filter(|node| StateOverride::of(node) == StateOverride::None).count();
     let mut start = false;
+    let mut close = false;
     let mut cancel = false;
     let modal = egui::Modal::new(egui::Id::new("build-and-export"));
     let response = modal.show(ctx, |ui| {
@@ -83,6 +90,9 @@ pub fn confirm(ctx: &egui::Context, editor: &Editor, ui_state: &mut UiState, com
         if command_link(ui, "Start Build", "Build the saved project and export its marked nodes") {
             start = true;
         }
+        if command_link(ui, "Close Nerthus and Build", "Save RAM and GPU memory by closing the Nerthus interface") {
+            close = true;
+        }
         ui.add_space(8.0);
         ui.separator();
         ui.horizontal(|ui| {
@@ -93,10 +103,19 @@ pub fn confirm(ctx: &egui::Context, editor: &Editor, ui_state: &mut UiState, com
                 }
             });
         });
+        // The footer, with `TaskDialogIcon.Warning`.
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            let size = Vec2::splat(14.0);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            icons::paint(ui, rect, "alert-triangle", theme::ACCENT_YELLOW);
+            let footer = RichText::new("Close the Nerthus interface during a build to conserve resources and speed up your builds.");
+            ui.label(footer.font(theme::interface(11.0)).color(theme::LABEL_DEFAULT));
+        });
     });
-    if start {
+    if start || close {
         let open_folder = confirm.open_folder;
-        commands.push(Command::StartBuild { open_folder });
+        commands.push(Command::StartBuild { open_folder, close });
         ui_state.build_confirm = None;
         return;
     }
@@ -106,11 +125,24 @@ pub fn confirm(ctx: &egui::Context, editor: &Editor, ui_state: &mut UiState, com
 }
 
 /// The build's progress: nodes built, files written, problems; Cancel
-/// while it runs, Open Folder and Close after.
+/// while it runs, Open Folder and Close after. Save cached build has a
+/// progress window instead, which goes once the export is over; if it
+/// failed, a normal build is offered.
 pub fn progress(ctx: &egui::Context, editor: &Editor, commands: &mut Vec<Command>) {
     let Some(build) = editor.export_build.as_ref() else {
         return;
     };
+    if let ExportKind::Cached { close } = build.kind {
+        if !build.finished {
+            let text = build.exporting_text();
+            memory_dialogs::progress_window(ctx, "cached-export", "Exporting Cached Build", &text, build.progress(), false);
+        } else if build.succeeded() {
+            commands.push(Command::CloseBuildWindow);
+        } else {
+            commands.push(Command::CachedExportFailed { close });
+        }
+        return;
+    }
     let title = format!("Building {} at {} x {}", build.project_name, build.resolution, build.resolution);
     let mut open = true;
     let mut window = egui::Window::new(title);
@@ -212,4 +244,101 @@ fn log_line(ui: &mut Ui, line: &LogLine) {
     };
     let line_text = RichText::new(text);
     ui.label(line_text.font(theme::monospace(11.0)).color(color));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::Document;
+    use crate::editor::NodeStatus;
+    use crate::export_build::BuildChoice;
+    use crate::ui::commands;
+    use crate::worker::{CachedPort, NodeCache};
+    use bevy::prelude::Window;
+    use nerthus_engine::{NodeState, RenderIntent};
+
+    fn temporary_project(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
+        std::env::temp_dir().join(format!("nerthus-{name}-{nanos}.terrain"))
+    }
+
+    /// A saved project whose Perlin, marked for export, the editor holds
+    /// at the build's 1024.
+    fn holding_editor(path: &std::path::Path) -> Editor {
+        let mut document = Document::new();
+        let perlin = document.add_node("Perlin", [26000.0, 26000.0]).unwrap();
+        document.toggle_export(&[perlin], nerthus_export::FileFormat::Png16);
+        document.set_build_setting("Resolution", serde_json::json!(1024));
+        let mut editor = Editor::new(document);
+        editor.save_to(path);
+        editor.preview_resolution = 1024;
+        let status = NodeStatus { state: NodeState::Built, ..NodeStatus::default() };
+        editor.statuses.insert(perlin, status);
+        let port = CachedPort { name: "Out".to_string(), width: 1024, height: 1024, channels: 1, intent: RenderIntent::Default };
+        let cache = NodeCache { ports: vec![port], ..NodeCache::default() };
+        editor.node_caches.insert(perlin, cache);
+        editor
+    }
+
+    #[test]
+    fn a_build_the_editor_holds_is_offered_as_a_cached_export() {
+        let path = temporary_project("cached-question");
+        let mut editor = holding_editor(&path);
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        let chosen = vec![Command::StartBuild { open_folder: false, close: true }];
+        commands::run(chosen, &mut editor, &mut ui_state, &mut window);
+        let question = ui_state.prompt.take().expect("Save cached build? is asked");
+        assert_eq!(question.caption, "Save cached build?");
+        assert_eq!(question.yes, Some(Command::ExportCachedBuild { close: true }));
+        assert_eq!(question.no, Some(Command::RunBuild { close: true }));
+        assert!(question.footnote.is_some());
+
+        // Yes: the export goes to the build thread with the next request.
+        commands::run(vec![Command::ExportCachedBuild { close: true }], &mut editor, &mut ui_state, &mut window);
+        let kind = editor.export_build.as_ref().map(|build| build.kind);
+        assert_eq!(kind, Some(ExportKind::Cached { close: true }));
+        assert!(editor.needs_build);
+
+        // A failed export offers the normal build of the same choice.
+        commands::run(vec![Command::CachedExportFailed { close: true }], &mut editor, &mut ui_state, &mut window);
+        assert!(editor.export_build.is_none());
+        let retry = ui_state.prompt.take().expect("a normal build is offered");
+        assert_eq!(retry.caption, "Try a normal build?");
+        assert_eq!(retry.yes, Some(Command::RunBuild { close: true }));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_build_the_checks_refuse_never_starts() {
+        let path = temporary_project("refused-build");
+        let mut editor = Editor::new(Document::new());
+        editor.save_to(&path);
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        let chosen = vec![Command::StartBuild { open_folder: false, close: true }];
+        commands::run(chosen, &mut editor, &mut ui_state, &mut window);
+        let refusal = ui_state.prompt.take().expect("the refusal shows");
+        assert_eq!(refusal.caption, "Validation failed");
+        assert_eq!(refusal.text, "There are no nodes marked for export");
+        assert!(editor.export_build.is_none());
+        assert!(editor.files.requests.is_empty());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_choice_waiting_for_save_as_goes_on_once() {
+        let path = temporary_project("resumed-build");
+        let mut editor = holding_editor(&path);
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        editor.resume_build = Some(BuildChoice { open_folder: false, close: false });
+        let mut pending = Vec::new();
+        confirm(&egui::Context::default(), &editor, &mut ui_state, &mut pending);
+        assert_eq!(pending, vec![Command::StartBuild { open_folder: false, close: false }]);
+        commands::run(pending, &mut editor, &mut ui_state, &mut window);
+        assert_eq!(editor.resume_build, None);
+        assert_eq!(ui_state.prompt.as_ref().map(|prompt| prompt.caption.as_str()), Some("Save cached build?"));
+        std::fs::remove_file(&path).ok();
+    }
 }

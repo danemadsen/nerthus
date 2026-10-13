@@ -127,7 +127,7 @@ fn slice_colour(index: usize, count: usize) -> Color32 {
 
 /// Humanizer's `ByteSize.Humanize()` of so many megabytes: the largest
 /// unit holding at least one, to two decimals (`0.##`).
-fn humanize_megabytes(megabytes: i64) -> String {
+pub(crate) fn humanize_megabytes(megabytes: i64) -> String {
     let bytes = megabytes as f64 * 1024.0 * 1024.0;
     let units = [("TB", 1024f64.powi(4)), ("GB", 1024f64.powi(3)), ("MB", 1024f64.powi(2)), ("KB", 1024.0), ("B", 1.0)];
     for (symbol, size) in units {

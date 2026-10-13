@@ -1,6 +1,6 @@
 //! Build and Export: the image formats a build writes (`FileFormats`),
-//! laid out byte for byte; where a build writes them; and the build
-//! itself.
+//! laid out byte for byte; where a build writes them; the build
+//! itself; and what it reads from the user's preferences.
 
 pub mod bake;
 pub mod build;
@@ -12,6 +12,7 @@ pub mod jpeg;
 pub mod magick;
 pub mod mesh_exports;
 pub mod png;
+pub mod preferences;
 pub mod raw;
 pub mod report;
 pub mod swarm;

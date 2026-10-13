@@ -1,5 +1,5 @@
-//! The Colorize toolbox's palette nodes: SatMap colours a heightfield
-//! through a palette from the colour library.
+//! The Colorize toolbox's palette nodes: SatelliteMap colours a
+//! heightfield through a palette from the colour library.
 
 use nerthus_engine::{BuildContext, Map, NodeBuilder, NodeError, RenderIntent};
 use serde_json::Value;
@@ -68,9 +68,9 @@ impl PaletteCurves {
     }
 }
 
-/// The palette a SatMap-style node points at (`Library`, `LibraryItem`),
-/// clamping the item to the library (and saving that).
-/// SatMap picks a random palette for an unset (-1) item.
+/// The palette a SatelliteMap-style node points at (`Library`,
+/// `LibraryItem`), clamping the item to the library (and saving that).
+/// SatelliteMap picks a random palette for an unset (-1) item.
 pub(crate) fn chosen_palette(context: &mut BuildContext, randomize_unset: bool) -> Result<Palette, NodeError> {
     let library_name = context.enum_name("Library").to_string();
     let Some(library) = colour_library::category(&library_name) else {
@@ -108,12 +108,12 @@ fn rough_passes(name: &str) -> i32 {
     }
 }
 
-/// SatMap: the heightfield coloured through a palette from the colour
-/// library, optionally roughened and shifted in hue, saturation and
+/// SatelliteMap: the heightfield coloured through a palette from the
+/// colour library, optionally roughened and shifted in hue, saturation and
 /// lightness.
-pub struct SatMap;
+pub struct SatelliteMap;
 
-impl NodeBuilder for SatMap {
+impl NodeBuilder for SatelliteMap {
     fn build(&self, context: &mut BuildContext) -> Result<(), NodeError> {
         context.render_as(RenderIntent::Color);
         let mut palette = chosen_palette(context, true)?;
@@ -170,11 +170,11 @@ impl NodeBuilder for SatMap {
     }
 }
 
-/// ColorErosion: a colour map carried downhill by flowing water over its
+/// HueErosion: a colour map carried downhill by flowing water over its
 /// heightfield (the colour transport).
-pub struct ColorErosion;
+pub struct HueErosion;
 
-impl NodeBuilder for ColorErosion {
+impl NodeBuilder for HueErosion {
     fn build(&self, context: &mut BuildContext) -> Result<(), NodeError> {
         let colour = context.require_input("In")?;
         let heights = match context.input("Height") {
@@ -412,9 +412,10 @@ impl NodeBuilder for Weathering {
     }
 }
 
-/// The `Data` a SatMap node builds (its palette's colours from the range,
-/// each at its position in the full palette), as Cartography reads it.
-pub(crate) fn satmap_gradient(library: &str, item: i64, reverse: bool, range: [f32; 2]) -> Option<Vec<[f32; 4]>> {
+/// The `Data` a SatelliteMap node builds (its palette's colours from the
+/// range, each at its position in the full palette), as Cartography reads
+/// it.
+pub(crate) fn satellite_map_gradient(library: &str, item: i64, reverse: bool, range: [f32; 2]) -> Option<Vec<[f32; 4]>> {
     let palettes = colour_library::category(library)?;
     let item = item.min(palettes.len() as i64 - 1).max(0) as usize;
     let mut palette: Vec<[u8; 3]> = palettes.get(item)?.to_vec();

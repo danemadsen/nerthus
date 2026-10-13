@@ -28,7 +28,7 @@ const FAMILY_COLOR: egui::Color32 = egui::Color32::from_rgb(0x99, 0x99, 0x99);
 const SHORT_CODE_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(0x45, 0x4d, 0x56, 0x99);
 /// What a search with nothing typed falls back to (`NodeSearchManager`'s
 /// catch).
-const FALLBACK_FAVORITES: [&str; 6] = ["Mountain", "Ridge", "Perlin", "Erosion2", "Adjust", "Combine"];
+const FALLBACK_FAVORITES: [&str; 6] = ["Mountain", "Ridge", "Perlin", "ErosionPro", "Adjust", "Combine"];
 
 /// What the search is for.
 #[derive(Clone, Debug, PartialEq)]
@@ -585,10 +585,10 @@ mod tests {
     fn a_comma_takes_the_first_result_into_the_list() {
         let mut popup = SearchPopup::new(SearchMode::Navigate, Pos2::ZERO, [0.0, 0.0]);
         popup.text = "Mountain, ero".to_string();
-        let erosion = Catalogue::get().node("Erosion2").unwrap();
+        let erosion = Catalogue::get().node("ErosionPro").unwrap();
         add_selection(&mut popup, &Found::Node(erosion));
         // `String.Remove(text, LastIndexOf(',') + 1)`: the space after the
         // kept comma goes too.
-        assert_eq!(popup.text, "Mountain,Erosion2, ");
+        assert_eq!(popup.text, "Mountain,ErosionPro, ");
     }
 }

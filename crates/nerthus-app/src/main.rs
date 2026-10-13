@@ -19,6 +19,7 @@ mod node_files;
 mod node_ui;
 mod overlays;
 mod presets;
+mod progress;
 mod theme;
 mod ui;
 mod updates;

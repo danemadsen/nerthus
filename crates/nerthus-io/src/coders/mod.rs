@@ -6,7 +6,9 @@
 mod bc7_tables;
 pub mod dds;
 pub mod dng;
+pub mod emf;
 pub mod jp2;
 pub mod miff;
+pub mod psd;
 pub mod svg;
 pub mod webp;

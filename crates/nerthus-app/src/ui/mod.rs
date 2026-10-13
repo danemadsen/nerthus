@@ -45,6 +45,7 @@ pub mod options_pages;
 mod options_window;
 mod painter;
 mod presets;
+mod progress_window;
 mod prompt;
 mod property_area;
 mod regions;
@@ -400,11 +401,15 @@ pub fn draw(
     ctx.set_zoom_factor(editor.user.options.ui_scale());
     if ui_state.document_serial != editor.document_serial {
         ui_state.reset_views();
+        // The project opens on the graph tab it was saved showing.
+        ui_state.graph.tab = editor.document.opening_tab();
         ui_state.document_serial = editor.document_serial;
     }
     // `--show` windows open once the first render is in, so what they
-    // report on has been built.
-    let mut pending: Vec<Command> = if editor.rendered() { std::mem::take(&mut ui_state.commands_at_launch) } else { Vec::new() };
+    // report on has been built (at once when nothing is previewed).
+    let nothing_to_render = editor.preview_node.is_none() && !editor.building && !editor.needs_build;
+    let launch_ready = editor.rendered() || nothing_to_render;
+    let mut pending: Vec<Command> = if launch_ready { std::mem::take(&mut ui_state.commands_at_launch) } else { Vec::new() };
     // What the floating viewport asked for last frame.
     pending.append(&mut ui_state.floating_commands);
     let floating = editor.user.options.viewport_floating();
@@ -495,6 +500,7 @@ pub fn draw(
     batch_window(&ctx, &mut editor, &mut ui_state);
     ui_state.clock = now;
     memory_dialogs::show_bake_progress(&ctx, &editor, &mut ui_state.bake_progress);
+    progress_window::show(&ctx, &mut editor);
     if let Some(recovery) = memory_dialogs::show_optimize_memory(&ctx, &mut ui_state.optimize_memory) {
         pending.extend(memory_dialogs::recovery_commands(recovery));
     }
@@ -547,6 +553,12 @@ pub fn draw(
     }
 
     commands::run(pending, &mut editor, &mut ui_state, &mut window);
+    // What the editor shows goes with the project (`TerrainState`), and
+    // the preview follows the project's lock through undo and redo.
+    let selected = editor.active_node();
+    editor.document.note_selected_node(selected);
+    editor.document.note_selected_tab(ui_state.graph.tab);
+    editor.follow_preview_lock();
     if let Some(values) = editor.camera_request.take() {
         link.camera_request.apply = Some(values);
     }

@@ -18,6 +18,7 @@ image.workspace = true
 image-webp.workspace = true
 jpeg2k.workspace = true
 resvg.workspace = true
+ttf-parser.workspace = true
 tiff.workspace = true
 exr.workspace = true
 half.workspace = true

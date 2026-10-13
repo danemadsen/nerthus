@@ -18,6 +18,9 @@ pub struct Prompt {
     pub yes: Option<Command>,
     /// What No runs, when it does more than close the box.
     pub no: Option<Command>,
+    /// What closing the box without an answer (Escape, a click outside)
+    /// runs, when anything.
+    pub dismissed: Option<Command>,
     /// Whether there is a Cancel button (Yes, No and Cancel).
     pub cancel: bool,
     /// The task dialog's footer (`MBox`'s footnote).
@@ -26,17 +29,17 @@ pub struct Prompt {
 
 impl Prompt {
     pub fn new(caption: &str, text: &str, yes: Command) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: None, cancel: false, footnote: None }
+        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: None, dismissed: None, cancel: false, footnote: None }
     }
 
     pub fn message(caption: &str, text: &str) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: None, no: None, cancel: false, footnote: None }
+        Self { caption: caption.to_string(), text: text.to_string(), yes: None, no: None, dismissed: None, cancel: false, footnote: None }
     }
 
     /// Yes, No and Cancel, each with its own command but Cancel (which
     /// only closes the box).
     pub fn yes_no_cancel(caption: &str, text: &str, yes: Command, no: Command) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: Some(no), cancel: true, footnote: None }
+        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: Some(no), dismissed: None, cancel: true, footnote: None }
     }
 }
 
@@ -83,7 +86,9 @@ pub fn show(ctx: &egui::Context, ui_state: &mut UiState, commands: &mut Vec<Comm
     match answer {
         Some(Answer::Yes) => commands.extend(prompt.yes.clone()),
         Some(Answer::No) => commands.extend(prompt.no.clone()),
-        Some(Answer::Cancel) | None => {}
+        Some(Answer::Cancel) => {}
+        None if response.should_close() => commands.extend(prompt.dismissed.clone()),
+        None => {}
     }
     if answer.is_some() || response.should_close() {
         ui_state.prompt = None;

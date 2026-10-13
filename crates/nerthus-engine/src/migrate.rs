@@ -43,7 +43,7 @@ pub fn migrate_node(node: &mut NodeData, spec: &NodeSpec) {
 fn migrate(node: &mut NodeData) {
     let version = node.version();
     match node.type_name.as_str() {
-        "Erosion2" => {
+        "ErosionPro" => {
             if version < 2 {
                 node.add_port("Precipitation", "In");
             }

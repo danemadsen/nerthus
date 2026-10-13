@@ -10,7 +10,7 @@ use crate::colour;
 use crate::colour_transport::{self, ColourTransportSettings};
 use crate::combiner::{self, BlendMode};
 use crate::masking;
-use super::colorize::satmap_gradient;
+use super::colorize::satellite_map_gradient;
 use nerthus_image::octree::{self, Dither};
 use nerthus_image::quanta;
 
@@ -308,7 +308,7 @@ impl NodeBuilder for Halftone {
 }
 
 /// The gradient a colour port's source node holds (`GetGradientData`):
-/// a SatMap's palette data, a Synth's samples or a CLUTer's gradient.
+/// a SatelliteMap's palette data, a Synth's samples or a CLUTer's gradient.
 fn gradient_data(source: Option<&NodeData>) -> Option<Vec<[f32; 4]>> {
     let source = source?;
     let value = |name: &str| source.values.get(name).unwrap_or(&Value::Null);
@@ -319,13 +319,13 @@ fn gradient_data(source: Option<&NodeData>) -> Option<Vec<[f32; 4]>> {
         Some(list.collect())
     };
     match source.type_name.as_str() {
-        "SatMap" => {
+        "SatelliteMap" => {
             let library = value("Library").as_str().unwrap_or("Rock");
             let item = value("LibraryItem").as_i64().unwrap_or(0);
             let reverse = value("Reverse").as_bool().unwrap_or(false);
             let range_value = value("Range");
             let member = |key: &str| range_value.get(key).and_then(Value::as_f64).unwrap_or(0.0) as f32;
-            satmap_gradient(library, item, reverse, [member("X"), member("Y")])
+            satellite_map_gradient(library, item, reverse, [member("X"), member("Y")])
         }
         "Synth" => float4_list("Data"),
         "CLUTer" => float4_list("GradientData"),

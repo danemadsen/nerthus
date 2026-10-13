@@ -39,7 +39,7 @@ mod tests {
               "Nodes": {
                 "101": {"$type": "MOUNTAIN_TYPE", "Id": 101, "Name": "Mountain", "Position": {"X": 26000.0, "Y": 26000.0},
                   "Ports": {"$values": [{"Name": "In", "Type": "PrimaryIn"}, {"Name": "Out", "Type": "PrimaryOut"}]}},
-                "102": {"$type": "EROSION_TYPE", "Id": 102, "Name": "Erosion2", "Position": {"X": 26300.0, "Y": 26000.0},
+                "102": {"$type": "EROSION_TYPE", "Id": 102, "Name": "ErosionPro", "Position": {"X": 26300.0, "Y": 26000.0},
                   "Ports": {"$values": [{"Name": "In", "Type": "PrimaryIn, Required", "Record": {"From": 101, "To": 102, "FromPort": "Out", "ToPort": "In", "IsValid": true}}, {"Name": "Out", "Type": "PrimaryOut"}]}}
               },
               "Groups": {}, "Notes": {},
@@ -49,13 +49,15 @@ mod tests {
           }]}
         }"#;
         let with_mountain = template.replace("MOUNTAIN_TYPE", &node_type("Mountain"));
-        let text = with_mountain.replace("EROSION_TYPE", &node_type("Erosion2"));
+        let text = with_mountain.replace("EROSION_TYPE", &node_type("ErosionPro"));
         let project = Project::parse(&text).unwrap();
         let written = to_fragment_json(project.terrain());
         assert!(written.starts_with("{\r\n  \"$id\": \"1\""));
+        assert!(written.contains(&node_type("ErosionPro")), "renamed nodes are written with the format's name");
         let (terrain, unknown) = parse_fragment(&written).unwrap();
         assert!(unknown.is_empty());
         assert_eq!(terrain.nodes.len(), 2);
+        assert_eq!(terrain.nodes[&102].type_name, "ErosionPro");
         let record = terrain.nodes[&102].port("In").and_then(|port| port.record.clone()).unwrap();
         assert_eq!((record.from, record.from_port.as_str()), (101, "Out"));
         assert_eq!(terrain.width, 5000.0);

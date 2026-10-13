@@ -17,6 +17,7 @@ use bevy::window::{FileDragAndDrop, PrimaryWindow, WindowCloseRequested};
 
 use crate::document::Document;
 use crate::editor::Editor;
+use crate::user::locations;
 
 pub use autosave::{install_disaster_recovery, Autosave, AUTOSAVE_CHOICES};
 pub use collection::{add_macro, all_recent, consume_documents, export_to, install, installed_macros, ExportForm, MacroCollection};
@@ -102,6 +103,10 @@ pub enum FileCommand {
     OpenExample { path: PathBuf, mode: OpenMode },
     /// Export Macro's questions are answered: save it.
     ExportMacroChecked,
+    /// The orphan question's answers (`RecoverOrphans`): the orphans get
+    /// tabs of their own, or are deleted.
+    RecoverOrphans,
+    DeleteOrphans,
 }
 
 /// How a file from the Start dialog or the examples opens (their buttons'
@@ -167,11 +172,15 @@ pub struct Message {
     pub footnote: Option<String>,
     /// What Yes does; none for a plain message.
     pub yes: Option<FileCommand>,
+    /// What No does, when it does more than close the box.
+    pub no: Option<FileCommand>,
+    /// What closing the box without an answer does, when anything.
+    pub dismissed: Option<FileCommand>,
 }
 
 impl Message {
     pub fn new(caption: &str, text: &str) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), footnote: None, yes: None }
+        Self { caption: caption.to_string(), text: text.to_string(), footnote: None, yes: None, no: None, dismissed: None }
     }
 }
 
@@ -194,10 +203,6 @@ pub struct FileState {
     pub export_macro: Option<ExportForm>,
     /// The project being saved needs a thumbnail.
     pub thumbnail_request: Option<PathBuf>,
-    /// The latest folders the open and save dialogs used
-    /// (`MRULocations`).
-    pub last_open_folder: Option<PathBuf>,
-    pub last_save_folder: Option<PathBuf>,
     /// Exit was answered: the app closes this frame.
     pub exit_now: bool,
     /// A graph tab to show once an import added it, and whether to frame
@@ -234,7 +239,7 @@ pub fn open_example(editor: &mut Editor, path: &Path) -> bool {
 fn open_with(editor: &mut Editor, path: &Path, remember: bool) -> bool {
     editor.files.start_dialog_open = false;
     editor.files.autosave.clear_entries();
-    let document = match Document::open(path) {
+    let mut document = match Document::open(path) {
         Ok(document) => document,
         Err(error) => {
             open_failed(editor, path, &format!("{error:#}"));
@@ -248,7 +253,9 @@ fn open_with(editor: &mut Editor, path: &Path, remember: bool) -> bool {
     }
     let unknown = document.project.unknown_types.clone();
     autosave::save_migration_copy(&document, path);
+    document.recover_save_definitions();
     editor.set_document(document);
+    ask_about_orphans(editor);
     if remember {
         editor.user.add_recent(path);
         collection::add_to_all_recent(path);
@@ -259,6 +266,20 @@ fn open_with(editor: &mut Editor, path: &Path, remember: bool) -> bool {
         editor.report(format!("Unknown node types: {}", unknown.join(", ")));
     }
     true
+}
+
+/// `Shell.RecoverOrphans`: nodes on graph tabs the project does not have
+/// are offered tabs of their own; No deletes them. Closing the question
+/// without an answer counts as Yes, as only No deletes.
+fn ask_about_orphans(editor: &mut Editor) {
+    if editor.document.orphan_nodes().is_empty() {
+        return;
+    }
+    let mut question = Message::new(crate::document::ORPHANS_CAPTION, crate::document::ORPHANS_TEXT);
+    question.yes = Some(FileCommand::RecoverOrphans);
+    question.no = Some(FileCommand::DeleteOrphans);
+    question.dismissed = Some(FileCommand::RecoverOrphans);
+    editor.files.messages.push(question);
 }
 
 /// `Session_FileOpenFailed`: "Failed to open file: …" with the reason.
@@ -425,7 +446,10 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
     let editor = editor.as_mut();
     match request {
         FileDialog::Open { folder } => {
-            let start = folder.or_else(|| editor.files.last_open_folder.clone()).unwrap_or_else(|| editor.user.preferences.projects_folder());
+            // `OpenFileDialog(location)`: the folder asked for, else where
+            // the last file was opened from, else the projects folder.
+            let noted = editor.user.locations.folder(locations::OPEN);
+            let start = folder.or(noted).unwrap_or_else(|| editor.user.preferences.projects_folder());
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
             if start.is_dir() {
@@ -434,7 +458,7 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
             let Some(path) = dialog.pick_file() else {
                 return;
             };
-            editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
+            editor.user.locations.set_from_file(locations::OPEN, &path);
             open_project(editor, &path);
         }
         FileDialog::SaveAsThenContinue => {
@@ -442,7 +466,7 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
             dialog = dialog.set_file_name(file_name);
-            if let Some(folder) = editor.files.last_save_folder.clone().filter(|folder| folder.is_dir()) {
+            if let Some(folder) = editor.user.locations.folder(locations::SAVE) {
                 dialog = dialog.set_directory(folder);
             }
             let Some(path) = dialog.save_file() else {
@@ -451,7 +475,6 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
                 return;
             };
             let path = with_extension(path, "terrain");
-            editor.files.last_save_folder = path.parent().map(Path::to_path_buf);
             editor.save_to(&path);
             if editor.document.dirty {
                 editor.files.pending = None;
@@ -462,7 +485,7 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
         FileDialog::Repair => {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter(PROJECT_FILTER.0, PROJECT_FILTER.1);
-            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+            if let Some(folder) = editor.user.locations.folder(locations::OPEN) {
                 dialog = dialog.set_directory(folder);
             }
             let Some(path) = dialog.pick_file() else {
@@ -483,7 +506,7 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter("Nerthus Project File (*.terrain)", &["terrain"]);
             dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
-            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+            if let Some(folder) = editor.user.locations.folder(locations::OPEN) {
                 dialog = dialog.set_directory(folder);
             }
             let Some(path) = dialog.pick_file() else {
@@ -494,19 +517,20 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
         FileDialog::ImportTorlet => {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
-            if let Some(folder) = editor.files.last_open_folder.clone().filter(|folder| folder.is_dir()) {
+            if let Some(folder) = editor.user.locations.folder(locations::OPEN) {
                 dialog = dialog.set_directory(folder);
             }
             let Some(path) = dialog.pick_file() else {
                 return;
             };
-            editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
+            editor.user.locations.set_from_file(locations::OPEN, &path);
             import_graph(editor, &path);
         }
         FileDialog::ImportImage { tab, position } => {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter("All Image Formats", &IMAGE_EXTENSIONS);
-            let start = editor.files.last_open_folder.clone().unwrap_or_else(|| editor.user.preferences.projects_folder());
+            let noted = editor.user.locations.folder(locations::OPEN);
+            let start = noted.unwrap_or_else(|| editor.user.preferences.projects_folder());
             if start.is_dir() {
                 dialog = dialog.set_directory(start);
             }
@@ -518,14 +542,14 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
         FileDialog::ExportTorlet { tab } => {
             let mut dialog = rfd::FileDialog::new();
             dialog = dialog.add_filter("Nerthus Graph Fragment (*.tfrag)", &["tfrag"]);
-            if let Some(folder) = editor.files.last_save_folder.clone().filter(|folder| folder.is_dir()) {
+            if let Some(folder) = editor.user.locations.folder(locations::SAVE) {
                 dialog = dialog.set_directory(folder);
             }
             let Some(path) = dialog.save_file() else {
                 return;
             };
             let path = with_extension(path, "tfrag");
-            editor.files.last_save_folder = path.parent().map(Path::to_path_buf);
+            editor.user.locations.set_from_file(locations::SAVE, &path);
             let fragment = editor.document.graph_fragment(tab);
             let text = nerthus_engine::to_fragment_json(&fragment);
             if let Err(error) = std::fs::write(&path, text) {
@@ -559,7 +583,6 @@ pub const IMAGE_EXTENSIONS: [&str; 21] = ["exr", "graw", "jpg", "png", "r16", "r
 /// File › Import › Image (`ImportImage`): a File node reading the image,
 /// in the middle of the graph's view, selected.
 fn import_image(editor: &mut Editor, path: &Path, tab: usize, position: [f32; 2]) {
-    editor.files.last_open_folder = path.parent().map(Path::to_path_buf);
     let Some(id) = editor.document.add_node("File", position) else {
         return;
     };

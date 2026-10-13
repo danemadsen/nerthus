@@ -194,7 +194,7 @@ pub fn node_ui(node: &NodeData, nodes: &IndexMap<i32, NodeData>, automation: &Au
             ui.show_all(&["HoudiniOut", "InformationHoudini"], !path_bound);
             ui.show("OutputPath", !props.is("Location", "BuildFolder"));
         }
-        "Erosion2" => {
+        "ErosionPro" => {
             let enabled = props.boolean("Enable");
             ui.show_all(&["Reverse", "Altitude", "Slope", "RainShadow", "Direction", "DirectionalPrecipitation"], enabled);
             let directional = enabled && props.boolean("DirectionalPrecipitation");
@@ -320,7 +320,7 @@ pub fn node_ui(node: &NodeData, nodes: &IndexMap<i32, NodeData>, automation: &Au
             ui.show("SunIntensity", direct);
             ui.show("AmbientIntensity", ambient);
         }
-        "ColorErosion" => ui.enable("LaminarFlow", props.float("Diffusion") == 0.0),
+        "HueErosion" => ui.enable("LaminarFlow", props.float("Diffusion") == 0.0),
         "GroundTexture" => ui.show_all(&["Coverage", "Density"], props.is("Method", "Harsh")),
         "Dilate" => ui.show("Shape", props.is("Kernel", "Rectangle")),
         "PointCloud" => ui.show("Scale", !props.is("Format", "XYZ")),
@@ -430,8 +430,8 @@ mod tests {
     }
 
     #[test]
-    fn erosion2_hides_inhibitors_until_enabled() {
-        let spec = Catalogue::get().node("Erosion2").unwrap();
+    fn erosion_pro_hides_inhibitors_until_enabled() {
+        let spec = Catalogue::get().node("ErosionPro").unwrap();
         let mut node = NodeData::new(spec, 1, 1);
         let nodes = IndexMap::new();
         let automation = Automation::default();

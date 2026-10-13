@@ -157,7 +157,7 @@ pub fn register(registry: &mut Registry) {
     registry.add_node("Contours", cartography::Contours);
     registry.add_node("Grid", cartography::Grid);
 
-    registry.add_node("Erosion2", erosion::Erosion2);
+    registry.add_node("ErosionPro", erosion::ErosionPro);
     registry.add_node("EasyErosion", erosion::EasyErosion);
     registry.add_node("Hillify", erosion::Hillify);
     registry.add_node("Lichtenberg", erosion::Lichtenberg);
@@ -197,8 +197,8 @@ pub fn register(registry: &mut Registry) {
     registry.add_node("Var", utilities::Var);
     registry.add_node("MathX", utilities::MathX);
     registry.add_node("HSL", utilities::Hsl);
-    registry.add_node("SatMap", colorize::SatMap);
-    registry.add_node("ColorErosion", colorize::ColorErosion);
+    registry.add_node("SatelliteMap", colorize::SatelliteMap);
+    registry.add_node("HueErosion", colorize::HueErosion);
     registry.add_node("SuperColor", colorize::SuperColor);
     registry.add_node("Weathering", colorize::Weathering);
     registry.add_node("RGBMerge", utilities::RgbMerge);

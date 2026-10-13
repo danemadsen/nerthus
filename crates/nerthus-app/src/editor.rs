@@ -17,6 +17,7 @@ use crate::compute::ComputeState;
 use crate::document::Document;
 use crate::export_build::ExportBuild;
 use crate::launch::LaunchOptions;
+use crate::progress::{ProgressStep, ProgressWindow, StepEnd, WorkProgress};
 use crate::user::User;
 pub use crate::viewport_render::RenderMode;
 use crate::viewport_camera;
@@ -25,6 +26,9 @@ use crate::worker::{BakeJob, BuildEvent, BuildRequest, BuildWorker, NodeCache};
 
 /// Preview resolutions offered (`Preview > Resolution`).
 pub const PREVIEW_RESOLUTIONS: [usize; 4] = [512, 1024, 2048, 4096];
+
+/// `CloseFile`'s progress window.
+const FREEZING_TITLE: &str = "Freezing Cached Data to Disk";
 
 /// One node's build as the graph shows it.
 #[derive(Clone, Debug)]
@@ -67,7 +71,8 @@ pub struct CopiedNode {
 #[derive(Clone, Debug)]
 pub enum DialogRequest {
     SaveAs,
-    BrowseFile { node: i32, parameter: String, extensions: Vec<String>, folder: bool },
+    /// A file parameter's folder button, from the path it holds.
+    BrowseFile { node: i32, parameter: String, extensions: Vec<String>, folder: bool, current: String },
     /// The Data View's `btnBrowse`: the folder builds go under, starting
     /// from the destination typed when it is a folder.
     BuildDestination { current: String },
@@ -195,14 +200,21 @@ pub struct Editor {
     pending_macros: Option<nerthus_engine::macros::MacroLibrary>,
     /// The Build and Export running or last run.
     pub export_build: Option<ExportBuild>,
-    /// A Build and Export waiting for Save As (whether to open the folder
-    /// after).
-    pending_build: Option<bool>,
+    /// A Build and Export choice waiting for Save As, and once the project
+    /// is saved, waiting to go on.
+    pub(crate) pending_build: Option<crate::export_build::BuildChoice>,
+    pub resume_build: Option<crate::export_build::BuildChoice>,
+    /// Save cached build's work for the next request.
+    pub(crate) pending_cached_export: Option<crate::export_build::CachedExportJob>,
     /// Bake work for the next request: nodes to bake, nodes just unbaked,
     /// and Force load baked cache.
     pending_bake: Option<BakeJob>,
     pending_unbake: Vec<i32>,
     pending_load_all_bakes: bool,
+    /// A request goes to the build thread even with nothing to build, for
+    /// its preparation alone (a project closed or opened: previews written,
+    /// bakes loaded, previews read back).
+    pending_preparation: bool,
     /// Nodes whose kept data the next build drops (Purge Cache).
     pending_forget: Vec<i32>,
     /// Node commands for the build thread (Fit Curve, Synthesize Colors).
@@ -224,6 +236,11 @@ pub struct Editor {
     pub files: crate::files::FileState,
     /// The MCP server as Tools › MCP Server shows it.
     pub mcp: crate::mcp::McpStatus,
+    /// A long operation's progress window, while it shows
+    /// (`ProgressDialog`).
+    pub progress: Option<ProgressWindow>,
+    /// Exit waits for the project's previews to be written.
+    exit_after_freeze: bool,
 }
 
 impl Editor {
@@ -287,9 +304,12 @@ impl Editor {
             pending_macros: None,
             export_build: None,
             pending_build: None,
+            resume_build: None,
+            pending_cached_export: None,
             pending_bake: None,
             pending_unbake: Vec::new(),
             pending_load_all_bakes: false,
+            pending_preparation: false,
             pending_forget: Vec::new(),
             pending_node_commands: Vec::new(),
             watched: Vec::new(),
@@ -301,6 +321,8 @@ impl Editor {
             compute: ComputeState::default(),
             files: crate::files::FileState::default(),
             mcp: crate::mcp::McpStatus::default(),
+            progress: None,
+            exit_after_freeze: false,
         };
         editor.load_viewport_state();
         editor.select_initial_node();
@@ -345,6 +367,78 @@ impl Editor {
         self.thaw_on_open();
         // The disk cache's tasks go with the next request, preview or not.
         self.needs_build = self.preview_node.is_some() || !self.disk_cache.tasks.is_empty();
+        let opening = self.document.path.is_some();
+        self.show_switch_progress(opening);
+    }
+
+    /// Shows the progress window for `steps`, in place of any other.
+    pub fn show_progress(&mut self, steps: Vec<ProgressStep>) {
+        self.progress = Some(ProgressWindow::new(steps));
+    }
+
+    /// The progress a project's closing and opening show: `CloseFile`'s
+    /// freeze when it has one, then `Session_FileOpened`'s "Opening
+    /// file..." for an opened project. Both end as the build thread gets
+    /// through the next request's preparation, which goes even with
+    /// nothing to build.
+    fn show_switch_progress(&mut self, opening: bool) {
+        let freezing = self.disk_cache.tasks.iter().any(|task| matches!(task, crate::disk_cache::DiskCacheTask::Freeze { .. }));
+        let mut steps = Vec::new();
+        if freezing {
+            steps.push(ProgressStep::new(FREEZING_TITLE, StepEnd::Frozen));
+        }
+        if opening {
+            steps.push(ProgressStep::new("Opening file...", StepEnd::Prepared { after: self.generation }));
+        }
+        if steps.is_empty() {
+            return;
+        }
+        self.pending_preparation = true;
+        self.needs_build = true;
+        self.show_progress(steps);
+    }
+
+    /// Exit (`Shell_Closing`'s `CloseFile`): when the project's previews
+    /// go to disk as it closes, they are written first, with the progress
+    /// window, and Nerthus closes once they are. False when there is
+    /// nothing to write.
+    pub fn exit_when_frozen(&mut self) -> bool {
+        let Some((store, terrain)) = self.closing_freeze() else {
+            return false;
+        };
+        self.disk_cache.tasks.push(crate::disk_cache::DiskCacheTask::Freeze { store, terrain, done: None });
+        self.exit_after_freeze = true;
+        self.needs_build = true;
+        self.show_progress(vec![ProgressStep::new(FREEZING_TITLE, StepEnd::Frozen)]);
+        true
+    }
+
+    /// What the build thread says of a long operation, for the progress
+    /// window; a freeze Exit waited for lets Nerthus close.
+    fn take_progress(&mut self, progress: WorkProgress) {
+        if progress == WorkProgress::Frozen && self.exit_after_freeze {
+            self.exit_after_freeze = false;
+            self.disk_cache.frozen_for_exit = true;
+            self.files.exit_now = true;
+        }
+        let Some(window) = self.progress.as_mut() else {
+            return;
+        };
+        window.take(&progress);
+        if window.is_done() {
+            self.progress = None;
+        }
+    }
+
+    /// The Region Manager has its preview: its progress step ends.
+    pub fn region_preview_ready(&mut self) {
+        let Some(window) = self.progress.as_mut() else {
+            return;
+        };
+        window.region_preview_ready();
+        if window.is_done() {
+            self.progress = None;
+        }
     }
 
     /// Opens a project as `Shell.OpenFile` does (see
@@ -358,9 +452,16 @@ impl Editor {
         // the new one's once saved (`oldCachePath`).
         let renamed = self.document.path.as_deref().is_some_and(|current| current != path);
         let old_bakes = if renamed { self.bake_store() } else { None };
+        // `SaveFile`: the selection as it stands, then
+        // `SanitizeStateObject`.
+        let selected = self.active_node();
+        self.document.note_selected_node(selected);
+        self.document.sanitize_state();
         match self.document.save(path) {
             Ok(()) => {
                 self.user.add_recent(path);
+                // `SaveFile` notes the folder of every save for Save As.
+                self.user.locations.set_from_file(crate::user::locations::SAVE, path);
                 self.report(format!("Saved {}", path.display()));
                 crate::files::saved(self, path);
             }
@@ -395,13 +496,13 @@ impl Editor {
                 self.launch_export_build(&path);
             }
             None => {
-                self.pending_build = Some(open_folder);
+                self.pending_build = Some(crate::export_build::BuildChoice { open_folder, close: false });
                 self.dialog = Some(DialogRequest::SaveAs);
             }
         }
     }
 
-    fn launch_export_build(&mut self, path: &Path) {
+    pub(crate) fn launch_export_build(&mut self, path: &Path) {
         // As the build will see it: a region it builds sets the resolution.
         let mut definition = self.document.build_definition();
         let region = nerthus_export::build::set_up_region(self.document.terrain(), &mut definition, None);
@@ -423,14 +524,8 @@ impl Editor {
         if !build.poll() {
             return;
         }
-        let summary = if let Some(refusal) = &build.refusal {
-            format!("Build refused: {refusal}")
-        } else if build.cancelled {
-            "Build cancelled".to_string()
-        } else {
-            format!("Build finished in {:.1} s: {} files, {} problems", build.seconds(), build.files, build.failures)
-        };
-        let open = build.open_folder && build.refusal.is_none() && !build.cancelled;
+        let summary = build.summary();
+        let open = build.opens_folder();
         let folder = build.folder.clone();
         self.report(summary);
         if let (true, Some(folder)) = (open, folder)
@@ -462,7 +557,8 @@ impl Editor {
     }
 
     /// The project's macros (`M.EnsureMacros`), from the macro collection
-    /// or a `Macros` folder beside the project.
+    /// or a `Macros` folder beside the project, with the macros they depend
+    /// on; dependencies the project did not list join its list.
     fn load_macros(&mut self) {
         let ids = self.document.project.macro_ids();
         if ids.is_empty() {
@@ -470,11 +566,12 @@ impl Editor {
             return;
         }
         let folders = crate::files::macro_folders(self.document.path.as_deref());
-        let (library, problems) = nerthus_engine::macros::load_project_macros_from(&ids, &folders);
-        for (id, problem) in problems {
+        let ensured = nerthus_engine::macros::ensure_project_macros(&ids, &folders);
+        for (id, problem) in ensured.problems {
             self.report(format!("Macro {id} could not be loaded: {problem}"));
         }
-        self.pending_macros = Some(library);
+        self.document.list_project_macros(&ensured.added);
+        self.pending_macros = Some(ensured.library);
     }
 
     /// Reads the project's macros again for the next build (a macro was
@@ -483,19 +580,24 @@ impl Editor {
         self.load_macros();
     }
 
-    /// Selects what was selected when the project was saved
-    /// (`State.SelectedNode`), else the last node.
+    /// What the project was saved showing (`Session_FileOpened`): the
+    /// node the preview is locked to (`Reconstruct`: the first node marked
+    /// locked) and the selected node (`TerrainState.SelectedNode`), when
+    /// it is still there; otherwise nothing is selected.
     fn select_initial_node(&mut self) {
-        let state = self.document.project.assets[0].extra.get("State");
-        let saved = state.and_then(|state| state.get("SelectedNode")).and_then(|value| value.as_i64()).map(|id| id as i32);
-        let terrain = self.document.terrain();
-        let saved_exists = saved.filter(|id| terrain.nodes.contains_key(id));
-        let fallback = terrain.nodes.keys().last().copied();
-        let chosen = saved_exists.or(fallback);
+        let locked = self.document.settle_preview_lock();
+        if let Some(locked) = locked {
+            self.preview_locked = true;
+            self.preview(Some(locked));
+        }
+        let saved = self.document.saved_selected_node();
+        let chosen = saved.filter(|id| self.document.node(*id).is_some());
         self.selection.clear();
         if let Some(id) = chosen {
             self.selection.push(id);
-            self.preview(Some(id));
+            if !self.preview_locked {
+                self.preview(Some(id));
+            }
         }
     }
 
@@ -547,17 +649,41 @@ impl Editor {
         self.needs_build = node.is_some();
     }
 
-    /// `Lock Preview to Node` (F).
-    pub fn toggle_preview_lock(&mut self) {
-        self.preview_locked = !self.preview_locked;
-        if self.preview_locked {
-            let active = self.active_node();
-            if active.is_some() {
+    /// `GraphControl.LockPreview` (F, Lock Preview to Node, the node menu's
+    /// Lock Preview): the node's preview lock is toggled as an edit that
+    /// is saved with the project; locking takes the lock from whichever
+    /// node had it.
+    pub fn lock_preview(&mut self, node: i32) {
+        let Some(name) = self.document.node(node).map(|data| data.name.clone()) else {
+            return;
+        };
+        let Some(locked) = self.document.toggle_preview_lock(node) else {
+            return;
+        };
+        let message = if locked { format!("Preview locked to {name}.") } else { "Preview lock removed.".to_string() };
+        self.report(message);
+        self.follow_preview_lock();
+    }
+
+    /// The preview follows the project's lock (`Node.IsLocked`), which
+    /// undo, redo and deleting nodes change with the rest of the project:
+    /// locked, the locked node is shown; unlocked, the selection.
+    pub fn follow_preview_lock(&mut self) {
+        let locked = self.document.locked_node();
+        let shown = if self.preview_locked { self.preview_node } else { None };
+        if locked == shown {
+            return;
+        }
+        match locked {
+            Some(node) => {
+                self.preview_locked = true;
+                self.preview(Some(node));
+            }
+            None => {
+                self.preview_locked = false;
+                let active = self.active_node();
                 self.preview(active);
             }
-        } else {
-            let active = self.active_node();
-            self.preview(active);
         }
     }
 
@@ -608,37 +734,44 @@ impl Editor {
         !self.document.dirty
     }
 
-    /// Graph › Baking › Bake Selected (`BakeSelectedNode`).
-    pub fn bake_selected(&mut self) {
-        let Some(node) = self.active_node() else {
-            return;
-        };
+    /// Graph › Baking › Bake Selected (`BakeSelectedNode`) up to the bake:
+    /// the node to bake once its chain is checked and the project saved.
+    pub fn prepare_bake_selected(&mut self) -> Option<i32> {
+        let node = self.active_node()?;
         let is_macro = self.document.node(node).is_some_and(|data| data.type_name == "Macro");
         if is_macro {
             self.report("Cannot bake macro node: Selected node is a Macro and cannot be baked.");
-            return;
+            return None;
         }
         if !self.bake_chain_is_valid(&[node]) || !self.save_for_bake() {
-            return;
+            return None;
         }
-        self.start_bake(vec![node]);
+        Some(node)
     }
 
     /// Graph › Baking › Bake Required Nodes, once confirmed
     /// (`miBakeGates_Click`): every node that needs baking, orphans aside.
     pub fn bake_required(&mut self) {
+        if let Some(nodes) = self.prepare_bake_required() {
+            self.start_bake(nodes);
+        }
+    }
+
+    /// Bake Required Nodes up to the bake: the nodes to bake once their
+    /// chains are checked and the project saved.
+    pub fn prepare_bake_required(&mut self) -> Option<Vec<i32>> {
         let nodes = bake::required_nodes(self.document.terrain());
         if nodes.is_empty() {
             self.report("No nodes need baking.");
-            return;
+            return None;
         }
         if !self.bake_chain_is_valid(&nodes) || !self.save_for_bake() {
-            return;
+            return None;
         }
-        self.start_bake(nodes);
+        Some(nodes)
     }
 
-    fn start_bake(&mut self, nodes: Vec<i32>) {
+    pub(crate) fn start_bake(&mut self, nodes: Vec<i32>) {
         let resolution = self.document.build_definition().bake_resolution;
         self.report(format!("Please wait... Baking at {resolution} x {resolution} may take some time depending on the number of nodes."));
         self.pending_bake = Some(BakeJob { nodes, resolution });
@@ -820,10 +953,14 @@ impl Editor {
         self.document.set_values_quietly(node, &values);
     }
 
-    /// Force load baked cache.
+    /// Force load baked cache (`miBakeLoadCache_Click`): every bake
+    /// loaded, with the progress window; the project counts as changed.
     pub fn load_baked_cache(&mut self) {
         self.pending_load_all_bakes = true;
         self.needs_build = true;
+        self.document.dirty = true;
+        let step = ProgressStep::new("Loading Baked Cache", StepEnd::Prepared { after: self.generation });
+        self.show_progress(vec![step]);
     }
 
     /// The Bake menu's resolution, once any bakes it costs were dropped
@@ -875,7 +1012,8 @@ impl Editor {
     pub(crate) fn request_build(&mut self, worker: &BuildWorker) {
         let bake_work = self.pending_bake.is_some() || !self.pending_unbake.is_empty() || self.pending_load_all_bakes || !self.pending_node_commands.is_empty();
         let bake_work = bake_work || !self.disk_cache.tasks.is_empty();
-        let bake_work = bake_work || self.watched_refresh;
+        let bake_work = bake_work || self.watched_refresh || self.pending_preparation;
+        let bake_work = bake_work || self.pending_cached_export.is_some();
         if let Some(target) = self.preview_node
             && !self.document.terrain().nodes.contains_key(&target)
         {
@@ -885,14 +1023,26 @@ impl Editor {
             return;
         }
         let target = self.preview_node.unwrap_or(0);
-        if !self.engine_active {
+        // Exit's freeze goes even with the engine suspended.
+        if !self.engine_active && !self.exit_after_freeze {
+            // Nothing the progress window waits for comes while it is.
+            if let Some(window) = self.progress.as_mut() {
+                window.abandon_work();
+                if window.is_done() {
+                    self.progress = None;
+                }
+            }
             if self.pending_bake.take().is_some() {
                 self.baking = false;
                 self.report("Error! Bake failed. Ensure all nodes are valid and can build properly. (The engine is paused.)");
             }
+            if let Some(job) = self.pending_cached_export.take() {
+                job.abandon("The engine is paused.");
+            }
             return;
         }
         self.generation += 1;
+        self.pending_preparation = false;
         let (stale, clear) = self.document.take_stale();
         for node in &stale {
             self.statuses.remove(node);
@@ -923,6 +1073,7 @@ impl Editor {
             watched_refresh: std::mem::take(&mut self.watched_refresh),
             disk_cache: self.disk_cache_settings(),
             disk_cache_tasks: std::mem::take(&mut self.disk_cache.tasks),
+            cached_export: self.pending_cached_export.take(),
         };
         let order = nerthus_engine::Engine::build_order(&asset.terrain, target);
         self.build_total = order.iter().filter(|id| self.status(**id).state != NodeState::Built).count();
@@ -972,6 +1123,7 @@ impl Editor {
             }
             BuildEvent::Baked { nodes, error } => self.finish_bake(nodes, error),
             BuildEvent::DiskCache(message) => self.report(message),
+            BuildEvent::Progress(progress) => self.take_progress(progress),
             BuildEvent::Watched(watched) => {
                 self.watched_outputs.insert(watched.node, watched);
                 self.watched_revision += 1;
@@ -1456,7 +1608,9 @@ impl Plugin for EditorPlugin {
                 None => editor.report(format!("No node named {query}")),
             }
         }
-        editor.needs_build = editor.preview_node.is_some();
+        // The preview builds; opening may have asked for a request already
+        // (its preparation: bakes loaded, previews read back).
+        editor.needs_build |= editor.preview_node.is_some();
         if self.options.show.as_deref() == Some("build") {
             editor.start_export_build(false);
         }
@@ -1494,6 +1648,11 @@ fn process_builds(mut editor: ResMut<Editor>, worker: Res<BuildWorker>, renderer
         }
     }
     editor.show_render(&renderer, &mut preview);
+    // The Region Manager's "Loading preview" lasts until the render is in
+    // (or a build means there is none to wait for).
+    if editor.render_settled() || editor.building {
+        editor.region_preview_ready();
+    }
     if preview.tiled != editor.tiled_preview {
         preview.tiled = editor.tiled_preview;
         preview.revision += 1;
@@ -1518,22 +1677,42 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
     match request {
         DialogRequest::SaveAs => {
             let file_name = editor.document.file_name();
-            let dialog = rfd::FileDialog::new().add_filter("Nerthus Project File (*.terrain)", &["terrain"]).set_file_name(file_name);
+            let mut dialog = rfd::FileDialog::new();
+            dialog = dialog.add_filter("Nerthus Project File (*.terrain)", &["terrain"]);
+            dialog = dialog.set_file_name(file_name);
+            if let Some(folder) = editor.user.locations.folder(crate::user::locations::SAVE) {
+                dialog = dialog.set_directory(folder);
+            }
             let pending_build = editor.pending_build.take();
             if let Some(path) = dialog.save_file() {
                 let path = with_extension(path, "terrain");
                 editor.save_to(&path);
                 let saved = !editor.document.dirty;
-                if let (true, Some(_)) = (saved, pending_build) {
-                    editor.launch_export_build(&path);
+                // The Build and Export choice goes on (its checks and
+                // questions) now that there is a file.
+                if let (true, Some(choice)) = (saved, pending_build) {
+                    editor.resume_build = Some(choice);
                 }
             }
         }
-        DialogRequest::BrowseFile { node, parameter, extensions, folder } => {
+        DialogRequest::BrowseFile { node, parameter, extensions, folder, current } => {
+            // `BrowseButton_Click`: all the formats together, then each
+            // alone; it opens where the file (or folder) held is.
             let mut dialog = rfd::FileDialog::new();
             if !extensions.is_empty() {
                 let names: Vec<&str> = extensions.iter().map(String::as_str).collect();
-                dialog = dialog.add_filter("Supported files", &names);
+                let listed: Vec<String> = extensions.iter().map(|extension| format!(".{extension}")).collect();
+                let all_label = format!("All Files ({})", listed.join(","));
+                dialog = dialog.add_filter(all_label, &names);
+                for extension in &names {
+                    dialog = dialog.add_filter(format!("*.{extension}"), &[*extension]);
+                }
+            }
+            let current = Path::new(&current);
+            let held = if folder { current.is_dir() } else { current.is_file() };
+            let parent = current.parent().filter(|parent| held && !parent.as_os_str().is_empty());
+            if let Some(parent) = parent {
+                dialog = dialog.set_directory(parent);
             }
             let picked = if folder { dialog.pick_folder() } else { dialog.pick_file() };
             let Some(path) = picked else {
@@ -1701,7 +1880,7 @@ mod tests {
     fn mixer_editor() -> (Editor, i32, i32) {
         let mut document = Document::new();
         let base = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
-        let colours = document.add_node("SatMap", [26300.0, 26000.0]).unwrap();
+        let colours = document.add_node("SatelliteMap", [26300.0, 26000.0]).unwrap();
         let relief = document.add_node("Perlin", [26300.0, 26300.0]).unwrap();
         let mixer = document.add_node("Mixer", [26600.0, 26000.0]).unwrap();
         document.connect(base, "Out", colours, "In");
@@ -1737,6 +1916,39 @@ mod tests {
         source.node = Some(colours);
         let job = editor.render_job_for(&source, 3).unwrap();
         assert!(Arc::ptr_eq(&job.heightfield, editor.underlay.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn a_project_reopens_on_its_selection_and_preview_lock() {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [26300.0, 26000.0]).unwrap();
+        document.connect(mountain, "Out", erosion, "In");
+        let mut editor = Editor::new(document);
+        // Nothing was saved selected: nothing is.
+        assert!(editor.selection.is_empty());
+        assert_eq!(editor.preview_node, None);
+
+        editor.select(Some(mountain));
+        editor.lock_preview(mountain);
+        assert!(editor.preview_locked);
+        editor.select(Some(erosion));
+        assert_eq!(editor.preview_node, Some(mountain));
+
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("nerthus-reopen-{nanos}.terrain"));
+        editor.save_to(&path);
+        let reopened = Editor::new(Document::open(&path).unwrap());
+        std::fs::remove_file(&path).ok();
+        assert_eq!(reopened.selection, vec![erosion]);
+        assert!(reopened.preview_locked);
+        assert_eq!(reopened.preview_node, Some(mountain));
+
+        // Undoing the lock frees the preview for the selection.
+        editor.document.undo();
+        editor.follow_preview_lock();
+        assert!(!editor.preview_locked);
+        assert_eq!(editor.preview_node, Some(erosion));
     }
 
     #[test]

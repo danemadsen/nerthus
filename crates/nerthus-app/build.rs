@@ -1,5 +1,6 @@
 //! Embeds the interface icons: every SVG in assets/icons, listed in
-//! `icon-files.rs` for src/icons.rs to include.
+//! `icon-files.rs` for src/icons.rs to include; and the example projects
+//! with their pictures (assets/examples), listed in `example-files.rs`.
 //!
 //! Puts the app icon in the Windows executable, where Explorer, shortcuts and
 //! pinned taskbar buttons find it: assets/nerthus.svg drawn at the shell's
@@ -15,8 +16,10 @@ fn main() {
     // A directory: Cargo reruns when any file in it is added, removed or
     // changed.
     println!("cargo::rerun-if-changed=assets/icons");
+    println!("cargo::rerun-if-changed=assets/examples");
 
-    write_icon_files();
+    write_file_table("icons", &["svg"], "icon-files.rs");
+    write_file_table("examples", &["terrain", "jpg"], "example-files.rs");
 
     // The build dependencies are only there on Windows hosts, where Windows
     // builds are made.
@@ -24,18 +27,18 @@ fn main() {
     windows_icon::embed();
 }
 
-/// Writes `icon-files.rs` to OUT_DIR: an array of every SVG in assets/icons
-/// as (file name, bytes), sorted by file name.
-fn write_icon_files() {
+/// Writes `table` to OUT_DIR: an array of the files in assets/`folder`
+/// with these extensions as (file name, bytes), sorted by file name.
+fn write_file_table(folder: &str, extensions: &[&str], table: &str) {
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
-    let directory = Path::new(&manifest_dir).join("assets").join("icons");
-    let entries = std::fs::read_dir(&directory).expect("cannot read assets/icons");
+    let directory = Path::new(&manifest_dir).join("assets").join(folder);
+    let entries = std::fs::read_dir(&directory).unwrap_or_else(|_| panic!("cannot read assets/{folder}"));
 
     let mut paths = Vec::new();
     for entry in entries {
-        let path = entry.expect("cannot read assets/icons").path();
-        let is_svg = path.extension().is_some_and(|extension| extension == "svg");
-        if is_svg {
+        let path = entry.unwrap_or_else(|_| panic!("cannot read assets/{folder}")).path();
+        let wanted = path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extensions.contains(&extension));
+        if wanted {
             paths.push(path);
         }
     }
@@ -43,18 +46,18 @@ fn write_icon_files() {
 
     // Debug-formatted strings are Rust string literals, backslashes in
     // Windows paths included.
-    let mut table = String::from("&[\n");
+    let mut contents = String::from("&[\n");
     for path in &paths {
-        let file_name = path.file_name().unwrap().to_str().expect("icon file names are UTF-8");
-        let full_path = path.to_str().expect("the icon paths are UTF-8");
+        let file_name = path.file_name().unwrap().to_str().expect("asset file names are UTF-8");
+        let full_path = path.to_str().expect("the asset paths are UTF-8");
         let entry = format!("    ({file_name:?}, include_bytes!({full_path:?}).as_slice()),\n");
-        table.push_str(&entry);
+        contents.push_str(&entry);
     }
-    table.push_str("]\n");
+    contents.push_str("]\n");
 
     let out_dir = std::env::var_os("OUT_DIR").unwrap();
-    let table_path = Path::new(&out_dir).join("icon-files.rs");
-    std::fs::write(&table_path, table).expect("cannot write icon-files.rs");
+    let table_path = Path::new(&out_dir).join(table);
+    std::fs::write(&table_path, contents).unwrap_or_else(|_| panic!("cannot write {table}"));
 }
 
 #[cfg(windows)]

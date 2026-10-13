@@ -20,6 +20,7 @@ use nerthus_export::bake::{self, BakeFit, BakeStore};
 use serde_json::Value;
 
 use crate::disk_cache::{self, DiskCache, DiskCacheSettings, DiskCacheTask};
+use crate::progress::WorkProgress;
 
 /// What to build.
 pub struct BuildRequest {
@@ -70,6 +71,9 @@ pub struct BuildRequest {
     /// one now when `watched_refresh` is set.
     pub watched: Vec<i32>,
     pub watched_refresh: bool,
+    /// Save cached build: the maps the engine holds written out as a
+    /// build would write them, once the request's build is over.
+    pub cached_export: Option<crate::export_build::CachedExportJob>,
 }
 
 /// A node command the build thread runs: the node and the command
@@ -179,6 +183,10 @@ pub enum BuildEvent {
     Watched(WatchedNode),
     /// What the disk cache has to say (Delete Cache's outcome).
     DiskCache(String),
+    /// How a long operation goes, for the progress window: freezing a
+    /// closing project's previews, loading bakes, reading previews back,
+    /// and each request's preparation done.
+    Progress(WorkProgress),
 }
 
 #[derive(Resource)]
@@ -247,6 +255,9 @@ fn newest(mut request: BuildRequest, requests: &Receiver<BuildRequest>) -> Build
         let mut disk_cache_tasks = std::mem::take(&mut request.disk_cache_tasks);
         disk_cache_tasks.append(&mut newer.disk_cache_tasks);
         newer.disk_cache_tasks = disk_cache_tasks;
+        if newer.cached_export.is_none() {
+            newer.cached_export = request.cached_export.take();
+        }
         request = newer;
     }
     request
@@ -282,7 +293,7 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         // A closing project's previews go to disk before anything forgets
         // them.
         let disk_tasks = std::mem::take(&mut request.disk_cache_tasks);
-        disk_cache::freeze_closing(&mut disk, &engine, &disk_tasks);
+        disk_cache::freeze_closing(&mut disk, &engine, &disk_tasks, &events);
 
         if let Some(macros) = request.macros.take() {
             engine.macros = macros;
@@ -314,9 +325,10 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         if let Some(store) = &request.bakes
             && (cleared || bakes_changed || request.load_all_bakes)
         {
-            load_editor_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), request.load_all_bakes);
+            load_editor_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), request.load_all_bakes, &events);
         }
         disk_cache::run_tasks(&mut disk, &mut engine, &terrain, resolution, &request.disk_cache, disk_tasks, &events);
+        let _ = events.send(BuildEvent::Progress(WorkProgress::Prepared(request.generation)));
         let order = Engine::build_order(&terrain, request.target);
         let mut read = order.clone();
         if request.underlay != 0 {
@@ -354,6 +366,11 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
             let range = main_range(&engine, node);
             let finished = BuildEvent::NodeFinished { node, milliseconds, state, error, range };
             let _ = events.send(finished);
+        }
+        // Save cached build, whether or not the preview build got to the
+        // end: the maps marked for export were built before it was asked.
+        if let Some(job) = request.cached_export.take() {
+            job.run(&terrain, &engine);
         }
 
         // The node is asked for its colours as it renders, as its build
@@ -522,13 +539,42 @@ fn editor_fit(resolution: Resolution, region: Option<&Region>) -> BakeFit<'_> {
     }
 }
 
-/// Bake loading in the editor: the bakes an unbaked node reads (every
-/// bake with `all`) loaded at the preview resolution (bilinear, as the
-/// editor fits them, cut to the previewed region), the rest left on disk;
-/// what reads them is built again.
-fn load_editor_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, resolution: Resolution, region: Option<&Region>, all: bool) {
+/// Bake loading in the editor: the bakes an unbaked node reads
+/// (every bake with `all`) loaded at the preview resolution (bilinear, as
+/// the editor fits them, cut to the previewed region), the rest left on
+/// disk; what reads them is built again. It goes as `bake::load_bakes`
+/// does, telling the progress window which bake it is on.
+fn load_editor_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, resolution: Resolution, region: Option<&Region>, all: bool, events: &Sender<BuildEvent>) {
+    let report = |progress: WorkProgress| {
+        let _ = events.send(BuildEvent::Progress(progress));
+    };
+    report(WorkProgress::Text("Loading baked cache...".to_string()));
     let fit = editor_fit(resolution, region);
-    let loaded = bake::load_bakes(engine, terrain, store, fit, all, false);
+    let baked: Vec<&nerthus_engine::NodeData> = terrain.nodes.values().filter(|node| StateOverride::of(node) == StateOverride::Baked).collect();
+    let count = baked.len();
+    let mut loaded = Vec::new();
+    for (index, node) in baked.into_iter().enumerate() {
+        report(WorkProgress::Text(format!("Loading cache {} of {count}...", index + 1)));
+        if !store.has_node(node) {
+            continue;
+        }
+        if !all && !bake::is_crucial(terrain, node, false) {
+            engine.offload_baked(node.id);
+            continue;
+        }
+        let Some(maps) = store.read_node(node) else {
+            continue;
+        };
+        // A port that does not fit leaves the whole node unbaked.
+        let fitted: Option<Vec<(String, Map)>> = maps.into_iter().map(|(port, map)| bake::fit_baked(&map, fit).map(|fitted| (port, fitted))).collect();
+        let Some(fitted) = fitted else {
+            continue;
+        };
+        engine.load_baked(node.id, fitted);
+        loaded.push(node.id);
+        report(WorkProgress::Fraction((index + 1) as f32 / count as f32));
+    }
+    report(WorkProgress::Text(String::new()));
     for id in loaded {
         engine.invalidate(terrain, id);
     }

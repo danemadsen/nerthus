@@ -238,7 +238,7 @@ mod tests {
     fn two_tab_project() -> (Document, i32, i32, i32) {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [25100.0, 25100.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [25400.0, 25100.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [25400.0, 25100.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let tab = document.add_graph_tab();
         let blur = document.add_node("Blur", [25700.0, 25100.0]).unwrap();
@@ -262,7 +262,7 @@ mod tests {
         assert!(terrain.nodes.contains_key(&existing));
         // The imported erosion reads from the imported mountain, whatever
         // their ids now are.
-        let imported_erosion = terrain.nodes.values().find(|node| node.type_name == "Erosion2").unwrap();
+        let imported_erosion = terrain.nodes.values().find(|node| node.type_name == "ErosionPro").unwrap();
         let record = imported_erosion.port("In").and_then(|port| port.record.clone()).unwrap();
         let from = &terrain.nodes[&record.from];
         assert_eq!(from.type_name, "Mountain");

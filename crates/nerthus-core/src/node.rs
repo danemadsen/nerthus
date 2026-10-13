@@ -134,7 +134,7 @@ pub enum NodeEditor {
     Mesher,
     Output,
     Resource,
-    SatMap,
+    SatelliteMap,
     Seamless,
     Stroke,
     Synth,

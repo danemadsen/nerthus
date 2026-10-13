@@ -10,6 +10,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::format_names::nerthus_node_name;
 use crate::humanize::{humanize_title, title_case};
 
 const NODES_TOML: &str = include_str!("../data/nodes.toml");
@@ -153,8 +154,9 @@ pub struct PortSpec {
 /// One node type.
 #[derive(Clone, Debug, Deserialize)]
 pub struct NodeSpec {
-    /// The type's path under the node namespace (`Canyon`, or
-    /// `Nodes.Processor.Pattern`; see [`crate::format_names::node_type`]).
+    /// The type's path under the node namespace in Nerthus's names
+    /// (`Canyon`, or `Nodes.Processor.Pattern`); files name it as
+    /// [`crate::format_names::node_type`] writes it.
     #[serde(rename = "type")]
     pub type_name: String,
     pub name: String,
@@ -284,7 +286,8 @@ impl Catalogue {
 
     /// Looks a node up by the type written in `$type`, by its class name.
     pub fn node_for_type(&self, dotnet_type: &str) -> Option<&NodeSpec> {
-        let key = crate::json::type_class_name(dotnet_type);
+        let class_name = crate::json::type_class_name(dotnet_type);
+        let key = nerthus_node_name(class_name);
         self.nodes.get(key)
     }
 
@@ -304,7 +307,7 @@ impl Catalogue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format_names::node_type;
+    use crate::format_names::{format_node_name, node_type};
 
     #[test]
     fn catalogue_has_every_node() {
@@ -324,14 +327,15 @@ mod tests {
     #[test]
     fn dotnet_type_names_resolve() {
         let catalogue = Catalogue::get();
-        let spec = catalogue.node_for_type(&node_type("Erosion2"));
-        assert_eq!(spec.map(NodeSpec::key), Some("Erosion2"));
+        let spec = catalogue.node_for_type(&node_type("ErosionPro"));
+        assert_eq!(spec.map(NodeSpec::key), Some("ErosionPro"));
         let pattern = catalogue.node("Pattern").expect("Pattern is in the catalogue");
         let pattern_type = node_type(&pattern.type_name);
         let found = catalogue.node_for_type(&pattern_type);
         assert_eq!(found.map(NodeSpec::key), Some("Pattern"));
-        let elsewhere = catalogue.node_for_type("Vendor.Terrain.Nodes.Erosion2, Vendor.Nodes");
-        assert_eq!(elsewhere.map(NodeSpec::key), Some("Erosion2"), "types are matched on their class name");
+        let format_class = format_node_name("ErosionPro");
+        let elsewhere = catalogue.node_for_type(&format!("Vendor.Terrain.Nodes.{format_class}, Vendor.Nodes"));
+        assert_eq!(elsewhere.map(NodeSpec::key), Some("ErosionPro"), "types are matched on their class name");
         assert!(catalogue.node_for_type(&node_type("NoSuchNode")).is_none());
     }
 

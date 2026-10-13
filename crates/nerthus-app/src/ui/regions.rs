@@ -12,6 +12,7 @@ use nerthus_export::build::OutputType;
 
 use crate::document::SWATCHES;
 use crate::editor::Editor;
+use crate::progress::{ProgressStep, StepEnd};
 use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::widgets::{check_item, menu_caption, menu_item, menu_separator, menu_style, submenu};
@@ -269,6 +270,7 @@ fn canvas(ui: &mut Ui, editor: &mut Editor, state: &mut RegionsState, commands: 
 
     // `BackgroundBorder`: `Popup-Border`, or the render at its opacity.
     painter.rect_filled(outer, 0.0, theme::POPUP_BORDER);
+    show_loading_preview(editor);
     let opacity = editor.user.options.region_reference_opacity();
     if let Some(texture) = background_texture(ui.ctx(), editor, state) {
         let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -764,6 +766,21 @@ fn rename_popup(ui: &Ui, editor: &mut Editor, state: &mut RegionsState, canvas: 
         editor.preview_region = Some(new_name);
     }
     state.renaming = None;
+}
+
+/// `ShowCurrentNodePreview`'s progress window: "Loading preview" while the
+/// render behind the regions (not the saved reference) is still on its
+/// way for the selected node. The editor ends it once the render is in.
+fn show_loading_preview(editor: &mut Editor) {
+    let saved = editor.document.path.as_deref().map(reference_file).is_some_and(|file| file.exists());
+    let shows_saved = saved && editor.user.options.show_region_reference();
+    let rendering = !shows_saved && editor.active_node().is_some() && !editor.building && !editor.render_settled();
+    if !rendering || editor.progress.is_some() {
+        return;
+    }
+    let text = "Loading preview, please wait this may take a while...";
+    let step = ProgressStep::with_text("Loading preview", text, StepEnd::RegionPreview);
+    editor.show_progress(vec![step]);
 }
 
 /// The render behind the regions: the saved reference when it is asked

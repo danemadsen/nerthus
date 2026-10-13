@@ -2224,7 +2224,7 @@ mod tests {
     fn an_output_dragged_onto_another_output_combines_the_two() {
         let mut document = Document::new();
         let first = document.add_node("Mountain", [26100.0, 26100.0]).unwrap();
-        let second = document.add_node("Erosion2", [26100.0, 26400.0]).unwrap();
+        let second = document.add_node("ErosionPro", [26100.0, 26400.0]).unwrap();
         let mut editor = Editor::new(document);
         let mut state = GraphState::default();
         let context = themed_context();
@@ -2239,7 +2239,7 @@ mod tests {
     #[test]
     fn collapsed_ports_dragged_onto_collapsed_ports_open_create_connection() {
         let mut document = Document::new();
-        let erosion = document.add_node("Erosion2", [26100.0, 26100.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [26100.0, 26100.0]).unwrap();
         let combine = document.add_node("Combine", [26500.0, 26300.0]).unwrap();
         document.add_input(combine);
         for node in [erosion, combine] {

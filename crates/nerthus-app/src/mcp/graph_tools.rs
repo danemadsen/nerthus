@@ -1,16 +1,17 @@
-//! Reading the graph, in brief or one node in full, and showing a node in
-//! the editor.
+//! Reading the graph, in brief or one node in full, showing a node in the
+//! editor, and placing the 3D view's camera.
 
 use nerthus_engine::json::f32_value;
 use nerthus_engine::{Catalogue, NodeData, NodeState, StateOverride};
 use serde_json::{json, Map, Value};
 
-use super::arguments::Arguments;
+use super::arguments::{number_of, Arguments};
 use super::build_tools::format_key;
 use super::{values, Step, ToolContext, ToolResult};
 use crate::document::node_tab;
 use crate::editor::{Editor, NodeStatus};
 use crate::ui::graph_canvas::ZoomRequest;
+use crate::viewport_camera;
 
 /// A node's output by name (any case), or its main one: `Out`, else its
 /// first.
@@ -219,6 +220,45 @@ pub(crate) fn get_node(arguments: &Arguments, context: &mut ToolContext) -> Resu
     let id = arguments.node("node", editor)?;
     let details = node_details(editor, id)?;
     Ok(Step::Done(ToolResult::json(&details)))
+}
+
+/// `set_camera`: the viewport's camera moved, from its current view (or
+/// the default one), and kept as the project's camera as Load Camera keeps
+/// a camera file's.
+pub(crate) fn set_camera(arguments: &Arguments, context: &mut ToolContext) -> Result<Step, String> {
+    let editor = &mut *context.editor;
+    let reset = arguments.boolean("reset")?.unwrap_or(false);
+    let mut camera = if reset { nerthus_render::CameraValues::DEFAULT } else { editor.camera };
+    if let Some(values) = arguments.array("look_at")? {
+        let numbers: Vec<f64> = values.iter().filter_map(number_of).collect();
+        let [x, y, z] = numbers[..] else {
+            return Err("look_at is [x, y, z].".to_string());
+        };
+        let x = x.clamp(-100.0, 300.0) as f32;
+        let y = y.clamp(0.0, 20.0) as f32;
+        let z = z.clamp(-100.0, 300.0) as f32;
+        camera.look_at = bevy::math::Vec3::new(x, y, z);
+    }
+    if let Some(inclination) = arguments.number("inclination")? {
+        camera.inclination = inclination.clamp(0.001, 1.0) as f32;
+    }
+    if let Some(zoom) = arguments.number("zoom")? {
+        camera.zoom = zoom.clamp(0.4, 250.0) as f32;
+    }
+    if let Some(rotation) = arguments.number("rotation")? {
+        camera.rotation = rotation.clamp(-1.0, 1.0) as f32;
+    }
+    let message = viewport_camera::camera_message(&camera);
+    editor.document.set_saved_camera(&message);
+    editor.camera_request = Some(camera);
+    let look_at = [camera.look_at.x, camera.look_at.y, camera.look_at.z].map(f32_value);
+    let outcome = json!({
+        "look_at": look_at,
+        "inclination": f32_value(camera.inclination),
+        "zoom": f32_value(camera.zoom),
+        "rotation": f32_value(camera.rotation),
+    });
+    Ok(Step::Done(ToolResult::json(&outcome)))
 }
 
 pub(crate) fn select_node(arguments: &Arguments, context: &mut ToolContext) -> Result<Step, String> {

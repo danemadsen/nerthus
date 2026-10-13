@@ -142,7 +142,7 @@ fn catalogue_tools() -> Vec<Value> {
     );
 
     let describe_properties = json!({
-        "type": {"type": "string", "description": "The node type, e.g. \"Mountain\" or \"Erosion2\"."},
+        "type": {"type": "string", "description": "The node type, e.g. \"Mountain\" or \"ErosionPro\"."},
     });
     let describe_node_type = tool(
         "describe_node_type",
@@ -192,7 +192,23 @@ fn graph_tools() -> Vec<Value> {
         Effect::Reads,
     );
 
-    vec![list_nodes, get_node, select_node]
+    let camera_properties = json!({
+        "look_at": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "The point the camera looks at, [x, y, z]: x east and z north, the terrain spanning -10 to 10; y up (0 to 20)."},
+        "inclination": {"type": "number", "minimum": 0.001, "maximum": 1.0, "description": "From looking straight down (0) to looking at the horizon (1)."},
+        "zoom": {"type": "number", "minimum": 0.4, "maximum": 250.0, "description": "The camera's distance from the point it looks at (the terrain is 20 across; the default view is 50)."},
+        "rotation": {"type": "number", "minimum": -1.0, "maximum": 1.0, "description": "The heading, in turns clockwise from north."},
+        "reset": {"type": "boolean", "description": "Start from the default view instead of the current one."},
+    });
+    let set_camera = tool(
+        "set_camera",
+        "Set Camera",
+        "Moves the 3D viewport's camera; values left out keep the current view's. The project keeps the view as its camera (Reset to Loaded returns to it), and saving draws its thumbnail from it. Returns the camera.",
+        camera_properties,
+        &[],
+        Effect::Edits,
+    );
+
+    vec![list_nodes, get_node, select_node, set_camera]
 }
 
 fn edit_tools() -> Vec<Value> {
@@ -460,6 +476,7 @@ fn run(name: &str, arguments: &Arguments, context: &mut ToolContext) -> Result<S
         "list_nodes" => graph_tools::list_nodes(arguments, context),
         "get_node" => graph_tools::get_node(arguments, context),
         "select_node" => graph_tools::select_node(arguments, context),
+        "set_camera" => graph_tools::set_camera(arguments, context),
         "add_node" => edit_tools::add_node(arguments, context),
         "set_parameters" => edit_tools::set_parameters(arguments, context),
         "update_node" => edit_tools::update_node(arguments, context),

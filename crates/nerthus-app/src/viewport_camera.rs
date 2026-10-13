@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn messages_round_trip_like_the_examples() {
-        // `Erosion - Mineral Deposits and ColorErosion`'s saved camera.
+        // A saved camera from one of the example projects.
         let values = CameraValues {
             look_at: bevy::math::Vec3::new(0.8422, 0.0, -1.7633),
             inclination: 0.6175,

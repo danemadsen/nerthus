@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::document::DeleteRequest;
 use crate::editor::{DialogRequest, Editor, RenderMode};
+use crate::export_build::{BuildChoice, BuildStart};
 use crate::viewport_render::{MaskEnhancement, MaskGradient, ViewportLighting};
 use crate::ui::build_settings::{BuildSettingsState, SettingsTab};
 use crate::ui::build_window::BuildConfirm;
@@ -129,8 +130,16 @@ pub enum Command {
     CleanMemory,
     ReleaseMemory,
     DropViewportCache,
-    /// The confirmation's Start Build.
-    StartBuild { open_folder: bool },
+    /// The confirmation's Start Build, or Close Nerthus and Build: saved,
+    /// checked, then offered Save cached build when the editor holds what
+    /// the build would make.
+    StartBuild { open_folder: bool, close: bool },
+    /// The build itself, once checked (here, or in `nerthus-build` as the
+    /// editor closes), Save cached build, and the normal build offered
+    /// when that export fails.
+    RunBuild { close: bool },
+    ExportCachedBuild { close: bool },
+    CachedExportFailed { close: bool },
     /// Project › Execute Batch Build… (`MnuBatchBuild_OnClick`).
     BatchBuild,
     CancelBuild,
@@ -144,6 +153,9 @@ pub enum Command {
     BakeSelected,
     BakeRequiredNodes,
     BakeRequiredNodesConfirmed,
+    /// The memory warning's Yes: the bake goes ahead (with Bake Selected's
+    /// progress window when `selected`).
+    BakeAnyway { nodes: Vec<i32>, selected: bool },
     ForceLoadBakedCache,
     UnbakeSelected,
     UnbakeSelectedConfirmed,
@@ -331,7 +343,12 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
             }
             editor.changed();
         }
-        Command::LockPreview => editor.toggle_preview_lock(),
+        // `LockNodePreview`: the selected node's.
+        Command::LockPreview => {
+            if let Some(node) = editor.active_node() {
+                editor.lock_preview(node);
+            }
+        }
         Command::MarkForExport => mark_for_export(editor),
         Command::ResetNode => {
             if let Some(node) = editor.active_node() {
@@ -543,7 +560,29 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
                 ui_state.build_confirm = Some(BuildConfirm { open_folder });
             }
         }
-        Command::StartBuild { open_folder } => editor.start_export_build(open_folder),
+        Command::StartBuild { open_folder, close } => {
+            editor.resume_build = None;
+            let choice = BuildChoice { open_folder, close };
+            match crate::export_build::prepare(editor, choice) {
+                BuildStart::Saving | BuildStart::NotSaved => {}
+                BuildStart::Refused(message) => ui_state.prompt = Some(Prompt::message("Validation failed", &message)),
+                BuildStart::Ready { cached: true } => {
+                    let text = "All nodes marked for export seem to be built. Would you like to try to save the current build directly?";
+                    let mut question = Prompt::new("Save cached build?", text, Command::ExportCachedBuild { close });
+                    question.no = Some(Command::RunBuild { close });
+                    question.footnote = Some("Please note, some advanced features such as Prime Folders may not work.".to_string());
+                    ui_state.prompt = Some(question);
+                }
+                BuildStart::Ready { cached: false } => run_build(editor, ui_state, close),
+            }
+        }
+        Command::RunBuild { close } => run_build(editor, ui_state, close),
+        Command::ExportCachedBuild { close } => crate::export_build::export_cached(editor, close),
+        Command::CachedExportFailed { close } => {
+            editor.export_build = None;
+            let text = "Nerthus failed to export cached build. Would you like to proceed with a normal build?";
+            ui_state.prompt = Some(Prompt::new("Try a normal build?", text, Command::RunBuild { close }));
+        }
         Command::BatchBuild => {
             let saved = editor.document.path.as_ref().is_some_and(|path| path.is_file());
             if !saved {
@@ -567,17 +606,35 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
         Command::OpenBuildFolder => editor.open_build_folder(),
         Command::OpenFolder(folder) => crate::export_build::open_folder(&folder),
         Command::BakeSelected => {
-            editor.bake_selected();
-            // `BakeSelectedNode`'s progress window.
-            if editor.baking {
-                ui_state.bake_progress = crate::ui::memory_dialogs::bake_progress(editor);
+            if let Some(node) = editor.prepare_bake_selected() {
+                match crate::ui::memory_dialogs::bake_memory_warning(editor, node) {
+                    Some(mut warning) => {
+                        warning.yes = Some(Command::BakeAnyway { nodes: vec![node], selected: true });
+                        ui_state.prompt = Some(warning);
+                    }
+                    None => start_bake(editor, ui_state, vec![node], true),
+                }
             }
         }
         Command::BakeRequiredNodes => {
             let text = "Are you sure you want to bake all nodes that require baking?";
             ui_state.prompt = Some(Prompt::new("Bake required nodes?", text, Command::BakeRequiredNodesConfirmed));
         }
-        Command::BakeRequiredNodesConfirmed => editor.bake_required(),
+        Command::BakeRequiredNodesConfirmed => {
+            if let Some(nodes) = editor.prepare_bake_required() {
+                // The warning weighs the node shown in the properties (its
+                // chain), not the nodes being baked.
+                let warning = editor.active_node().and_then(|node| crate::ui::memory_dialogs::bake_memory_warning(editor, node));
+                match warning {
+                    Some(mut warning) => {
+                        warning.yes = Some(Command::BakeAnyway { nodes, selected: false });
+                        ui_state.prompt = Some(warning);
+                    }
+                    None => start_bake(editor, ui_state, nodes, false),
+                }
+            }
+        }
+        Command::BakeAnyway { nodes, selected } => start_bake(editor, ui_state, nodes, selected),
         Command::ForceLoadBakedCache => editor.load_baked_cache(),
         Command::UnbakeSelected => {
             let text = "Are you sure you want to unbake this node?\n\nAny baked child nodes will also be unbaked.File will be saved after unbake.";
@@ -796,7 +853,7 @@ fn mark_for_export(editor: &mut Editor) {
 }
 
 /// `Editor_CommandExecuted` for the selected node: Add Input, Swap
-/// Inputs (Combine) and Randomize (SatMap only).
+/// Inputs (Combine) and Randomize (SatelliteMap only).
 fn node_command(editor: &mut Editor, name: &str) {
     let Some(node) = editor.active_node() else {
         return;
@@ -818,7 +875,7 @@ fn node_command(editor: &mut Editor, name: &str) {
         // `Node_ToggleTiling` (`Comms.Send(36, …)`).
         ("ToggleTiling", _) => editor.tiled_preview = !editor.tiled_preview,
         // A library item of -1 makes the build draw one, as Randomize does.
-        ("Randomize", "SatMap") => {
+        ("Randomize", "SatelliteMap") => {
             editor.document.set_value(node, "LibraryItem", Value::from(-1));
             editor.document.mark_stale(node);
             editor.changed();
@@ -888,4 +945,21 @@ fn delete_selection(editor: &mut Editor, ui_state: &mut UiState) {
         editor.preview_locked = false;
     }
     editor.changed();
+}
+
+/// The build once checked; when `nerthus-build` cannot be started for
+/// Close Nerthus and Build, the reason shows as a refusal would.
+fn run_build(editor: &mut Editor, ui_state: &mut UiState, close: bool) {
+    if let Err(message) = crate::export_build::run_build(editor, close) {
+        ui_state.prompt = Some(Prompt::message("Validation failed", &message));
+    }
+}
+
+/// A bake started; Bake Selected's has its progress window
+/// (`BakeSelectedNode`'s).
+fn start_bake(editor: &mut Editor, ui_state: &mut UiState, nodes: Vec<i32>, selected: bool) {
+    editor.start_bake(nodes);
+    if selected && editor.baking {
+        ui_state.bake_progress = crate::ui::memory_dialogs::bake_progress(editor);
+    }
 }

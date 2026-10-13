@@ -325,7 +325,7 @@ mod tests {
     fn moving_a_node_away_makes_portals() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let tab = document.move_elements_to_tab(&[erosion], &[], &[], TabTarget::New);
         assert_eq!(tab, 1);
@@ -341,7 +341,7 @@ mod tests {
     fn a_group_becomes_a_tab_and_back() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [26300.0, 26000.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [26300.0, 26000.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let group = document.add_group(&[erosion], [26280.0, 25960.0], [300.0, 300.0], 0);
         let tab = document.group_to_tab(group).unwrap();

@@ -964,7 +964,7 @@ mod tests {
             seconds_taken: vec![
                 ("Mountain".to_string(), milliseconds_to_ticks(2125)),
                 ("Thermal".to_string(), milliseconds_to_ticks(524)),
-                ("SatMap".to_string(), milliseconds_to_ticks(104)),
+                ("CLUTer".to_string(), milliseconds_to_ticks(104)),
                 ("Export".to_string(), milliseconds_to_ticks(1)),
                 ("Height".to_string(), 0),
             ],
@@ -994,7 +994,7 @@ mod tests {
         let json = report_json(&report());
         let offset = report().start_time.format("%:z").to_string();
         let expected = format!(
-            "{{\n  \"$id\": \"1\",\n  \"Resolution\": 256,\n  \"NodeCount\": 5,\n  \"Result\": \"AlreadyBuilt\",\n  \"StartTime\": \"2026-10-13T00:59:56.646555{offset}\",\n  \"EndTime\": \"2026-10-13T01:00:00.062822{offset}\",\n  \"Duration\": \"00:00:03.4162670\",\n  \"SecondsTaken\": {{\n    \"$id\": \"2\",\n    \"$values\": [\n      {{\n        \"$id\": \"3\",\n        \"Item1\": \"Mountain\",\n        \"Item2\": \"00:00:02.1250000\"\n      }},\n      {{\n        \"$id\": \"4\",\n        \"Item1\": \"Thermal\",\n        \"Item2\": \"00:00:00.5240000\"\n      }},\n      {{\n        \"$id\": \"5\",\n        \"Item1\": \"SatMap\",\n        \"Item2\": \"00:00:00.1040000\"\n      }},\n      {{\n        \"$id\": \"6\",\n        \"Item1\": \"Export\",\n        \"Item2\": \"00:00:00.0010000\"\n      }},\n      {{\n        \"$id\": \"7\",\n        \"Item1\": \"Height\"\n      }}\n    ]\n  }},\n  \"FastestNode\": {{\n    \"$ref\": \"7\"\n  }},\n  \"SlowestNode\": {{\n    \"$ref\": \"3\"\n  }}\n}}"
+            "{{\n  \"$id\": \"1\",\n  \"Resolution\": 256,\n  \"NodeCount\": 5,\n  \"Result\": \"AlreadyBuilt\",\n  \"StartTime\": \"2026-10-13T00:59:56.646555{offset}\",\n  \"EndTime\": \"2026-10-13T01:00:00.062822{offset}\",\n  \"Duration\": \"00:00:03.4162670\",\n  \"SecondsTaken\": {{\n    \"$id\": \"2\",\n    \"$values\": [\n      {{\n        \"$id\": \"3\",\n        \"Item1\": \"Mountain\",\n        \"Item2\": \"00:00:02.1250000\"\n      }},\n      {{\n        \"$id\": \"4\",\n        \"Item1\": \"Thermal\",\n        \"Item2\": \"00:00:00.5240000\"\n      }},\n      {{\n        \"$id\": \"5\",\n        \"Item1\": \"CLUTer\",\n        \"Item2\": \"00:00:00.1040000\"\n      }},\n      {{\n        \"$id\": \"6\",\n        \"Item1\": \"Export\",\n        \"Item2\": \"00:00:00.0010000\"\n      }},\n      {{\n        \"$id\": \"7\",\n        \"Item1\": \"Height\"\n      }}\n    ]\n  }},\n  \"FastestNode\": {{\n    \"$ref\": \"7\"\n  }},\n  \"SlowestNode\": {{\n    \"$ref\": \"3\"\n  }}\n}}"
         );
         assert_eq!(json, expected);
     }
@@ -1019,7 +1019,7 @@ mod tests {
             "                                                                                ",
             "          Result: │ AlreadyBuilt             Mountain │ 0:00:02.125             ",
             "      Resolution: │ 256                       Thermal │ 0:00:00.524             ",
-            "      Node Count: │ 5                          SatMap │ 0:00:00.104             ",
+            "      Node Count: │ 5                          CLUTer │ 0:00:00.104             ",
             "      Start Time: │ 10/13/2026 00:59:56               │                         ",
             "        End Time: │ 10/13/2026 01:00:00       Fastest │ Height @ 0:00:00        ",
             "        Duration: │ 00:00:03.4162670          Slowest │ Mountain @ 0:00:02.125  ",

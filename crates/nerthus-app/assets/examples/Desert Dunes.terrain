@@ -1,0 +1,311 @@
+{
+  "$id": "1",
+  "Assets": {
+    "$id": "2",
+    "$values": [
+      {
+        "$id": "3",
+        "Terrain": {
+          "$id": "4",
+          "Id": "0d73fe57-e2f1-47ee-a247-c734c61e8ec1",
+          "Metadata": {
+            "$id": "5",
+            "Name": "",
+            "Description": "",
+            "Version": "2.3.1.0",
+            "DateCreated": "2026-10-13 09:13:58Z",
+            "DateLastBuilt": "2026-10-13 09:13:58Z",
+            "DateLastSaved": "2026-10-13 09:28:35Z",
+            "ModifiedVersion": "2.3.1.0"
+          },
+          "Nodes": {
+            "$id": "6",
+            "956": {
+              "$id": "7",
+              "$type": "QuadSpinner.Gaea.Nodes.DuneSea, Gaea.Nodes",
+              "Scale": 0.4,
+              "DuneType": "C",
+              "Direction": 35,
+              "Height": 0.8,
+              "Softness": 5,
+              "Sharpness": 1.0,
+              "Seed": 7781,
+              "Id": 956,
+              "Name": "Dunes",
+              "Position": {
+                "$id": "8",
+                "X": 26000.0,
+                "Y": 26000.0
+              },
+              "Ports": {
+                "$id": "9",
+                "$values": [
+                  {
+                    "$id": "10",
+                    "Name": "In",
+                    "Type": "PrimaryIn",
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "7"
+                    }
+                  },
+                  {
+                    "$id": "11",
+                    "Name": "Out",
+                    "Type": "PrimaryOut",
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "7"
+                    }
+                  }
+                ]
+              },
+              "Modifiers": {
+                "$id": "12",
+                "$values": []
+              }
+            },
+            "310": {
+              "$id": "13",
+              "$type": "QuadSpinner.Gaea.Nodes.Sand, Gaea.Nodes",
+              "Scale": 0.25,
+              "Direction": 35,
+              "Height": 0.3,
+              "Seed": 6454,
+              "Id": 310,
+              "Name": "Ripples",
+              "Position": {
+                "$id": "14",
+                "X": 26360.0,
+                "Y": 26000.0
+              },
+              "Ports": {
+                "$id": "15",
+                "$values": [
+                  {
+                    "$id": "16",
+                    "Name": "In",
+                    "Type": "PrimaryIn",
+                    "Record": {
+                      "$id": "17",
+                      "From": 956,
+                      "To": 310,
+                      "FromPort": "Out",
+                      "ToPort": "In",
+                      "IsValid": true
+                    },
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "13"
+                    }
+                  },
+                  {
+                    "$id": "18",
+                    "Name": "Out",
+                    "Type": "PrimaryOut",
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "13"
+                    }
+                  }
+                ]
+              },
+              "Modifiers": {
+                "$id": "19",
+                "$values": []
+              }
+            },
+            "900": {
+              "$id": "20",
+              "$type": "QuadSpinner.Gaea.Nodes.CLUTer, Gaea.Nodes",
+              "GradientData": {
+                "$id": "21",
+                "$values": [
+                  {
+                    "$id": "22",
+                    "X": 0.3915725,
+                    "Y": 0.13563333,
+                    "Z": 0.045186203,
+                    "W": 0.0
+                  },
+                  {
+                    "$id": "23",
+                    "X": 0.65140563,
+                    "Y": 0.32314324,
+                    "Z": 0.11443538,
+                    "W": 0.5
+                  },
+                  {
+                    "$id": "24",
+                    "X": 0.8713671,
+                    "Y": 0.62396044,
+                    "Z": 0.31398875,
+                    "W": 1.0
+                  }
+                ]
+              },
+              "Id": 900,
+              "Name": "Colour",
+              "Position": {
+                "$id": "25",
+                "X": 26720.0,
+                "Y": 26000.0
+              },
+              "Ports": {
+                "$id": "26",
+                "$values": [
+                  {
+                    "$id": "27",
+                    "Name": "In",
+                    "Type": "PrimaryIn, Required",
+                    "Record": {
+                      "$id": "28",
+                      "From": 310,
+                      "To": 900,
+                      "FromPort": "Out",
+                      "ToPort": "In",
+                      "IsValid": true
+                    },
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "20"
+                    }
+                  },
+                  {
+                    "$id": "29",
+                    "Name": "Out",
+                    "Type": "PrimaryOut",
+                    "IsExporting": true,
+                    "Parent": {
+                      "$ref": "20"
+                    }
+                  }
+                ]
+              },
+              "Modifiers": {
+                "$id": "30",
+                "$values": []
+              }
+            }
+          },
+          "Groups": {
+            "$id": "31"
+          },
+          "Notes": {
+            "$id": "32"
+          },
+          "GraphTabs": {
+            "$id": "33",
+            "$values": [
+              {
+                "$id": "34",
+                "Name": "Graph 1",
+                "Color": "Brass",
+                "ZoomFactor": 1.0,
+                "ViewportLocation": {
+                  "$id": "35",
+                  "X": 26501.0,
+                  "Y": 25843.921875
+                }
+              }
+            ]
+          },
+          "Width": 3000.0,
+          "Height": 800.0
+        },
+        "Automation": {
+          "$id": "36",
+          "Bindings": {
+            "$id": "37",
+            "$values": []
+          },
+          "Expressions": {
+            "$id": "38"
+          },
+          "VariablesEx": {
+            "$id": "39"
+          },
+          "Variables": {
+            "$id": "40"
+          }
+        },
+        "BuildDefinition": {
+          "$id": "41",
+          "Type": "Standard",
+          "Resolution": 2048,
+          "BakeResolution": 2048,
+          "TileResolution": 1024,
+          "BucketResolution": 2048,
+          "NumberOfTiles": 3,
+          "EdgeBlending": 0.25,
+          "TileZeroIndex": true,
+          "TilePattern": "_y%Y%_x%X%",
+          "OrganizeFiles": "NodeSubFolder",
+          "ColorSpace": "sRGB"
+        },
+        "State": {
+          "$id": "42",
+          "BakeResolution": 2048,
+          "PreviewResolution": 1024,
+          "SelectedNode": 900,
+          "NodeBookmarks": {
+            "$id": "43",
+            "$values": []
+          },
+          "Viewport": {
+            "$id": "44",
+            "CameraPosition": {
+              "$id": "45",
+              "$values": [
+                32,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                102,
+                102,
+                230,
+                62,
+                0,
+                0,
+                24,
+                66,
+                143,
+                194,
+                117,
+                61
+              ]
+            },
+            "Camera": {
+              "$id": "46"
+            },
+            "RenderMode": "Realistic",
+            "AmbientOcclusion": true,
+            "Shadows": true
+          }
+        }
+      }
+    ]
+  },
+  "Id": "465427e1",
+  "Branch": 1,
+  "Metadata": {
+    "$id": "47",
+    "Name": "",
+    "Description": "",
+    "Version": "2.3.1.0",
+    "DateCreated": "2026-10-13 09:13:58Z",
+    "DateLastBuilt": "2026-10-13 09:13:58Z",
+    "DateLastSaved": "2026-10-13 09:28:35Z",
+    "ModifiedVersion": "2.3.1.0",
+    "Owner": ""
+  }
+}

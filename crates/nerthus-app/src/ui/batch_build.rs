@@ -287,7 +287,8 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, window: &mut BatchWindow, 
             ui.add_space(28.0);
             if ui.add_enabled(!dialogs.pending(SAVE_KEY), egui::Button::new("Save Batch File")).clicked() {
                 let (filter, extension) = if cfg!(windows) { ("Batch File (*.bat)", "bat") } else { ("Shell Script (*.sh)", "sh") };
-                let directory = editor.document.path.as_ref().and_then(|path| path.parent()).map(Path::to_path_buf);
+                // `BtnSaveBatchFile_OnClick` starts where the last save went.
+                let directory = editor.user.locations.folder(crate::user::locations::SAVE);
                 let request = DialogRequest {
                     key: SAVE_KEY.to_string(),
                     title: "Save Batch File".to_string(),

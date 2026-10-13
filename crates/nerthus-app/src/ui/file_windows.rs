@@ -245,14 +245,39 @@ fn start_column(ui: &mut Ui, ctx: &egui::Context, editor: &mut Editor, memory: &
     }
 }
 
-/// Where the examples are (`Paths.Root\Examples`): beside the program,
-/// else in the user's Nerthus folder.
+/// The example projects Nerthus comes with (assets/examples) and their
+/// pictures, by file name.
+const BUNDLED_EXAMPLES: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/example-files.rs"));
+
+/// Where the examples are (`Paths.Root\Examples`): an Examples folder of
+/// projects beside the program, else the one in the user's Nerthus folder,
+/// which gets the examples Nerthus comes with.
 pub fn examples_folder() -> Option<PathBuf> {
     let beside_program = std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join("Examples")));
-    let in_data = crate::user::data_folder().map(|folder| folder.join("Examples"));
-    // The first that holds projects (on a case-insensitive disk a build's
-    // `examples` folder answers to `Examples` too).
-    [beside_program, in_data].into_iter().flatten().find(|folder| holds_projects(folder))
+    // On a case-insensitive disk a build's `examples` folder answers to
+    // `Examples` too, so it counts only when it holds projects.
+    if let Some(folder) = beside_program.filter(|folder| holds_projects(folder)) {
+        return Some(folder);
+    }
+    let in_data = crate::user::data_folder()?.join("Examples");
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| install_examples(&in_data));
+    holds_projects(&in_data).then_some(in_data)
+}
+
+/// Writes the bundled examples into `folder`, those missing or changed
+/// since (once a session; the user's own projects there stay).
+fn install_examples(folder: &Path) {
+    if std::fs::create_dir_all(folder).is_err() {
+        return;
+    }
+    for (name, bytes) in BUNDLED_EXAMPLES {
+        let path = folder.join(name);
+        let current = std::fs::read(&path).ok();
+        if current.as_deref() != Some(*bytes) {
+            let _ = std::fs::write(&path, bytes);
+        }
+    }
 }
 
 fn holds_projects(folder: &std::path::Path) -> bool {
@@ -456,4 +481,30 @@ fn export_macro_checks(editor: &mut Editor, form: &files::ExportForm, commands: 
         return;
     }
     commands.push(Command::File(FileCommand::ExportMacroChecked));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_examples_install_and_open() {
+        let folder = std::env::temp_dir().join(format!("nerthus-examples-{}", std::process::id()));
+        install_examples(&folder);
+        let projects: Vec<&str> = BUNDLED_EXAMPLES.iter().map(|(name, _)| *name).filter(|name| name.ends_with(".terrain")).collect();
+        assert!(projects.len() >= 12, "{projects:?}");
+        for project in &projects {
+            let picture = project.replace(".terrain", ".jpg");
+            assert!(folder.join(&picture).is_file(), "{picture}");
+            let document = crate::document::Document::open(&folder.join(project));
+            let document = document.unwrap_or_else(|error| panic!("{project}: {error:#}"));
+            assert!(document.project.unknown_types.is_empty(), "{project}");
+        }
+        // A second install leaves them as they are; a changed one is put back.
+        let first = folder.join(projects[0]);
+        std::fs::write(&first, b"changed").unwrap();
+        install_examples(&folder);
+        assert_ne!(std::fs::read(&first).unwrap(), b"changed");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

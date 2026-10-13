@@ -152,7 +152,9 @@ pub fn install(editor: &mut Editor, path: &Path) {
 }
 
 /// A macro from the toolbox (`CreateSearchedNode` for a macro): a Macro
-/// node for it, the macro read into the project's macros for builds.
+/// node for it, the macro read into the project's macros for builds. A
+/// macro the project does not have yet brings the macros it depends on
+/// (`M.AddToProject`), and is not added when one is not installed.
 pub fn add_macro(editor: &mut Editor, id: &str, position: [f32; 2], tab: usize) {
     let folders = super::macro_folders(editor.document.path.as_deref());
     let path = editor.files.macros.get(id).map(|entry| entry.path.clone()).or_else(|| nerthus_engine::macros::find_macro_file(id, &folders));
@@ -167,7 +169,24 @@ pub fn add_macro(editor: &mut Editor, id: &str, position: [f32; 2], tab: usize) 
             return;
         }
     };
-    let Some(node) = editor.document.add_macro_node(&asset, position, tab) else {
+    let mut dependencies = Vec::new();
+    let listed = editor.document.project.macro_ids().iter().any(|listed| listed == id);
+    if !listed {
+        let find = |dependency: &str| nerthus_engine::macros::find_macro_file(dependency, &folders);
+        let mut problems = Vec::new();
+        let loaded = match nerthus_engine::macros::load_dependencies(&asset, &find, &mut problems) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                editor.report(error.to_string());
+                return;
+            }
+        };
+        for (_, problem) in problems {
+            editor.report(problem.to_string());
+        }
+        dependencies = loaded.iter().map(|dependency| dependency.metadata.id()).collect();
+    }
+    let Some(node) = editor.document.add_macro_node(&asset, &dependencies, position, tab) else {
         return;
     };
     editor.document.apply_node_display(&[node], &editor.user.options);
@@ -259,7 +278,9 @@ pub fn export_to(editor: &mut Editor, file: Option<PathBuf>) {
     };
     form.remember(editor);
     let mut metadata = MacroMetadata::for_export(&form.friendly_name(), &form.author_name(), &form.url, &form.normalized_version(), &form.description, &editor.document.project_id());
-    metadata.dependent_macros.clear();
+    // The macros its Macro nodes run (`DependentMacros`). The export
+    // checks refuse a macro inside a macro, so this stays empty.
+    metadata.dependent_macros = editor.document.used_macros();
     let metadata_value: serde_json::Value = serde_json::from_str(&metadata.to_json()).unwrap_or_default();
     let asset_json = editor.document.macro_asset_json(&metadata_value);
     let temporary = std::env::temp_dir().join(format!("nerthus-macro-{}.macro", std::process::id()));

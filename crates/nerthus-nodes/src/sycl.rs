@@ -32,7 +32,7 @@ pub(crate) const DISCRETE_OR_CPU: &[DeviceType] = &[DeviceType::GpuDiscrete, Dev
 pub(crate) const DISCRETE: &[DeviceType] = &[DeviceType::GpuDiscrete];
 
 /// Whether a discrete GPU is active (`GetFirstActiveDevice(GpuDiscrete,
-/// Cpu)` returning a discrete GPU), the test behind Erosion2's and the
+/// Cpu)` returning a discrete GPU), the test behind ErosionPro's and the
 /// lighting's GPU paths.
 pub(crate) fn discrete_gpu_active() -> bool {
     let types = [DeviceType::GpuDiscrete, DeviceType::Cpu];

@@ -413,7 +413,7 @@ mod tests {
     fn a_mixer_is_shown_over_its_terrain_unless_an_underlay_is_set() {
         let base = node("Mountain", 1);
         let relief = node("Perlin", 2);
-        let mut colours = node("SatMap", 3);
+        let mut colours = node("SatelliteMap", 3);
         wire(&mut colours, "In", 1);
         let mut mixer = node("Mixer", 4);
         wire(&mut mixer, "In", 3);
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn a_mixer_without_a_terrain_names_nothing() {
         let base = node("Mountain", 1);
-        let mut colours = node("SatMap", 2);
+        let mut colours = node("SatelliteMap", 2);
         wire(&mut colours, "In", 1);
         let mut mixer = node("Mixer", 3);
         wire(&mut mixer, "In", 2);

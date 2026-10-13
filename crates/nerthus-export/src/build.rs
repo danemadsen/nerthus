@@ -19,6 +19,9 @@
 //! with the latest copy"), the report is left in the build folder
 //! ([`crate::report`]), and a post-build script runs from the build
 //! folder.
+//!
+//! Save cached build ([`export_built`]) builds nothing: it writes the maps
+//! the editor holds, as a Standard build would write them.
 
 use std::collections::HashMap;
 use std::fs;
@@ -370,6 +373,9 @@ pub enum BuildEvent {
     NodeFinished { node: i32, milliseconds: u64, error: Option<String> },
     FileWritten { node: i32, path: PathBuf },
     FileFailed { node: i32, path: PathBuf, error: String },
+    /// Save cached build ([`export_built`]): a node marked for export is
+    /// about to write its maps, the `index`th (from 1) of `count`.
+    Exporting { node: i32, index: usize, count: usize },
     /// Text the build prints to its console as it builds (and keeps for
     /// `report.txt`): the header once the build folder is made, then the
     /// lines it writes as it goes.
@@ -760,8 +766,10 @@ fn copy_project(project_path: &Path, folder: &Path, report: &mut BuildReport) {
     let Some(name) = project_path.file_name() else {
         return;
     };
+    log::debug!("Copying Terrain File");
     let copied = fs::copy(project_path, folder.join(name));
     if let Err(error) = copied {
+        log::error!("{error}");
         report.failures.push((0, format!("Cannot copy the project into the build folder: {error}")));
     }
 }
@@ -815,6 +823,7 @@ fn run_standard(
     on_event: &mut dyn FnMut(BuildEvent),
 ) -> Result<BuildReport, BuildRefusal> {
     check(terrain, BuildType::Standard)?;
+    log::debug!("Creating Build Path");
     let folder = make_folder(project_path, definition, preferences, None, engine.mutation)?;
 
     engine.application_mode = ApplicationMode::Swarm;
@@ -846,19 +855,67 @@ fn run_standard(
 
     // Every result but the bakes' forgotten, then the exporting nodes right
     // to left.
+    log::info!("Invalidating nodes");
     engine.forget_unbaked();
     let plan = build_plan(terrain);
     session.event(BuildEvent::Started { folder: folder.clone(), nodes: plan.len() });
+    log::info!("Starting build");
     for target in exporting_nodes_by_position(terrain) {
+        if let Some(node) = terrain.nodes.get(&target) {
+            log::info!("Building {}", node.name);
+        }
         let finished = build_chain(engine, terrain, target, resolution, cancel, &mut session, &mut |engine, session, node| {
             post_build(node, engine, session, None);
         });
         if !finished {
+            log::error!("Build cancelled.");
             session.report.cancelled = true;
             break;
         }
     }
     maintain_prime_folder(definition, &mut session);
+    Ok(session.report)
+}
+
+/// Save cached build: the maps the editor already holds written as a
+/// build would write them, with nothing built. The build folder is made
+/// and the project copied into it when the build says so, then each node
+/// marked for export, in the project's order, writes its marked ports
+/// (`Node.PostBuild`). `engine` holds the maps, built at the build's
+/// resolution; `region` is the region the editor previews (`[Region]` in
+/// the destination). Unlike a build, it leaves no report, keeps no
+/// `Latest` copy and runs no post-build script.
+pub fn export_built(
+    terrain: &Terrain,
+    engine: &Engine,
+    project_path: &Path,
+    definition: &BuildDefinition,
+    preferences: &ExportPreferences,
+    region: Option<&Region>,
+    on_event: &mut dyn FnMut(BuildEvent),
+) -> Result<BuildReport, BuildRefusal> {
+    let folder = make_folder(project_path, definition, preferences, region, engine.mutation)?;
+    let mut session = Session {
+        terrain,
+        definition,
+        preferences,
+        folder: folder.clone(),
+        report: BuildReport { folder: folder.clone(), ..BuildReport::default() },
+        on_event,
+    };
+    if definition.copy_terrain {
+        copy_project(project_path, &folder, &mut session.report);
+    }
+    let exporting = exporting_nodes(terrain);
+    let count = exporting.len();
+    session.event(BuildEvent::Started { folder, nodes: count });
+    for (position, id) in exporting.into_iter().enumerate() {
+        let Some(node) = terrain.nodes.get(&id) else {
+            continue;
+        };
+        session.event(BuildEvent::Exporting { node: id, index: position + 1, count });
+        post_build(node, engine, &mut session, None);
+    }
     Ok(session.report)
 }
 
@@ -1189,14 +1246,17 @@ fn run_bucketed(
     let targets = exporting_nodes_by_position(&working);
     for (index, bucket) in grid.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
+            log::error!("Build cancelled.");
             session.report.cancelled = true;
             return Ok(session.report);
         }
         session.event(BuildEvent::BucketStarted { index, count: grid.len() });
         // Every result but the bakes' forgotten, the bakes cut for this
         // bucket, then the exporting nodes built at the bucket's size.
+        log::info!("Starting bucket build");
         engine.forget_unbaked();
         if let Some(store) = bakes {
+            log::info!("Loading cache");
             let fit = BakeFit::Bucket { bucket, geometry: &geometry };
             bake::load_bakes(engine, &working, store, fit, true, true);
         }
@@ -1205,6 +1265,7 @@ fn run_bucketed(
                 export_bucket_bin(node, engine, &artifacts, bucket, session);
             });
             if !finished {
+                log::error!("Build cancelled.");
                 session.report.cancelled = true;
                 return Ok(session.report);
             }
@@ -1549,6 +1610,51 @@ mod tests {
         assert!(!bare.tile_zero_index);
         assert_eq!(bare.organize_files, OrganizeFiles::None);
         assert_eq!(bare.tile_resolution, DEFAULT_TILE_RESOLUTION);
+    }
+
+    /// A lone Perlin marked for export as `Perlin_Out.png`.
+    fn exporting_terrain() -> Terrain {
+        let spec = Catalogue::get().node("Perlin").expect("Perlin is in the catalogue");
+        let mut perlin = NodeData::new(spec, 1, 1);
+        let save = json!({"IsEnabled": true, "Filename": "Perlin", "Format": "PNG16"});
+        perlin.base.insert("SaveDefinition".to_string(), save);
+        let mut terrain = Terrain { id: String::new(), nodes: Default::default(), width: 5000.0, height: 2500.0, extra: serde_json::Map::new() };
+        terrain.nodes.insert(1, perlin);
+        terrain
+    }
+
+    #[test]
+    fn a_cached_export_writes_what_a_build_writes() {
+        let root = std::env::temp_dir().join(format!("nerthus-cached-export-{}", std::process::id()));
+        let project_path = root.join("Cached.terrain");
+        let terrain = exporting_terrain();
+        let registry = Arc::new(nerthus_nodes::registry());
+        let preferences = ExportPreferences::default();
+
+        let mut built_definition = BuildDefinition { resolution: 64, ..BuildDefinition::default() };
+        built_definition.destination = root.join("built").to_string_lossy().into_owned();
+        let mut build_engine = Engine::new(registry.clone());
+        let cancel = AtomicBool::new(false);
+        let built = run(&terrain, &mut build_engine, &project_path, &built_definition, &preferences, None, &cancel, &mut |_| {}).unwrap();
+
+        // The editor's engine holds the node built at the build's resolution.
+        let mut exported_definition = built_definition.clone();
+        exported_definition.destination = root.join("exported").to_string_lossy().into_owned();
+        let mut editor_engine = Engine::new(registry);
+        editor_engine.build(&terrain, 1, Resolution::square(64));
+        let mut events = Vec::new();
+        let exported = export_built(&terrain, &editor_engine, &project_path, &exported_definition, &preferences, None, &mut |event| events.push(event)).unwrap();
+
+        assert!(exported.failures.is_empty(), "{:?}", exported.failures);
+        assert_eq!(exported.files, vec![root.join("exported").join("Perlin_Out.png")]);
+        assert_eq!(built.files, vec![root.join("built").join("Perlin_Out.png")]);
+        assert_eq!(fs::read(&exported.files[0]).unwrap(), fs::read(&built.files[0]).unwrap());
+        assert!(matches!(events[0], BuildEvent::Started { nodes: 1, .. }));
+        assert!(matches!(events[1], BuildEvent::Exporting { node: 1, index: 1, count: 1 }));
+        // Nothing but the images: no report, unlike the build.
+        assert!(!root.join("exported").join("report.txt").exists());
+        assert!(root.join("built").join("report.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

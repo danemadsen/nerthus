@@ -23,6 +23,10 @@ pub enum PixelChannel {
     Alpha,
     /// The colormap index of a `PseudoClass` image.
     Index,
+    /// A CMYK image's black.
+    Black,
+    /// A meta channel (a PSD's extra channels).
+    Meta,
 }
 
 /// The colorspaces IM gives the files the File node reads.
@@ -33,6 +37,10 @@ pub enum CacheColorspace {
     Rgb,
     Gray,
     LinearGray,
+    /// CMYK, as a PSD reads (ink amounts, not negated).
+    Cmyk,
+    /// CIE Lab, as a PSD reads.
+    Lab,
 }
 
 /// An image as IM's pixel cache holds it.
@@ -65,8 +73,8 @@ pub(crate) fn char_quantum(value: u8) -> f32 {
 }
 
 /// Reads an image file the way Magick.NET does (PNG, TIFF, EXR,
-/// WebP, JPEG 2000, DDS, MIFF, SVG and DNG as IM's coders read them, and
-/// JPEG, BMP, TGA, GIF through the `image` crate).
+/// WebP, JPEG 2000, DDS, MIFF, SVG, DNG, PSD and EMF as IM's coders read
+/// them, and JPEG, BMP, TGA, GIF through the `image` crate).
 pub fn read_pixel_cache(path: &Path) -> Result<PixelCache> {
     let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
     match extension.as_str() {
@@ -79,7 +87,8 @@ pub fn read_pixel_cache(path: &Path) -> Result<PixelCache> {
         "miff" => crate::coders::miff::read(path),
         "svg" => crate::coders::svg::read(path),
         "dng" => crate::coders::dng::read(path),
-        "psd" => bail!("{} files are not supported", extension.to_uppercase()),
+        "psd" | "psb" => crate::coders::psd::read(path),
+        "emf" => crate::coders::emf::read(path),
         _ => read_with_image_crate(path),
     }
 }

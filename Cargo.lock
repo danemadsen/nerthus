@@ -4441,12 +4441,16 @@ name = "nerthus-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "gethostname",
+ "log",
  "nerthus-compute",
  "nerthus-engine",
  "nerthus-export",
  "nerthus-nodes",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4552,6 +4556,7 @@ dependencies = [
  "roxmltree 0.21.1",
  "smallvec",
  "tiff",
+ "ttf-parser",
  "uuid",
 ]
 

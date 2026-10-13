@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn enter_connects_the_two_picked_and_escape_cancels() {
         let mut document = crate::document::Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let combine = document.add_node("Combine", [300.0, 0.0]).unwrap();
         let editor = Editor::new(document);
         let context = egui::Context::default();
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn every_port_on_a_side_is_listed() {
         let mut document = crate::document::Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let combine = document.add_node("Combine", [300.0, 0.0]).unwrap();
         document.connect(erosion, "Wear", combine, "Input2");
         let editor = Editor::new(document);

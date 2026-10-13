@@ -16,11 +16,20 @@ use nerthus_io::pixel_cache::{read_pixel_cache, CacheColorspace, PixelCache, Pix
 /// `1f / Quantum.Max`: a map is divided by a scalar as a multiplication
 /// by its reciprocal.
 const QUANTUM_SCALE: f32 = 1.0 / 65535.0;
+/// IM's `QuantumRange` and `QuantumScale`.
+const QUANTUM_RANGE: f64 = 65535.0;
+const QUANTUM_SCALE_F64: f64 = 1.0 / 65535.0;
 
-/// The colour (and alpha) channels of the cache as an `Image` for IM's
-/// colour operations, the index channel left out.
+/// Whether a channel is one of the image's colours (grey, red, green,
+/// blue or black).
+fn is_colour(channel: PixelChannel) -> bool {
+    !matches!(channel, PixelChannel::Index | PixelChannel::Alpha | PixelChannel::Meta)
+}
+
+/// The grey or red, green and blue channels of the cache as an `Image` for
+/// IM's colour operations.
 fn colour_image(cache: &PixelCache) -> Image {
-    let kept: Vec<usize> = (0..cache.channels.len()).filter(|&index| cache.channels[index] != PixelChannel::Index).collect();
+    let kept: Vec<usize> = (0..cache.channels.len()).filter(|&index| is_colour(cache.channels[index])).collect();
     let stride = cache.channels.len();
     let mut data = Vec::with_capacity(cache.width * cache.height * kept.len());
     for pixel in cache.data.chunks_exact(stride) {
@@ -29,8 +38,9 @@ fn colour_image(cache: &PixelCache) -> Image {
         }
     }
     let mut image = Image::from_data(cache.width, cache.height, kept.len(), data);
+    // CMYK and Lab caches are taken to sRGB before they get here.
     image.colorspace = match cache.colorspace {
-        CacheColorspace::SRgb => Colorspace::SRgb,
+        CacheColorspace::SRgb | CacheColorspace::Cmyk | CacheColorspace::Lab => Colorspace::SRgb,
         CacheColorspace::Rgb => Colorspace::LinearRgb,
         CacheColorspace::Gray => Colorspace::Gray,
         CacheColorspace::LinearGray => Colorspace::LinearGray,
@@ -38,70 +48,146 @@ fn colour_image(cache: &PixelCache) -> Image {
     image
 }
 
-/// The cache after a colorspace transform: `DirectClass` (no index), grey
-/// plus any alpha.
-fn from_gray_image(image: Image, alpha: Option<Vec<f32>>, colorspace: CacheColorspace, gamma: f64) -> PixelCache {
-    let mut channels = vec![PixelChannel::Gray];
-    let data = match alpha {
-        Some(alpha) => {
-            channels.push(PixelChannel::Alpha);
-            image.data.iter().zip(alpha.iter()).flat_map(|(&gray, &opacity)| [gray, opacity]).collect()
+/// The channels a colorspace transform keeps as they are: alpha and meta
+/// channels, in order, with their samples.
+fn extra_channels(cache: &PixelCache) -> Vec<(PixelChannel, Vec<f32>)> {
+    let stride = cache.channels.len();
+    let mut extras = Vec::new();
+    for (position, channel) in cache.channels.iter().enumerate() {
+        if !matches!(channel, PixelChannel::Alpha | PixelChannel::Meta) {
+            continue;
         }
-        None => image.data,
-    };
-    PixelCache { width: image.width, height: image.height, channels, data, colorspace, gamma }
+        let samples: Vec<f32> = cache.data.chunks_exact(stride).map(|pixel| pixel[position]).collect();
+        extras.push((*channel, samples));
+    }
+    extras
 }
 
-/// The cache's alpha samples, if it has alpha.
-fn alpha_of(cache: &PixelCache) -> Option<Vec<f32>> {
-    let position = cache.channels.iter().position(|channel| *channel == PixelChannel::Alpha)?;
+/// A cache of new colours (`colours`, `colour_channels` per pixel) and the
+/// extra channels after them.
+fn with_extras(colours: &[f32], colour_channels: Vec<PixelChannel>, extras: Vec<(PixelChannel, Vec<f32>)>, model: &PixelCache, colorspace: CacheColorspace, gamma: f64) -> PixelCache {
+    let colour_count = colour_channels.len();
+    let mut channels = colour_channels;
+    channels.extend(extras.iter().map(|(channel, _)| *channel));
+    let mut data = Vec::with_capacity(model.width * model.height * channels.len());
+    for (index, pixel) in colours.chunks_exact(colour_count).enumerate() {
+        data.extend_from_slice(pixel);
+        for (_, samples) in &extras {
+            data.push(samples[index]);
+        }
+    }
+    PixelCache { width: model.width, height: model.height, channels, data, colorspace, gamma }
+}
+
+/// The cache after a transform to grey: `DirectClass` (no index), grey
+/// plus the extra channels.
+fn from_gray_image(image: Image, extras: Vec<(PixelChannel, Vec<f32>)>, model: &PixelCache, colorspace: CacheColorspace, gamma: f64) -> PixelCache {
+    with_extras(&image.data, vec![PixelChannel::Gray], extras, model, colorspace, gamma)
+}
+
+/// `TransformsRGBImage` from CMYK: `ConvertCMYKToRGB` on each pixel, then
+/// the black channel goes.
+fn cmyk_to_srgb(cache: &PixelCache) -> PixelCache {
     let stride = cache.channels.len();
-    Some(cache.data.chunks_exact(stride).map(|pixel| pixel[position]).collect())
+    let position = |wanted: PixelChannel| cache.channels.iter().position(|channel| *channel == wanted).unwrap_or(0);
+    let (cyan, magenta, yellow, black) = (position(PixelChannel::Red), position(PixelChannel::Green), position(PixelChannel::Blue), position(PixelChannel::Black));
+    let mut colours = Vec::with_capacity(cache.width * cache.height * 3);
+    for pixel in cache.data.chunks_exact(stride) {
+        let black = pixel[black] as f64;
+        for ink in [pixel[cyan], pixel[magenta], pixel[yellow]] {
+            let value = QUANTUM_RANGE - (QUANTUM_SCALE_F64 * ink as f64 * (QUANTUM_RANGE - black) + black);
+            colours.push(value as f32);
+        }
+    }
+    let channels = vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue];
+    with_extras(&colours, channels, extra_channels(cache), cache, CacheColorspace::SRgb, cache.gamma)
+}
+
+/// `TransformsRGBImage` from Lab (`ConvertLabToRGB` under D65): Lab to XYZ
+/// to sRGB.
+fn lab_to_srgb(cache: &PixelCache) -> PixelCache {
+    const CIE_EPSILON: f64 = 216.0 / 24389.0;
+    const CIE_K: f64 = 24389.0 / 27.0;
+    const D65: [f64; 3] = [0.95047, 1.00000, 1.08883];
+    let stride = cache.channels.len();
+    let mut colours = Vec::with_capacity(cache.width * cache.height * 3);
+    for pixel in cache.data.chunks_exact(stride) {
+        let lightness = 100.0 * (QUANTUM_SCALE_F64 * pixel[0] as f64);
+        let a = 255.0 * ((QUANTUM_SCALE_F64 * pixel[1] as f64) - 0.5);
+        let b = 255.0 * ((QUANTUM_SCALE_F64 * pixel[2] as f64) - 0.5);
+        // `ConvertLabToXYZ`.
+        let mut y = (lightness + 16.0) / 116.0;
+        let mut x = y + a / 500.0;
+        let mut z = y - b / 200.0;
+        x = if (x * x * x) > CIE_EPSILON { x * x * x } else { (116.0 * x - 16.0) / CIE_K };
+        y = if lightness > (CIE_K * CIE_EPSILON) { y * y * y } else { lightness / CIE_K };
+        z = if (z * z * z) > CIE_EPSILON { z * z * z } else { (116.0 * z - 16.0) / CIE_K };
+        let (x, y, z) = (D65[0] * x, D65[1] * y, D65[2] * z);
+        // `ConvertXYZToRGB`.
+        let mut red = (3.240969941904521 * x) + (-1.537383177570093 * y) + (-0.498610760293 * z);
+        let mut green = (-0.96924363628087 * x) + (1.87596750150772 * y) + (0.041555057407175 * z);
+        let mut blue = (0.055630079696993 * x) + (-0.20397695888897 * y) + (1.056971514242878 * z);
+        let smallest = if red < (if green < blue { green } else { blue }) { red } else if green < blue { green } else { blue };
+        if smallest < 0.0 {
+            red -= smallest;
+            green -= smallest;
+            blue -= smallest;
+        }
+        for value in [red, green, blue] {
+            colours.push(quanta::encode_pixel_gamma(QUANTUM_RANGE * value) as f32);
+        }
+    }
+    let channels = vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue];
+    with_extras(&colours, channels, extra_channels(cache), cache, CacheColorspace::SRgb, cache.gamma)
+}
+
+/// `TransformsRGBImage` from linear RGB: each colour encoded with the
+/// sRGB curve (`EncodePixelGamma`).
+fn rgb_to_srgb(cache: &PixelCache) -> PixelCache {
+    let mut encoded = cache.clone();
+    let stride = cache.channels.len();
+    let colour_positions: Vec<usize> = (0..stride).filter(|&index| is_colour(cache.channels[index])).collect();
+    for pixel in encoded.data.chunks_exact_mut(stride) {
+        for &position in &colour_positions {
+            pixel[position] = quanta::encode_pixel_gamma(pixel[position] as f64) as f32;
+        }
+    }
+    encoded.colorspace = CacheColorspace::SRgb;
+    encoded
+}
+
+/// `TransformsRGBImage`: linear RGB, CMYK and Lab caches as sRGB, others
+/// as they are.
+fn to_srgb(cache: &PixelCache) -> PixelCache {
+    match cache.colorspace {
+        CacheColorspace::Rgb => rgb_to_srgb(cache),
+        CacheColorspace::Cmyk => cmyk_to_srgb(cache),
+        CacheColorspace::Lab => lab_to_srgb(cache),
+        _ => cache.clone(),
+    }
 }
 
 /// `TransformImageColorspace` to LinearGRAY (through sRGB, IM 7.1.2).
 fn to_linear_gray(cache: &PixelCache) -> PixelCache {
-    let alpha = alpha_of(cache);
-    let mut image = colour_image(cache);
-    if alpha.is_some() {
-        image = without_alpha(&image);
-    }
+    let cache = to_srgb(cache);
+    let extras = extra_channels(&cache);
+    let image = colour_image(&cache);
     let linear = quanta::to_linear_gray(&image);
-    from_gray_image(linear, alpha, CacheColorspace::LinearGray, 1.0)
+    from_gray_image(linear, extras, &cache, CacheColorspace::LinearGray, 1.0)
 }
 
 /// `TransformImageColorspace` from LinearGRAY to GRAY.
 fn linear_to_gray(cache: &PixelCache) -> PixelCache {
-    let alpha = alpha_of(cache);
-    let image = without_alpha(&colour_image(cache));
+    let extras = extra_channels(cache);
+    let image = colour_image(cache);
     let gray = quanta::linear_to_gray(&image);
-    from_gray_image(gray, alpha, CacheColorspace::Gray, cache.gamma)
-}
-
-/// The colour channels alone.
-fn without_alpha(image: &Image) -> Image {
-    let colours = match image.channels {
-        2 | 4 => image.channels - 1,
-        channels => channels,
-    };
-    if colours == image.channels {
-        return image.clone();
-    }
-    let mut data = Vec::with_capacity(image.width * image.height * colours);
-    for pixel in image.data.chunks_exact(image.channels) {
-        data.extend_from_slice(&pixel[..colours]);
-    }
-    let mut result = Image::from_data(image.width, image.height, colours, data);
-    result.colorspace = image.colorspace;
-    result
+    from_gray_image(gray, extras, cache, CacheColorspace::Gray, cache.gamma)
 }
 
 /// `GammaImage` (Magick.NET `GammaCorrect`) on the colour channels; the
-/// index and alpha channels keep their values.
+/// index, alpha and meta channels keep their values.
 fn gamma_correct(cache: &mut PixelCache, gamma: f64) {
-    let colour_positions: Vec<usize> = (0..cache.channels.len())
-        .filter(|&index| !matches!(cache.channels[index], PixelChannel::Index | PixelChannel::Alpha))
-        .collect();
+    let colour_positions: Vec<usize> = (0..cache.channels.len()).filter(|&index| is_colour(cache.channels[index])).collect();
     let stride = cache.channels.len();
     let mut colours = Vec::with_capacity(cache.width * cache.height * colour_positions.len());
     for pixel in cache.data.chunks_exact(stride) {
@@ -109,7 +195,10 @@ fn gamma_correct(cache: &mut PixelCache, gamma: f64) {
             colours.push(pixel[position]);
         }
     }
-    let mut image = Image::from_data(cache.width, cache.height, colour_positions.len(), colours);
+    // Every colour sample on its own (a CMYK image's black included; an
+    // image of four channels would take the last for alpha).
+    let samples = colours.len();
+    let mut image = Image::from_data(samples, 1, 1, colours);
     quanta::gamma(&mut image, gamma);
     for (pixel, corrected) in cache.data.chunks_exact_mut(stride).zip(image.data.chunks_exact(colour_positions.len())) {
         for (&position, &value) in colour_positions.iter().zip(corrected.iter()) {
@@ -121,36 +210,48 @@ fn gamma_correct(cache: &mut PixelCache, gamma: f64) {
     }
 }
 
+/// The cache with its alpha channel gone (other channels kept).
+fn without_alpha(cache: PixelCache) -> PixelCache {
+    let Some(position) = cache.channels.iter().position(|channel| *channel == PixelChannel::Alpha) else {
+        return cache;
+    };
+    let stride = cache.channels.len();
+    let mut data = Vec::with_capacity(cache.width * cache.height * (stride - 1));
+    for pixel in cache.data.chunks_exact(stride) {
+        for (index, &value) in pixel.iter().enumerate() {
+            if index != position {
+                data.push(value);
+            }
+        }
+    }
+    let mut channels = cache.channels;
+    channels.remove(position);
+    PixelCache { channels, data, ..cache }
+}
+
 /// The cache as a map. A cache of fewer than three
 /// channels is made GRAY and read as one channel — its first
-/// width × height values, whatever the cache interleaves; otherwise alpha
-/// is turned off and every remaining channel kept. Quanta are scaled to
-/// 0..1.
+/// width × height values, whatever the cache interleaves (after a real
+/// transform to GRAY, alpha is gone from it but meta channels are not);
+/// otherwise alpha is turned off and every remaining channel kept. Quanta
+/// are scaled to 0..1.
 fn cache_to_map(mut cache: PixelCache) -> Map {
     let resolution = Resolution { x: cache.width, y: cache.height };
     let area = cache.width * cache.height;
     let mut map = if cache.channels.len() < 3 {
+        // A real transform to GRAY leaves the grey channel alone in what is
+        // read; otherwise the cache is read as it was, extra channels
+        // interleaved.
         if cache.colorspace == CacheColorspace::LinearGray {
             cache = linear_to_gray(&cache);
+            cache = without_alpha(cache);
         }
         let mut values = cache.data;
         values.resize(area.max(values.len()), 0.0);
         values.truncate(area);
         Map::from_data(resolution, values)
     } else {
-        if let Some(position) = cache.channels.iter().position(|channel| *channel == PixelChannel::Alpha) {
-            let stride = cache.channels.len();
-            let mut kept = Vec::with_capacity(area * (stride - 1));
-            for pixel in cache.data.chunks_exact(stride) {
-                for (index, &value) in pixel.iter().enumerate() {
-                    if index != position {
-                        kept.push(value);
-                    }
-                }
-            }
-            cache.channels.remove(position);
-            cache.data = kept;
-        }
+        cache = without_alpha(cache);
         Map::from_interleaved(resolution, &cache.data, cache.channels.len())
     };
     map.apply(|quantum| quantum * QUANTUM_SCALE);
@@ -218,4 +319,41 @@ pub fn load_map_file(path: &Path, is_rgb: bool, enforce_linear_gamma: bool) -> R
         return Ok(Map::from_channels(map.resolution(), vec![gray.clone(), gray.clone(), gray]));
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Loads every image named in `$NERTHUS_MAP_FILES` (a list split by
+    /// newlines) with each combination of IsRGB and EnforceLinearGamma and
+    /// writes the map as the oracle's `load-map` does, into
+    /// `<file>.<rgb><linear>.ours/` (`map.raw`, or `map.cN.raw` per
+    /// channel, and `map.json`), for comparing with the oracle's maps.
+    #[test]
+    #[ignore]
+    fn dump_loaded_maps() {
+        let list = std::env::var("NERTHUS_MAP_FILES").expect("set NERTHUS_MAP_FILES");
+        for file in list.lines().filter(|line| !line.trim().is_empty()) {
+            let path = Path::new(file.trim());
+            for (is_rgb, linear) in [(false, false), (true, false), (false, true), (true, true)] {
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                let folder = path.with_file_name(format!("{name}.{}{}.ours", u8::from(is_rgb), u8::from(linear)));
+                std::fs::create_dir_all(&folder).unwrap();
+                let report = match load_map_file(path, is_rgb, linear) {
+                    Ok(map) => {
+                        let channels = map.channel_count();
+                        for channel in 0..channels {
+                            let file_name = if channels == 1 { "map.raw".to_string() } else { format!("map.c{channel}.raw") };
+                            let bytes: Vec<u8> = map.channel(channel).iter().flat_map(|value| value.to_le_bytes()).collect();
+                            std::fs::write(folder.join(file_name), bytes).unwrap();
+                        }
+                        format!("{{\"width\":{},\"height\":{},\"channels\":{channels}}}", map.width(), map.height())
+                    }
+                    Err(error) => format!("{{\"error\":{:?}}}", error),
+                };
+                std::fs::write(folder.join("map.json"), report).unwrap();
+            }
+        }
+    }
 }

@@ -114,6 +114,16 @@ pub fn run(command: FileCommand, editor: &mut Editor, ui_state: &mut UiState) {
         }
         FileCommand::OpenExample { path, mode } => open_example(editor, &path, mode),
         FileCommand::ExportMacroChecked => export_macro_checked(editor),
+        // `RecoverOrphans` runs before the graph is made, so a saved tab
+        // that was one of the orphans' is the one shown.
+        FileCommand::RecoverOrphans => {
+            editor.document.recover_orphans();
+            ui_state.graph.tab = editor.document.opening_tab();
+        }
+        FileCommand::DeleteOrphans => {
+            editor.document.delete_orphans();
+            editor.changed();
+        }
     }
 }
 
@@ -199,7 +209,13 @@ fn perform(action: FileAction, editor: &mut Editor) {
             editor.files.dialog = Some(FileDialog::Repair);
         }
         FileAction::Examples => editor.files.examples_open = true,
-        FileAction::Exit => editor.files.exit_now = true,
+        // `CloseFile` as Nerthus closes: its previews written first when
+        // the project keeps them.
+        FileAction::Exit => {
+            if !editor.exit_when_frozen() {
+                editor.files.exit_now = true;
+            }
+        }
     }
 }
 
@@ -275,6 +291,8 @@ pub fn take_requests(editor: &mut Editor, ui_state: &mut UiState, commands: &mut
         let message = editor.files.messages.remove(0);
         let mut prompt = Prompt::message(&message.caption, &message.text);
         prompt.yes = message.yes.map(Command::File);
+        prompt.no = message.no.map(Command::File);
+        prompt.dismissed = message.dismissed.map(Command::File);
         prompt.footnote = message.footnote;
         ui_state.prompt = Some(prompt);
     }

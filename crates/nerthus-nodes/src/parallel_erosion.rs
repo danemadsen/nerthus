@@ -1,5 +1,5 @@
 //! The native hydraulic erosion (`ParallelErosion_Erode`), the engine of
-//! Erosion2 and of every node built on `Erosions.PE`.
+//! ErosionPro and of every node built on `Erosions.PE`.
 //!
 //! The heightmap becomes a Laplacian pyramid. Droplets erode the coarsest
 //! level first; each finer level then takes back the eroded coarse surface

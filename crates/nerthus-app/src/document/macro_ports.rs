@@ -131,7 +131,7 @@ mod tests {
     fn unconnected_ports_get_macro_ports_beside_their_node() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 50.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 50.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let built = |_: i32, port: &str| (port == "Wear").then_some(RenderIntent::Mask);
         let made = document.create_macro_ports(&[erosion], true, true, built);

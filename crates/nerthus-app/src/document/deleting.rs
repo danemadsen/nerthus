@@ -153,7 +153,7 @@ mod tests {
     fn chain() -> (Document, i32, i32, i32) {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [600.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         document.connect(erosion, "Out", blur, "In");
@@ -168,7 +168,7 @@ mod tests {
         assert!(document.node(erosion).is_none());
         let record = document.node(blur).unwrap().port("In").unwrap().record.clone().unwrap();
         assert_eq!((record.from, record.from_port.as_str()), (mountain, "Out"));
-        assert_eq!(document.undo_labels()[0], "Node deleted: Erosion2.");
+        assert_eq!(document.undo_labels()[0], "Node deleted: ErosionPro.");
     }
 
     #[test]

@@ -193,9 +193,7 @@ impl Preferences {
 
     /// `Locations.Builds`: where builds go (`<Builds>`).
     pub fn builds_folder(&self) -> PathBuf {
-        let locations = self.section("Locations");
-        let builds = locations.and_then(|locations| locations.get("Builds")).and_then(Value::as_str).unwrap_or_default();
-        nerthus_export::build::project_path_text(builds)
+        nerthus_export::preferences::builds_folder(&self.values)
     }
 
     /// `Paths.Docs`: the documents folder (`Locations.Documents`).
@@ -221,30 +219,11 @@ impl Preferences {
         documents_folder.join("Screenshots")
     }
 
-    /// `Defaults.FilenameDelimiter`: between a node's name and its port's.
-    pub fn filename_delimiter(&self) -> String {
-        let defaults = self.section("Defaults");
-        let delimiter = defaults.and_then(|defaults| defaults.get("FilenameDelimiter")).and_then(Value::as_str);
-        delimiter.unwrap_or("_").to_string()
-    }
-
     /// `Defaults.HeightfieldFormat`: what Mark for Export starts with.
     pub fn heightfield_format(&self) -> FileFormat {
         let defaults = self.section("Defaults");
         let name = defaults.and_then(|defaults| defaults.get("HeightfieldFormat")).and_then(Value::as_str).unwrap_or("EXR");
         FileFormat::from_name(name).unwrap_or(FileFormat::Exr)
-    }
-
-    /// `Locations.Cache` when `Locations.CentralizeCacheBake` is on: where
-    /// baked maps go instead of beside the project.
-    pub fn central_bake_cache(&self) -> Option<PathBuf> {
-        let locations = self.section("Locations")?;
-        let centralized = locations.get("CentralizeCacheBake").and_then(Value::as_bool).unwrap_or(false);
-        if !centralized {
-            return None;
-        }
-        let cache = locations.get("Cache").and_then(Value::as_str).unwrap_or_default();
-        Some(nerthus_export::build::project_path_text(cache))
     }
 
     /// `Locations.Cache` when `Locations.CentralizeCacheFreeze` is on: where
@@ -271,12 +250,7 @@ impl Preferences {
 
     /// What a build reads from the preferences.
     pub fn export_preferences(&self) -> ExportPreferences {
-        ExportPreferences {
-            filename_delimiter: self.filename_delimiter(),
-            builds_root: self.builds_folder(),
-            central_bake_cache: self.central_bake_cache(),
-            ..ExportPreferences::default()
-        }
+        ExportPreferences::from_preferences(&self.values)
     }
 }
 
@@ -316,7 +290,7 @@ mod tests {
     fn saved_folders_and_formats_are_used() {
         let saved = json!({"Defaults": {"FilenameDelimiter": "-", "HeightfieldFormat": "PNG16"}, "Locations": {"Builds": "/tmp/builds", "Projects": ""}});
         let preferences = Preferences::from_json(&saved);
-        assert_eq!(preferences.filename_delimiter(), "-");
+        assert_eq!(preferences.export_preferences().filename_delimiter, "-");
         assert_eq!(preferences.heightfield_format(), FileFormat::Png16);
         assert_eq!(preferences.builds_folder(), PathBuf::from("/tmp/builds"));
         let projects = preferences.section("Locations").unwrap()["Projects"].as_str().unwrap().to_string();

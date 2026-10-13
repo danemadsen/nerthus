@@ -451,7 +451,7 @@ fn decode_pixel_gamma(pixel: f64) -> f64 {
 }
 
 /// IM 7.1.2's `EncodePixelGamma` on a quantum (linear to the sRGB curve).
-fn encode_pixel_gamma(pixel: f64) -> f64 {
+pub fn encode_pixel_gamma(pixel: f64) -> f64 {
     if pixel <= 0.0031306684425005883 * QUANTUM_RANGE as f64 {
         return 12.92 * pixel;
     }

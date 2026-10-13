@@ -54,7 +54,7 @@ const TOOLBOX: [Setting; 12] = [
     Opt("ShowFamilyName"),
     Opt("ShowIconsInSearchResults"),
     Opt("MaximumSearchResults"),
-    Opt("StackedSatMaps"),
+    Opt("StackedSatelliteMaps"),
 ];
 const GRAPH: [Setting; 5] = [Opt("GridSize"), Opt("ConfineShortcuts"), Opt("HideTabs"), Opt("HideBookmarkShortcuts"), Opt("RecordGraphMovementUndos")];
 const NODE: [Setting; 9] = [
@@ -606,7 +606,7 @@ fn toolbox(ui: &mut Ui, copy: &mut OptionsCopy) {
     ui.add_space(8.0);
     valued_choice(ui, copy, Opt("MaximumSearchResults"), "Maximum Results", &[5, 10, 15], Some(220.0));
     ui.separator();
-    check(ui, copy, Opt("StackedSatMaps"), 112.0, "Show SatMaps List as a Single Stack");
+    check(ui, copy, Opt("StackedSatelliteMaps"), 112.0, "Show Satellite Maps List as a Single Stack");
 }
 
 /// `GraphTab`.

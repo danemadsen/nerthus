@@ -374,9 +374,9 @@ mod tests {
     fn statistics_round_trip_as_messagepack() {
         let mut data = StatisticsData::default();
         data.node_usage.insert("Mountain".to_string(), 300);
-        data.node_usage.insert("Erosion2".to_string(), 5);
-        let statistic = ConnectionStatistic { node: "Mountain".to_string(), port: "Out".to_string(), target: "Erosion2".to_string(), count: 12 };
-        data.connection_stats.insert("Mountain-Out-Erosion2".to_string(), statistic);
+        data.node_usage.insert("ErosionPro".to_string(), 5);
+        let statistic = ConnectionStatistic { node: "Mountain".to_string(), port: "Out".to_string(), target: "ErosionPro".to_string(), count: 12 };
+        data.connection_stats.insert("Mountain-Out-ErosionPro".to_string(), statistic);
         let bytes = encode(&data);
         // `[ {..}, {..} ]` as MessagePack-CSharp writes it.
         assert_eq!(bytes[0], 0x92);
@@ -387,11 +387,11 @@ mod tests {
     fn suggestions_need_more_than_ten_connections() {
         let mut stats = UsageStats::default();
         for _ in 0..11 {
-            stats.record_connection("Mountain", "Out", "Erosion2");
+            stats.record_connection("Mountain", "Out", "ErosionPro");
         }
         for _ in 0..3 {
             stats.record_connection("Mountain", "Out", "Blur");
         }
-        assert_eq!(stats.suggestions("Mountain", "Out", 5), vec!["Erosion2".to_string()]);
+        assert_eq!(stats.suggestions("Mountain", "Out", 5), vec!["ErosionPro".to_string()]);
     }
 }

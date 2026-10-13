@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -36,6 +36,8 @@ pub enum MacroError {
     Encoding,
     #[error("the macro's data is not a valid asset: {0}")]
     Asset(String),
+    #[error("Dependent macro [{0}] was not found. Install this macro first then try again.")]
+    MissingDependency(String),
 }
 
 /// `MacroMetadata`.
@@ -582,6 +584,108 @@ pub fn load_project_macros_from(macro_ids: &[String], folders: &[std::path::Path
     (library, problems)
 }
 
+/// `M.LoadDependentMacro`: the macros `asset` depends on
+/// (`DependentMacros`), each read with what it depends on before it, each
+/// once. `find` gives an installed macro's file. A dependency that is not
+/// installed stops `asset` from loading (the error); one that cannot be
+/// read, or whose own dependencies are not installed, is left out and
+/// reported in `problems`.
+pub fn load_dependencies(asset: &MacroAsset, find: &dyn Fn(&str) -> Option<PathBuf>, problems: &mut Vec<(String, MacroError)>) -> Result<Vec<MacroAsset>, MacroError> {
+    let mut seen = vec![asset.metadata.id()];
+    let mut loaded = Vec::new();
+    for id in &asset.metadata.dependent_macros {
+        let Some(path) = find(id) else {
+            return Err(MacroError::MissingDependency(id.clone()));
+        };
+        let before = loaded.len();
+        if let Err(error) = load_dependency(&path, find, &mut seen, &mut loaded, problems) {
+            loaded.truncate(before);
+            problems.push((id.clone(), error));
+        }
+    }
+    Ok(loaded)
+}
+
+/// `M.LoadMacro` for a dependency: what it depends on first (a dependency
+/// of its that is not installed fails it), then it. A macro met before (a
+/// loop of dependencies included) is not read again.
+fn load_dependency(path: &Path, find: &dyn Fn(&str) -> Option<PathBuf>, seen: &mut Vec<String>, loaded: &mut Vec<MacroAsset>, problems: &mut Vec<(String, MacroError)>) -> Result<(), MacroError> {
+    let dependency = MacroAsset::read(path)?;
+    let id = dependency.metadata.id();
+    if seen.contains(&id) {
+        return Ok(());
+    }
+    seen.push(id);
+    for nested in &dependency.metadata.dependent_macros {
+        let Some(nested_path) = find(nested) else {
+            return Err(MacroError::MissingDependency(nested.clone()));
+        };
+        let before = loaded.len();
+        if let Err(error) = load_dependency(&nested_path, find, seen, loaded, problems) {
+            loaded.truncate(before);
+            problems.push((nested.clone(), error));
+        }
+    }
+    loaded.push(dependency);
+    Ok(())
+}
+
+/// What the editor reads for a project's macros (`M.EnsureMacros`).
+pub struct EnsuredMacros {
+    pub library: MacroLibrary,
+    /// Dependencies the project did not list, in the order they were
+    /// added to it.
+    pub added: Vec<String>,
+    pub problems: Vec<(String, MacroError)>,
+}
+
+/// `M.EnsureMacros` as the editor opens a project: each macro it uses read
+/// from the first of `folders` that has it, with the macros it depends on
+/// before it (see [`load_dependencies`]); a macro whose dependencies are
+/// not installed is not loaded. All are added to the project as
+/// [`load_project_macros`] adds them.
+pub fn ensure_project_macros(macro_ids: &[String], folders: &[PathBuf]) -> EnsuredMacros {
+    let offset = 1000 * (macro_ids.len() as i32 + 1);
+    let find = |id: &str| find_macro_file(id, folders);
+    let mut ensured = EnsuredMacros { library: MacroLibrary::new(), added: Vec::new(), problems: Vec::new() };
+    for id in macro_ids {
+        let Some(path) = find(id) else {
+            let missing = std::io::Error::new(std::io::ErrorKind::NotFound, format!("{id}.macro is not installed"));
+            ensured.problems.push((id.clone(), MacroError::Io(missing)));
+            continue;
+        };
+        let mut asset = match MacroAsset::read(&path) {
+            Ok(asset) => asset,
+            Err(error) => {
+                ensured.problems.push((id.clone(), error));
+                continue;
+            }
+        };
+        let dependencies = match load_dependencies(&asset, &find, &mut ensured.problems) {
+            Ok(dependencies) => dependencies,
+            Err(error) => {
+                ensured.problems.push((id.clone(), error));
+                continue;
+            }
+        };
+        for mut dependency in dependencies {
+            let dependency_id = dependency.metadata.id();
+            if ensured.library.contains_key(&dependency_id) {
+                continue;
+            }
+            let listed = macro_ids.contains(&dependency_id) || ensured.added.contains(&dependency_id);
+            if !listed {
+                ensured.added.push(dependency_id.clone());
+            }
+            dependency.add_to_project(offset);
+            ensured.library.insert(dependency_id, Arc::new(dependency));
+        }
+        asset.add_to_project(offset);
+        ensured.library.insert(id.clone(), Arc::new(asset));
+    }
+    ensured
+}
+
 /// The macros a project uses (`Project.Macros`), read from the macro
 /// directory (`<id>.macro`) and added to the project as
 /// `M.EnsureMacros` does. Macros that cannot be read are reported.
@@ -639,6 +743,57 @@ mod tests {
         assert_eq!(read_metadata.version, "1.5");
         assert_eq!(read_asset.metadata.source, "abc12345");
         assert_eq!(read_asset.asset.terrain.nodes.len(), 1);
+    }
+
+    /// A macro `Author.Name` of one MacroPort depending on `dependencies`,
+    /// written as `<id>.macro` in `folder`.
+    fn write_test_macro(folder: &Path, author: &str, name: &str, dependencies: &[&str]) {
+        let project_template = r#"{"Assets": {"$values": [{"Terrain": {"Id": "8b2d5f35-3c63-4c1c-9e55-0d2a6f0f9b4b",
+            "Nodes": {"101": {"$type": "MACRO_PORT_TYPE", "Id": 101, "Name": "In", "Position": {"X": 0.0, "Y": 0.0},
+              "Ports": {"$values": [{"Name": "In", "Type": "PrimaryIn"}, {"Name": "Out", "Type": "PrimaryOut"}]}}},
+            "Width": 5000.0, "Height": 2500.0}, "Automation": {"Variables": {}}}]}}"#;
+        let macro_port_type = crate::format_names::node_type("MacroPort");
+        let project_text = project_template.replace("MACRO_PORT_TYPE", &macro_port_type);
+        let project = crate::project::Project::parse(&project_text).unwrap();
+        let mut metadata = MacroMetadata::for_export(name, author, "", "1.0", "", "source");
+        metadata.dependent_macros = dependencies.iter().map(|id| id.to_string()).collect();
+        let metadata_value: Value = serde_json::from_str(&metadata.to_json()).unwrap();
+        let asset_json = crate::writer::to_macro_asset_json(&project.assets[0], &metadata_value);
+        let path = folder.join(format!("{}.macro", metadata.id()));
+        write_macro_file(&path, &metadata, &asset_json).unwrap();
+    }
+
+    #[test]
+    fn dependencies_load_first_and_missing_ones_stop_a_macro() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0);
+        let folder = std::env::temp_dir().join(format!("nerthus-macro-dependencies-{nanos}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        write_test_macro(&folder, "Ann", "Base", &[]);
+        write_test_macro(&folder, "Ann", "Middle", &["Ann.Base"]);
+        write_test_macro(&folder, "Ann", "Top", &["Ann.Middle", "Ann.Base"]);
+        // A loop of dependencies loads each once.
+        write_test_macro(&folder, "Ann", "Loop", &["Ann.Loop"]);
+        write_test_macro(&folder, "Ann", "Broken", &["Ann.Gone"]);
+        let folders = vec![folder.clone()];
+
+        let ids = vec!["Ann.Top".to_string(), "Ann.Loop".to_string(), "Ann.Broken".to_string()];
+        let ensured = ensure_project_macros(&ids, &folders);
+        assert_eq!(ensured.added, ["Ann.Base", "Ann.Middle"]);
+        let mut loaded: Vec<&String> = ensured.library.keys().collect();
+        loaded.sort();
+        assert_eq!(loaded, ["Ann.Base", "Ann.Loop", "Ann.Middle", "Ann.Top"]);
+        let problems: Vec<String> = ensured.problems.iter().map(|(id, error)| format!("{id}: {error}")).collect();
+        assert_eq!(problems, ["Ann.Broken: Dependent macro [Ann.Gone] was not found. Install this macro first then try again."]);
+
+        // The order a macro brings its dependencies in: deepest first.
+        let top = MacroAsset::read(&folder.join("Ann.Top.macro")).unwrap();
+        let find = |id: &str| find_macro_file(id, &folders);
+        let mut problems = Vec::new();
+        let dependencies = load_dependencies(&top, &find, &mut problems).unwrap();
+        let order: Vec<String> = dependencies.iter().map(|dependency| dependency.metadata.id()).collect();
+        assert_eq!(order, ["Ann.Base", "Ann.Middle"]);
+        assert!(problems.is_empty());
+        std::fs::remove_dir_all(&folder).ok();
     }
 
     #[test]

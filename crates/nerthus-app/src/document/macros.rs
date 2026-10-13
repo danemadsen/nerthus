@@ -13,11 +13,15 @@ impl Document {
     /// (`Macro { Name, MacroId }`, then `SetupMacro` once its asset is in
     /// the project): an input or output for each of the macro's ports
     /// (required unless optional), the macro's variables as the node's.
-    /// The macro joins `Project.Macros`.
-    pub fn add_macro_node(&mut self, asset: &MacroAsset, position: [f32; 2], tab: usize) -> Option<i32> {
+    /// The macros it depends on (`dependencies`, as `M.LoadMacro` brings
+    /// them), then the macro, join `Project.Macros`.
+    pub fn add_macro_node(&mut self, asset: &MacroAsset, dependencies: &[String], position: [f32; 2], tab: usize) -> Option<i32> {
         let spec = Catalogue::get().node("Macro")?;
         let id_text = asset.metadata.id();
         self.checkpoint(format!("Add {}", asset.metadata.name));
+        for dependency in dependencies {
+            self.add_project_macro(dependency);
+        }
         let id = self.new_node_id();
         let mut node = NodeData::new(spec, id, 0);
         node.position = position;
@@ -49,6 +53,27 @@ impl Document {
         if let Value::Array(items) = macros {
             items.push(json!(id));
         }
+    }
+
+    /// Macros the project uses without listing them (dependencies of its
+    /// macros, found as it opens) join `Project.Macros`. Not an edit.
+    pub fn list_project_macros(&mut self, ids: &[String]) {
+        for id in ids {
+            self.add_project_macro(id);
+        }
+    }
+
+    /// The macros this project's Macro nodes run, each once
+    /// (`M.ExportMacro`'s `DependentMacros`).
+    pub fn used_macros(&self) -> Vec<String> {
+        let mut used: Vec<String> = Vec::new();
+        for node in self.terrain().nodes.values().filter(|node| node.type_name == "Macro") {
+            let id = node.values.get("MacroId").and_then(Value::as_str).unwrap_or_default().to_string();
+            if !used.contains(&id) {
+                used.push(id);
+            }
+        }
+        used
     }
 
     /// `M.CanExport`: whether this project can be exported as a macro, and
@@ -188,14 +213,21 @@ mod tests {
         assert_eq!(asset.metadata.id(), "Ann.Soften");
 
         let mut target = Document::new();
-        let id = target.add_macro_node(&asset, [10.0, 20.0], 0).unwrap();
+        let id = target.add_macro_node(&asset, &[], [10.0, 20.0], 0).unwrap();
         let node = target.node(id).unwrap();
         let ports: Vec<(&str, &str)> = node.ports.iter().map(|port| (port.name.as_str(), port.port_type.as_str())).collect();
         assert_eq!(ports, [("In", "PrimaryIn, Required"), ("Out", "PrimaryOut"), ("Mask", "In")]);
         assert_eq!(node.name, "Soften");
         assert_eq!(node.values["MacroId"], json!("Ann.Soften"));
         assert_eq!(target.project.macro_ids(), ["Ann.Soften"]);
-        target.add_macro_node(&asset, [10.0, 20.0], 0).unwrap();
+        target.add_macro_node(&asset, &[], [10.0, 20.0], 0).unwrap();
         assert_eq!(target.project.macro_ids().len(), 1);
+
+        // Its dependencies are listed first, once.
+        let mut other = Document::new();
+        let dependencies = vec!["Ann.Base".to_string()];
+        other.add_macro_node(&asset, &dependencies, [10.0, 20.0], 0).unwrap();
+        assert_eq!(other.project.macro_ids(), ["Ann.Base", "Ann.Soften"]);
+        assert_eq!(other.used_macros(), ["Ann.Soften"]);
     }
 }

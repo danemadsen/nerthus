@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use nerthus_engine::automation::{dotnet_double_string, dotnet_float_string};
-use nerthus_engine::format_names::{value_list_type, value_type};
+use nerthus_engine::format_names::{format_node_name, nerthus_node_name, value_list_type, value_type};
 use nerthus_engine::{NodeData, NodeSpec, ParameterSpec, ValueType};
 use serde_json::{json, Value};
 
@@ -28,7 +28,8 @@ const PRESET_TYPES: [&str; 6] = ["Node", "SnapIn", "EntireNode", "NodeDefault", 
 pub struct Preset {
     /// `Type` (`PresetType`, `Node` unless the file says otherwise).
     pub kind: String,
-    /// `ApplicableType`: the node type it is for (`NodeMetadata.Name`).
+    /// `ApplicableType`: the node type it is for (`NodeMetadata.Name`);
+    /// files hold the format's name for it ([`format_node_name`]).
     pub applicable_type: String,
     pub name: String,
     pub description: Option<String>,
@@ -49,9 +50,10 @@ impl Preset {
         let object = value.as_object()?;
         let text_member = |name: &str| object.get(name).and_then(Value::as_str).map(str::to_string);
         let kind = text_member("Type").unwrap_or_else(|| "Node".to_string());
+        let applicable_type = text_member("ApplicableType").unwrap_or_default();
         let preset = Preset {
             kind,
-            applicable_type: text_member("ApplicableType").unwrap_or_default(),
+            applicable_type: nerthus_node_name(&applicable_type).to_string(),
             name: text_member("Name").unwrap_or_default(),
             description: text_member("Description"),
             json: text_member("Json").unwrap_or_default(),
@@ -69,7 +71,7 @@ impl Preset {
             writer.string(&self.kind);
         }
         writer.member("ApplicableType");
-        writer.string(&self.applicable_type);
+        writer.string(format_node_name(&self.applicable_type));
         writer.member("Name");
         writer.string(&self.name);
         if let Some(description) = &self.description {
@@ -143,7 +145,8 @@ impl PresetLibrary {
     /// preset is renamed `<label> (<six hex digits>)` and saved as
     /// `<type>--<label>--<digits>` instead. Reloads the library.
     pub fn save(&mut self, preset: &mut Preset, label: &str) -> std::io::Result<()> {
-        let mut file_name = format!("{}--{label}", preset.applicable_type);
+        let file_type = format_node_name(&preset.applicable_type);
+        let mut file_name = format!("{file_type}--{label}");
         let mut path = self.folder.join(&file_name);
         if path.exists() && label != "_default" {
             let suffix = random_hex6();
@@ -537,6 +540,24 @@ mod tests {
         let color_template = "\"Color\": {\r\n    \"$id\": \"2\",\r\n    \"$type\": \"COLOR_TYPE\",\r\n    \"R\": 1.0,\r\n    \"G\": 0.5\r\n  }\r\n}";
         let expected_color = color_template.replace("COLOR_TYPE", &value_type("Color"));
         assert!(constant_preset.json.ends_with(&expected_color));
+    }
+
+    #[test]
+    fn renamed_types_are_saved_under_the_format_name() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default();
+        let folder = std::env::temp_dir().join(format!("nerthus-presets-{nanos}"));
+        let mut library = PresetLibrary::load(folder.clone());
+        let (node, spec) = node_of("SatelliteMap", &[]);
+        let mut preset = create_preset(&node, spec, "Mine", None);
+        library.save(&mut preset, "Mine").unwrap();
+
+        let format_type = format_node_name("SatelliteMap");
+        let file = folder.join(format!("{format_type}--Mine"));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(&format!("\"ApplicableType\": \"{format_type}\"")));
+        let found: Vec<&str> = library.of_type("SatelliteMap").iter().map(|preset| preset.name.as_str()).collect();
+        assert_eq!(found, ["Mine"]);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! The colour library (`data/color/*.clut`):
-//! categories of 512-entry RGB palettes, as SatMap and the texture nodes
+//! categories of 512-entry RGB palettes, as SatelliteMap and the texture nodes
 //! use them. Each file is an `i32` palette count followed by the palettes'
 //! RGB bytes.
 

@@ -751,12 +751,12 @@ mod tests {
     #[test]
     fn fresh_node_round_trips() {
         let catalogue = Catalogue::get();
-        let spec = catalogue.node("SatMap").expect("SatMap is in the catalogue");
+        let spec = catalogue.node("SatelliteMap").expect("SatelliteMap is in the catalogue");
         let node = NodeData::new(spec, 324, 7);
         let mut writer = Writer::new();
         writer.write_node(&node);
-        let satmap_type = format!("\"$type\": \"{}\"", node_type("SatMap"));
-        assert!(writer.text.contains(&satmap_type));
+        let satellite_map_type = format!("\"$type\": \"{}\"", node_type("SatelliteMap"));
+        assert!(writer.text.contains(&satellite_map_type));
         assert!(!writer.text.contains("\"Range\""), "a default Float2 parameter is left out");
         assert!(writer.text.contains("\"$ref\": \"1\""), "ports point back at the node");
     }

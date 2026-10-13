@@ -756,15 +756,15 @@ mod tests {
         let (header, tooltip) = note_header("# Title\n**Bold** words");
         assert_eq!(header, " TitleBold words");
         assert_eq!(tooltip, " Title\nBold words");
-        let (long, _) = note_header("We mix three SatMap outputs with Mixer");
-        assert_eq!(long, "We mix three SatMap ...");
+        let (long, _) = note_header("We mix three CLUTer outputs with Mixer");
+        assert_eq!(long, "We mix three CLUTer ...");
     }
 
     #[test]
     fn filters_match_like_tvinode() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         let lonely = document.add_node("Perlin", [0.0, 300.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let editor = Editor::new(document);

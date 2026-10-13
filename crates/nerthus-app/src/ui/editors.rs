@@ -79,7 +79,7 @@ pub struct EditorContext<'a> {
     /// The type's default; a slider holding it is shaded lighter.
     pub default: Option<&'a Value>,
     /// The node's values, for editors that show other properties (the
-    /// palette behind SatMap's Range).
+    /// palette behind SatelliteMap's Range).
     pub values: Option<&'a indexmap::IndexMap<String, Value>>,
     /// `O.PropertyArea.ActualWidth`: enums get option bars only when the
     /// property area is wider than 300.
@@ -144,7 +144,7 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
             let (min, max) = range_of(spec, 0.0, 1.0);
             let integer = spec.value_type == ValueType::Int2;
             let range = RangeSpec { min, max, integer, inset: SLIDER_INSET };
-            // `Parameters.RangeClipper` gets a `SatMapRangerSlider`.
+            // `Parameters.RangeClipper` gets a palette range slider.
             let look = if spec.kind == "RangeClipper" {
                 RangeLook::Palette(range_palette(ui.ctx(), context.values))
             } else {
@@ -167,7 +167,7 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
                 Edit::None
             }
             "TextBox" => text_box(ui, id, label, value.as_str().unwrap_or_default()),
-            _ => file_browser(ui, label, value.as_str().unwrap_or_default()),
+            _ => file_browser(ui, id, label, value.as_str().unwrap_or_default()),
         },
         ValueType::Color => color_editor(ui, label, value),
         ValueType::Float4List => crate::ui::gradient_editor::gradient_editor(ui, id, value),
@@ -645,28 +645,28 @@ pub enum RangeLook<'a> {
     /// The `SliderY` style: a dark bar with the thumbs, the values and the
     /// name in the accent, and the range shaded in it.
     Accent { label: &'a str, color: Color32 },
-    /// The `RangeSlider` style of a `SatMapRangerSlider` (SatMap's and
-    /// SuperColor's Range): 46 high over the node's palette, the thumbs and
-    /// values in white smoke, the range outlined in black and no name.
+    /// The `RangeSlider` style of a palette range slider (SatelliteMap's
+    /// and SuperColor's Range): 46 high over the node's palette, the thumbs
+    /// and values in white smoke, the range outlined in black and no name.
     /// Without a palette it keeps the style's fill, the primary accent.
     Palette(Option<PaletteFill>),
 }
 
-/// A palette stretched across a `SatMapRangerSlider`.
+/// The palette stretched across a palette range slider.
 pub struct PaletteFill {
     texture: egui::TextureId,
     /// `Reverse`: high to low.
     reversed: bool,
 }
 
-/// `Height` of a `SatMapRangerSlider`.
+/// `Height` of a palette range slider.
 const PALETTE_SLIDER_HEIGHT: f32 = 46.0;
-/// The `BorderBrush` a `SatMapRangerSlider` is given: `Brushes.WhiteSmoke`.
+/// The `BorderBrush` a palette range slider is given: `Brushes.WhiteSmoke`.
 const PALETTE_SLIDER_FOREGROUND: Color32 = Color32::from_rgb(0xf5, 0xf5, 0xf5);
 
-/// `SatMapRangerSlider.UpdateSatMap`: palette `LibraryItem` of the node's
-/// `Library`, reversed when `Reverse` is on. None while the item is not in
-/// the library (an unset item is -1).
+/// The palette a palette range slider shows: item `LibraryItem` of the
+/// node's `Library`, reversed when `Reverse` is on. None while the item is
+/// not in the library (an unset item is -1).
 fn range_palette(context: &egui::Context, values: Option<&indexmap::IndexMap<String, Value>>) -> Option<PaletteFill> {
     let values = values?;
     let library = values.get("Library").and_then(Value::as_str)?;
@@ -1208,9 +1208,11 @@ pub fn dropdown_box(ui: &mut Ui, id: Id, header: Option<&str>, column: f32, heig
     chosen
 }
 
-/// `FileBrowser`: the name (90 column), the file name in blue on a dark
-/// field, and a folder button.
-fn file_browser(ui: &mut Ui, label: &str, path: &str) -> Edit {
+/// `FileBrowser`: the name (90 column), the path in blue on a dark field,
+/// and a folder button. Clicking the path types a new one
+/// (`PART_FileTextBox`): Enter, Tab or clicking away takes it unless it
+/// is empty, Escape puts the old one back.
+fn file_browser(ui: &mut Ui, id: Id, label: &str, path: &str) -> Edit {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::hover());
     let header = Rect::from_min_size(rect.min, Vec2::new(90.0, rect.height()));
@@ -1218,17 +1220,115 @@ fn file_browser(ui: &mut Ui, label: &str, path: &str) -> Edit {
     let field = Rect::from_min_max(Pos2::new(header.right(), rect.top() + 3.0), Pos2::new(rect.right() - 30.0, rect.bottom() - 3.0));
     ui.painter().rect_filled(field, 3.0, theme::TEXTBOX_BACKGROUND);
     ui.painter().rect_stroke(field, 3.0, Stroke::new(1.0, theme::TEXTBOX_FILE_BORDER), StrokeKind::Inside);
-    let shown = std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
-    let galley = fitted_line(ui, &shown, theme::interface(12.0), theme::TEXTBOX_FILE_FOREGROUND, field.width() - 11.0);
-    ui.painter().galley(Pos2::new(field.left() + 9.0, field.center().y - galley.size().y / 2.0), galley, theme::TEXTBOX_FILE_FOREGROUND);
-    let field_response = ui.interact(field, ui.id().with(("file-field", label)), Sense::hover());
-    if !path.is_empty() {
-        field_response.on_hover_text(path);
+
+    // `PART_FileTextBlock` (margins 9, 0, 2, 0; one line, centred): a
+    // click starts typing.
+    let font = theme::interface(12.0);
+    let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    let text_rect = Rect::from_min_max(Pos2::new(field.left() + 9.0, field.center().y - line_height / 2.0), Pos2::new(field.right() - 2.0, field.center().y + line_height / 2.0));
+    let typing_id = id.with("typed-path");
+    let typed: Option<String> = ui.data(|data| data.get_temp(typing_id));
+    let edit_id = id.with("path-box");
+    let mut edit = Edit::None;
+    match typed {
+        Some(text) => edit = path_box(ui, edit_id, typing_id, field, text, path),
+        None => {
+            // The box appears next frame: one made under this click would
+            // count it as a click elsewhere and give the focus up.
+            let text_response = ui.interact(text_rect, id.with("path-text"), Sense::click());
+            if text_response.clicked() {
+                ui.data_mut(|data| data.insert_temp(typing_id, path.to_string()));
+                ui.memory_mut(|memory| memory.request_focus(edit_id));
+            }
+            let shown = truncate_path(ui, path, &font, text_rect.width());
+            let galley = fitted_line(ui, &shown, font.clone(), theme::TEXTBOX_FILE_FOREGROUND, text_rect.width());
+            ui.painter().galley(Pos2::new(text_rect.left(), field.center().y - galley.size().y / 2.0), galley, theme::TEXTBOX_FILE_FOREGROUND);
+            if !path.is_empty() {
+                text_response.on_hover_text(path);
+            }
+        }
     }
+
     let button_rect = Rect::from_min_max(Pos2::new(rect.right() - 30.0, rect.top()), rect.max);
     let mut button_ui = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
     let browse = crate::ui::widgets::icon_button(&mut button_ui, "folder", "Browse...", None);
-    if browse.clicked() { Edit::Browse } else { Edit::None }
+    if browse.clicked() {
+        return Edit::Browse;
+    }
+    edit
+}
+
+/// The file field's text box (`TextBox-File`: no fill, a 1px border blue
+/// while hovered or focused, corner 3, padding 3, 2; blue text and a
+/// white caret), as wide as the field and centred down it. Leaving it
+/// sets the typed path (`HandleTextBox`), unless it was empty or Escape
+/// left it (`ResetTextBox`).
+fn path_box(ui: &mut Ui, edit_id: Id, typing_id: Id, field: Rect, mut text: String, path: &str) -> Edit {
+    let font = theme::interface(12.0);
+    let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    let box_height = line_height + 2.0 * 2.0 + 2.0 * 1.0;
+    let box_rect = Rect::from_center_size(field.center(), Vec2::new(field.width(), box_height));
+    let mut box_ui = ui.new_child(egui::UiBuilder::new().max_rect(box_rect));
+    box_ui.visuals_mut().text_cursor.stroke.color = Color32::WHITE;
+    let mut text_edit = egui::TextEdit::singleline(&mut text);
+    text_edit = text_edit.id(edit_id);
+    let mut frame = egui::Frame::new();
+    frame.inner_margin = egui::Margin::symmetric(4, 3);
+    text_edit = text_edit.frame(frame);
+    text_edit = text_edit.font(font);
+    text_edit = text_edit.text_color(theme::TEXTBOX_FILE_FOREGROUND);
+    text_edit = text_edit.desired_width(box_rect.width() - 8.0);
+    let response = box_ui.put(box_rect, text_edit);
+    if response.has_focus() || response.hovered() {
+        ui.painter().rect_stroke(box_rect, 3.0, Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER), StrokeKind::Inside);
+    }
+
+    if response.has_focus() {
+        ui.data_mut(|data| data.insert_temp(typing_id, text));
+        return Edit::None;
+    }
+    // Focus went elsewhere, or the field was hidden while typing.
+    ui.data_mut(|data| data.remove::<String>(typing_id));
+    let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let taken = response.lost_focus() && !escaped && !text.is_empty() && text != path;
+    if taken { Edit::Set(Value::String(text)) } else { Edit::None }
+}
+
+/// `TruncatePath`: the path when it fits `width`; otherwise its root,
+/// "..." and the longest end of the rest that fits beside them (all of
+/// it when not even nothing fits).
+fn truncate_path(ui: &Ui, path: &str, font: &egui::FontId, width: f32) -> String {
+    let text_width = |text: &str| ui.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x);
+    if text_width(path) < width {
+        return path.to_string();
+    }
+    let root = path_root(path);
+    let room = width - text_width(&format!("{root}..."));
+    let rest = &path[root.len()..];
+    let mut kept = rest;
+    let starts: Vec<usize> = rest.char_indices().map(|(index, _)| index).collect();
+    let mut candidates = starts.into_iter().chain(std::iter::once(rest.len()));
+    let fitting = candidates.find(|start| text_width(&rest[*start..]) <= room);
+    if let Some(start) = fitting {
+        kept = &rest[start..];
+    }
+    format!("{root}...{kept}")
+}
+
+/// `Path.GetPathRoot`: the drive and separator a path starts with, if any.
+fn path_root(path: &str) -> &str {
+    let mut root_length = 0;
+    for component in std::path::Path::new(path).components() {
+        match component {
+            std::path::Component::Prefix(prefix) => root_length += prefix.as_os_str().len(),
+            std::path::Component::RootDir => {
+                root_length += 1;
+                break;
+            }
+            _ => break,
+        }
+    }
+    path.get(..root_length).unwrap_or_default()
 }
 
 /// `CommandX`: a button that runs the node's command (margin 22, 8, 8, 8;
@@ -1351,9 +1451,9 @@ fn set_color(value: &mut Value, rgba: [f32; 4]) {
     }
 }
 
-/// `SatMapListBox`: the palettes of the node's library as 72 by 28 strips
-/// filling the width (`VirtualizingWrapPanel`, uniform), the chosen one
-/// framed in yellow with its number; at most 360 tall.
+/// `SatelliteMapListBox`: the palettes of the node's library as 72 by 28
+/// strips filling the width (`VirtualizingWrapPanel`, uniform), the chosen
+/// one framed in yellow with its number; at most 360 tall.
 pub fn library_list(ui: &mut Ui, id: Id, library: &str, current: i64) -> Option<i64> {
     let Some(palettes) = nerthus_nodes::colour_library::category(library) else {
         caption(ui, "Library", "(not available)");
@@ -1690,5 +1790,83 @@ mod tests {
         assert_eq!(nudged(Nudge::Default, 5.0, &spec), 4.0);
         spec.integer = true;
         assert_eq!(nudged(Nudge::Half, 5.0, &spec), 2.0);
+    }
+
+    const FILE_ROW: Rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 32.0));
+
+    /// One frame of a file field holding `path`, with these events.
+    fn file_frame(context: &egui::Context, path: &str, events: Vec<egui::Event>) -> Edit {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let mut edit = Edit::None;
+        let output = context.run_ui(input, |ui| {
+            let mut row = ui.new_child(egui::UiBuilder::new().max_rect(FILE_ROW));
+            edit = file_browser(&mut row, Id::new("file-test"), "File Name", path);
+        });
+        output.drop_without_applying_deltas();
+        edit
+    }
+
+    /// A context with the editor's fonts, which take effect a frame after
+    /// they are set.
+    fn themed_context() -> egui::Context {
+        let context = egui::Context::default();
+        theme::apply(&context);
+        let input = egui::RawInput::default();
+        let output = context.run_ui(input, |_| {});
+        output.drop_without_applying_deltas();
+        context
+    }
+
+    /// Clicks the field's path, then sends `keys` one frame each.
+    fn type_into_file_field(path: &str, keys: Vec<egui::Event>) -> Vec<Edit> {
+        let context = themed_context();
+        let on_text = Pos2::new(200.0, 16.0);
+        let button = |pressed: bool| egui::Event::PointerButton { pos: on_text, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        file_frame(&context, path, vec![egui::Event::PointerMoved(on_text)]);
+        file_frame(&context, path, vec![button(true)]);
+        file_frame(&context, path, vec![button(false)]);
+        keys.into_iter().map(|key| file_frame(&context, path, vec![key])).collect()
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn a_typed_path_is_taken_on_enter_and_escape_keeps_the_old_one() {
+        let typed = egui::Event::Text("/maps/height.psd".to_string());
+        let edits = type_into_file_field("", vec![typed.clone(), key(egui::Key::Enter)]);
+        assert!(matches!(&edits[0], Edit::None));
+        assert!(matches!(&edits[1], Edit::Set(Value::String(path)) if path == "/maps/height.psd"), "{:?}", std::mem::discriminant(&edits[1]));
+
+        let edits = type_into_file_field("", vec![typed, key(egui::Key::Escape)]);
+        assert!(edits.iter().all(|edit| matches!(edit, Edit::None)));
+        // Nothing typed: the old path stays.
+        let edits = type_into_file_field("", vec![key(egui::Key::Enter)]);
+        assert!(edits.iter().all(|edit| matches!(edit, Edit::None)));
+    }
+
+    #[test]
+    fn long_paths_keep_their_root_and_end() {
+        let context = themed_context();
+        let input = egui::RawInput::default();
+        let mut shown = Vec::new();
+        let output = context.run_ui(input, |ui| {
+            let font = theme::interface(12.0);
+            let path = "/Users/someone/Documents/Terrains/Heightfields/Alps/height.png";
+            shown.push(truncate_path(ui, path, &font, 2000.0));
+            shown.push(truncate_path(ui, path, &font, 120.0));
+            shown.push(truncate_path(ui, "relative/folder/height.png", &font, 60.0));
+            shown.push(truncate_path(ui, path, &font, 1.0));
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(shown[0], "/Users/someone/Documents/Terrains/Heightfields/Alps/height.png");
+        assert!(shown[1].starts_with("/...") && shown[1].ends_with("/Alps/height.png") || shown[1].ends_with("height.png"), "{}", shown[1]);
+        assert!(shown[1].len() < shown[0].len());
+        let end = shown[2].strip_prefix("...").unwrap_or_default();
+        assert!(!end.is_empty() && "relative/folder/height.png".ends_with(end), "{}", shown[2]);
+        // Not even "..." fits: the whole rest follows it.
+        assert_eq!(shown[3], "/.../Users/someone/Documents/Terrains/Heightfields/Alps/height.png".replacen("/.../", "/...", 1));
     }
 }

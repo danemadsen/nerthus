@@ -288,8 +288,8 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
         GraphCommand::ToggleGroupCollapsed(id) => editor.document.toggle_group_collapsed(id),
         GraphCommand::SetGroupLocked(id, locked) => editor.document.set_group_locked(id, locked),
         GraphCommand::LockSelection => {
-            if !editor.selection.is_empty() {
-                editor.toggle_preview_lock();
+            if let Some(node) = editor.active_node() {
+                editor.lock_preview(node);
             }
             for id in ui_state.graph.selected_groups.clone() {
                 let locked = editor.document.group(id).is_some_and(|group| group.locked);
@@ -754,15 +754,12 @@ fn replace_with(editor: &mut Editor, ui_state: &mut UiState, node: i32, pick: &S
     if same_type && pick.preset.is_none() {
         return;
     }
-    let locked = editor.preview_locked && editor.preview_node == Some(node);
     let Some(replacement) = editor.document.replace_node(node, &pick.type_name) else {
         return;
     };
+    editor.follow_preview_lock();
     prepare_added_node(editor, replacement, pick.preset.as_deref());
     editor.user.usage.record_node(&pick.type_name);
-    if locked {
-        editor.preview_node = Some(replacement);
-    }
     ui_state.graph.clear_element_selection();
     editor.select(Some(replacement));
     editor.changed();
@@ -1129,7 +1126,7 @@ mod tests {
     #[test]
     fn an_output_let_go_on_another_output_makes_a_combine() {
         let mut document = crate::document::Document::new();
-        let erosion = document.add_node("Erosion2", [26000.0, 26000.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [26000.0, 26000.0]).unwrap();
         let mountain = document.add_node("Mountain", [26000.0, 26400.0]).unwrap();
         let mut editor = Editor::new(document);
         let mut ui_state = UiState::default();

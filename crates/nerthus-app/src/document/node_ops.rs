@@ -104,8 +104,9 @@ impl Document {
 
     /// `ReplaceNode(name)`: "Node X replaced with Y.", a fresh node of
     /// `type_name` in the old one's place keeping what fed and what read
-    /// its ports of the same names, its mask, modifiers, export settings
-    /// and underlay; the old node goes. Returns the new node's id.
+    /// its ports of the same names, its mask, modifiers, export settings,
+    /// underlay and preview lock; the old node goes. Returns the new
+    /// node's id.
     pub fn replace_node(&mut self, id: i32, type_name: &str) -> Option<i32> {
         let old = self.node(id)?.clone();
         let spec = Catalogue::get().node(type_name)?;
@@ -157,6 +158,8 @@ impl Document {
         for (source, output, input) in sources {
             self.convey_render_intent(source, &output, replacement, &input);
         }
+        // The replacement takes the preview lock.
+        self.move_preview_lock(id, replacement);
         self.take_out_node(id);
         for (target, input, output) in reads {
             let has_output = self.node(replacement).is_some_and(|node| node.port(&output).is_some_and(|port| port.is_output()));
@@ -499,7 +502,7 @@ mod tests {
     fn inserting_into_a_connection_routes_through_the_node() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [600.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [600.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         let blur = document.insert_node_in_connection(erosion, "In", "Blur", [300.0, 0.0], false).unwrap();
         assert_eq!(document.node(blur).unwrap().port("In").unwrap().record.as_ref().unwrap().from, mountain);
@@ -511,7 +514,7 @@ mod tests {
     fn replacing_keeps_connections_by_port_name() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [600.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         document.connect(erosion, "Out", blur, "In");
@@ -552,7 +555,7 @@ mod tests {
     #[test]
     fn a_replacement_takes_and_passes_on_render_intents() {
         let mut document = Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [300.0, 0.0]).unwrap();
         let after = document.add_node("Blur", [600.0, 0.0]).unwrap();
         document.connect(erosion, "Deposits", blur, "In");
@@ -583,7 +586,7 @@ mod tests {
     fn layout_places_children_to_the_right() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [50.0, 500.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [50.0, 500.0]).unwrap();
         let blur = document.add_node("Blur", [10.0, 900.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         document.connect(mountain, "Out", blur, "In");

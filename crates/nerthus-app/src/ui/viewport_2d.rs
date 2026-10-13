@@ -1096,7 +1096,7 @@ mod tests {
     #[test]
     fn the_map_viewer_renders_a_pick_until_another_node_is_previewed() {
         let mut document = crate::document::Document::new();
-        let erosion = document.add_node("Erosion2", [26000.0, 26000.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [26000.0, 26000.0]).unwrap();
         let other = document.add_node("Mountain", [26300.0, 26000.0]).unwrap();
         let mut editor = Editor::new(document);
         editor.select(Some(erosion));

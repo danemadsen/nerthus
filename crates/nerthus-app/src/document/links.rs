@@ -247,6 +247,7 @@ impl Document {
                 state.insert("UnderlayNode".to_string(), json!(0));
             }
         }
+        self.forget_locked_node(id);
         self.remove_node_bindings(id);
         self.forget_group_children(&[id]);
         self.mark_stale(removed.id);
@@ -282,7 +283,7 @@ mod tests {
     #[test]
     fn connections_pass_render_intents_on_through_primary_inputs() {
         let mut document = Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [300.0, 0.0]).unwrap();
         let combine = document.add_node("Combine", [600.0, 0.0]).unwrap();
         let beside = document.add_node("Combine", [600.0, 300.0]).unwrap();
@@ -309,7 +310,7 @@ mod tests {
     #[test]
     fn colour_nodes_keep_their_render_intent() {
         let mut document = Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let hsl = document.add_node("HSL", [300.0, 0.0]).unwrap();
         document.connect(erosion, "Deposits", hsl, "In");
         assert_eq!(override_of(&document, hsl), RenderIntent::Default);
@@ -339,7 +340,7 @@ mod tests {
     #[test]
     fn outputs_are_connected_when_they_feed_a_node() {
         let mut document = Document::new();
-        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [0.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [300.0, 0.0]).unwrap();
         document.connect(erosion, "Wear", blur, "In");
         let source = document.node(erosion).unwrap();

@@ -4,14 +4,13 @@
 
 # Nerthus
 
-Nerthus is a clean room reimplementation of QuadSpinner's Gaea 2.0, the
-node-based terrain generator, written in Rust. It opens and saves Gaea 2
-`.terrain` projects, and projects it saves open in Gaea 2.3.1.0. Its goal is
-to build them into the same heightfields, masks and colour maps that Gaea
-does.
+Nerthus is a clean room reimplementation of Gaea 2.0, the node-based terrain
+generator, written in Rust. It opens and saves Gaea 2 `.terrain` projects, and
+projects it saves open in Gaea 2.3.1.0. Its goal is to build them into the
+same heightfields, masks and colour maps that Gaea does.
 
 Nerthus is an independent project. It is not affiliated with or endorsed by
-QuadSpinner.
+the makers of Gaea.
 
 ## Building
 
@@ -37,8 +36,17 @@ cargo run --release --bin nerthus-build -- build path/to/project.terrain
 ```
 
 Builds go to a new numbered folder under `Documents/Nerthus/Builds/<project
-name>/` unless the project's Build Settings say otherwise. Run
-`nerthus-build --help` for the other commands and options.
+name>/` unless the project's Build Settings say otherwise. Each run writes a
+log to `Logs` in the Nerthus user folder (`~/.nerthus`, or
+`%LOCALAPPDATA%\Nerthus` on Windows); `--verbose` adds the debugging
+messages, and `--safemode` builds with the default preferences instead of
+the saved ones. Run `nerthus-build --help` for the other commands and
+options.
+
+For many builds in a row, `nerthus-build host` keeps a build host loaded
+between them: the first run starts it, later runs hand their project and
+options to it and print its output, and `nerthus-build host --exit` closes
+it.
 
 ## MCP server
 
@@ -66,45 +74,21 @@ licensing, the Houdini, Unity and Unreal bridges (and Tools › Install
 Plugins), and features Gaea ships disabled or unfinished, such as Network
 Build.
 
-### Build and Export
-
-- Close Gaea and Build, the Build and Export dialog's choice to close the
-  editor to free memory while the build runs.
-- Save cached build: when the preview resolution matches the build's
-  (single images up to 8K) and every marked node is built, Gaea offers to
-  export the editor's results instead of building again.
-- The warning before a bake that may need more than a third of the
-  installed memory.
-- `nerthus-build` keeps no log file (Gaea's command-line build writes one to
-  `Logs` for every run) and has no `--verbose` or `--safemode` (build with
-  default preferences).
-- A resident build host, Gaea.SwarmHost, which stays loaded and builds the
-  projects that later runs hand to it.
-
 ### Files
 
-- File › Open's repairs of damaged projects: nodes on graph tabs that no
-  longer exist (offered back as "Recovered Graph" tabs), stale export
-  settings, and bookmarks or selected and locked nodes that no longer exist.
-- Saving the selected node, the open graph tab and a preview lock (F) with
-  the project, and reopening on them. Nerthus reopens on the selected node
-  of a project Gaea saved, but saves none of the three.
-- Macros that use other macros. Gaea lists them when it exports a macro and
-  adds them to a project along with it.
-- Remembering the last Open and Save folders between sessions.
-- Progress windows for long operations other than baking: opening a file,
-  writing the preview cache to disk, loading baked caches and loading a
-  region preview.
-- Reading Windows metafiles (`.emf`, which the File node offers) and
-  Photoshop files (`.psd`), which Gaea reads through ImageMagick.
-- Example projects. Gaea ships 59 for File › Open Examples; Nerthus ships
-  none.
+- Dropping a file onto a file parameter, or at a chosen spot on the graph.
+  The windowing library Nerthus uses does not report where a dropped file
+  lands, so files dropped on the graph go to its middle. A file parameter
+  takes a path typed into it or picked with Browse.
+- Drawing Windows metafiles (`.emf`) exactly as Windows does. Nerthus draws
+  them itself, so edges and text differ slightly, and fonts that aren't
+  installed are replaced by similar ones.
 
 ### Options with no effect yet
 
 Nerthus shows these in Options but does not act on them:
 
-- Toolbox: Show SatMaps List as a Single Stack.
+- Toolbox: Show Satellite Maps List as a Single Stack.
 - Graph: Allow node shortcuts only when cursor is inside the graph; Hide
   Graph Tabs (when there is only one); Record Graph Movements and Zoom in
   Undos (on by default: panning the graph adds an undo step).
@@ -146,5 +130,5 @@ Nerthus shows these in Options but does not act on them:
 MIT (see [LICENSE](LICENSE)). The Roboto and Roboto Mono fonts in
 `crates/nerthus-app/assets/fonts` are under the Apache License 2.0, with their
 licence texts beside them. The palettes in `crates/nerthus-nodes/data/color`
-are Gaea's colour library, included so that SatMap and the texture nodes match
-Gaea.
+are Gaea's colour library, included so that SatelliteMap and the texture nodes
+match Gaea.

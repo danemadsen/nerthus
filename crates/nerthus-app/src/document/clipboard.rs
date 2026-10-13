@@ -203,7 +203,7 @@ mod tests {
     fn pasting_keeps_inner_and_outside_connections() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [600.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         document.connect(erosion, "Out", blur, "In");
@@ -223,7 +223,7 @@ mod tests {
     fn cutting_heals_and_paste_restores() {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [300.0, 0.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [300.0, 0.0]).unwrap();
         let blur = document.add_node("Blur", [600.0, 0.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         document.connect(erosion, "Out", blur, "In");

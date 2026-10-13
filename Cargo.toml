@@ -92,6 +92,8 @@ egui_dock = "0.21.1"
 # with, winit is Bevy's (window icons), objc2 sets the macOS Dock icon and
 # embed-resource puts the icon in Windows executables.
 resvg = { version = "0.45.1", default-features = false }
+# Glyph outlines for the text in metafiles the File node reads.
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 winit = { version = "0.30.13", default-features = false }
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false }

@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn bound_floats_make_float_variables() {
-        let spec = crate::catalogue::Catalogue::get().node("Erosion2").unwrap();
+        let spec = crate::catalogue::Catalogue::get().node("ErosionPro").unwrap();
         let parameter = spec.parameter("Duration").unwrap();
         let variable = variable_for_property("Duration", parameter, &json!(0.3), spec.defaults.get("Duration"), 2);
         let keys: Vec<&str> = variable.as_object().unwrap().keys().map(String::as_str).collect();

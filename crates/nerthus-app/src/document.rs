@@ -25,6 +25,7 @@ mod node_ops;
 mod notes;
 mod macro_ports;
 mod portals;
+mod state;
 mod variables;
 
 pub use clipboard::NodeClipboard;
@@ -33,6 +34,7 @@ pub use groups::{GroupData, GROUP_ICONS, GROUP_MIN_SIZE};
 pub use links::{grid_inputs, grid_outputs, PortalState};
 pub use node_ops::{CombineKind, Layout};
 pub use portals::TabTarget;
+pub use state::{ORPHANS_CAPTION, ORPHANS_TEXT};
 pub use variables::{variable_name_problem, VariableLimits, STRING_LIST_TYPE};
 
 /// The project format version Nerthus writes into project metadata.
@@ -1894,7 +1896,7 @@ mod tests {
     fn chain() -> (Document, i32, i32) {
         let mut document = Document::new();
         let mountain = document.add_node("Mountain", [25100.0, 25100.0]).unwrap();
-        let erosion = document.add_node("Erosion2", [25400.0, 25100.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [25400.0, 25100.0]).unwrap();
         document.connect(mountain, "Out", erosion, "In");
         (document, mountain, erosion)
     }
@@ -1908,7 +1910,7 @@ mod tests {
         assert_eq!(size(&document, mountain), "Small");
         document.cycle_node_size(mountain, "Standard");
         assert_eq!(size(&document, mountain), "Standard");
-        // Erosion2 has four outputs (`IsBigNode`): Standard, Small, Compact.
+        // ErosionPro has four outputs (`IsBigNode`): Standard, Small, Compact.
         document.cycle_node_size(erosion, "Standard");
         assert_eq!(size(&document, erosion), "Small");
         document.cycle_node_size(erosion, "Standard");
@@ -1926,7 +1928,7 @@ mod tests {
         assert_eq!(document.bookmarks(), vec![erosion, mountain]);
         document.remove_bookmark(erosion, "bookmarks");
         assert_eq!(document.bookmarks(), vec![mountain]);
-        assert_eq!(document.undo_labels()[0], "Node Erosion2 removed from bookmarks");
+        assert_eq!(document.undo_labels()[0], "Node ErosionPro removed from bookmarks");
 
         let other = document.add_node("Mountain", [25100.0, 25400.0]).unwrap();
         let mut values = document.node(mountain).unwrap().values.clone();

@@ -30,6 +30,8 @@ use crossbeam_channel::Sender;
 use nerthus_engine::{Catalogue, Engine, NodeState, Resolution, StateOverride, Terrain};
 use nerthus_export::bake::BakeStore;
 
+use crate::progress::WorkProgress;
+
 /// Cache to Disk › When Idle, which lasts until Nerthus
 /// closes.
 static FREEZE_WHEN_IDLE: AtomicBool = AtomicBool::new(false);
@@ -76,10 +78,12 @@ pub enum DiskCacheTask {
     Reload,
 }
 
-/// The editor's side: tasks waiting for the next request.
+/// The editor's side: tasks waiting for the next request, and whether
+/// the project's previews were already written for Nerthus to close.
 #[derive(Debug, Default)]
 pub struct EditorDiskCache {
     pub tasks: Vec<DiskCacheTask>,
+    pub frozen_for_exit: bool,
 }
 
 /// The build thread's side: whose maps are on disk instead of in memory,
@@ -265,26 +269,35 @@ impl DiskCache {
         }
     }
 
-    /// A project closing: every built preview written.
-    pub fn freeze_all(&mut self, engine: &Engine, terrain: &Terrain, store: &BakeStore) {
+    /// A project closing: every built preview written, reporting how far
+    /// it got and each node it writes.
+    pub fn freeze_all(&mut self, engine: &Engine, terrain: &Terrain, store: &BakeStore, report: &mut dyn FnMut(WorkProgress)) {
         log::info!("Caching previews");
         let built: Vec<i32> = terrain.nodes.keys().copied().filter(|node| cacheable(engine, terrain, *node)).collect();
-        for node in built {
-            if !self.offloaded.contains(&node) {
-                self.write(engine, store, node);
+        let count = built.len();
+        for (index, node) in built.into_iter().enumerate() {
+            report(WorkProgress::Fraction(index as f32 / count as f32));
+            if self.offloaded.contains(&node) || self.current_on_disk.contains(&node) {
+                continue;
             }
+            let name = terrain.nodes.get(&node).map(|data| data.name.clone()).unwrap_or_default();
+            report(WorkProgress::Text(format!("Freezing {name}...")));
+            self.write(engine, store, node);
         }
     }
 
     /// Every unbaked node whose maps the project left on disk,
-    /// at the preview's size, read back and taken as built. Returns them.
-    pub fn thaw(&mut self, engine: &mut Engine, terrain: &Terrain, store: &BakeStore, resolution: Resolution) -> Vec<i32> {
+    /// at the preview's size, read back and taken as built (reporting how
+    /// far it got). Returns them.
+    pub fn thaw(&mut self, engine: &mut Engine, terrain: &Terrain, store: &BakeStore, resolution: Resolution, report: &mut dyn FnMut(WorkProgress)) -> Vec<i32> {
         if !store.folder().is_dir() {
             return Vec::new();
         }
         log::info!("Loading Frozen Cache...");
         let mut thawed = Vec::new();
-        for node in terrain.nodes.values() {
+        let count = terrain.nodes.len();
+        for (index, node) in terrain.nodes.values().enumerate() {
+            report(WorkProgress::Fraction(index as f32 / count as f32));
             if StateOverride::of(node) != StateOverride::None || engine.state(node.id) == NodeState::Built {
                 continue;
             }
@@ -345,15 +358,24 @@ fn remove_empty_folder(folder: &Path) -> std::io::Result<()> {
 }
 
 /// A request's freezes (for projects that closed), before the
-/// engine forgets their previews.
-pub fn freeze_closing(disk: &mut DiskCache, engine: &Engine, tasks: &[DiskCacheTask]) {
+/// engine forgets their previews; the progress window hears how they go
+/// and when they are done.
+pub fn freeze_closing(disk: &mut DiskCache, engine: &Engine, tasks: &[DiskCacheTask], events: &Sender<crate::worker::BuildEvent>) {
+    let mut report = |progress: WorkProgress| {
+        let _ = events.send(crate::worker::BuildEvent::Progress(progress));
+    };
+    let mut froze = false;
     for task in tasks {
         if let DiskCacheTask::Freeze { store, terrain, done } = task {
-            disk.freeze_all(engine, terrain, store);
+            disk.freeze_all(engine, terrain, store, &mut report);
+            froze = true;
             if let Some(done) = done {
                 let _ = done.send(());
             }
         }
+    }
+    if froze {
+        report(WorkProgress::Frozen);
     }
 }
 
@@ -375,7 +397,10 @@ pub fn run_tasks(
                 let Some(store) = settings.store.as_ref() else {
                     continue;
                 };
-                for node in disk.thaw(engine, terrain, store, resolution) {
+                let mut report = |progress: WorkProgress| {
+                    let _ = events.send(crate::worker::BuildEvent::Progress(progress));
+                };
+                for node in disk.thaw(engine, terrain, store, resolution, &mut report) {
                     let range = engine.cache.get(node, "Out").filter(|map| map.channel_count() == 1).map(|map| nerthus_nodes::maths::min_max(map.data()));
                     let finished = crate::worker::BuildEvent::NodeFinished { node, milliseconds: 0.0, state: NodeState::Built, error: None, range };
                     let _ = events.send(finished);
@@ -421,14 +446,15 @@ impl crate::editor::Editor {
 
     /// `Shell.CloseFile`'s freeze, for the project about to close: its
     /// previews and where they go, when the project or the options ask
-    /// for it and the project is saved.
+    /// for it and the project is saved without changes since (the
+    /// previews are those of the saved project).
     pub fn closing_freeze(&self) -> Option<(BakeStore, Arc<Terrain>)> {
         let (_, always, _) = self.user.preferences.cache_options();
         if !(always || self.persist_on_save()) {
             return None;
         }
         let saved = self.document.path.as_ref().is_some_and(|path| path.is_file());
-        if !saved {
+        if !saved || self.document.dirty {
             return None;
         }
         let store = self.preview_store()?;
@@ -457,6 +483,10 @@ impl crate::editor::Editor {
 /// the build thread.
 pub fn freeze_on_exit(mut exits: bevy::prelude::MessageReader<bevy::prelude::AppExit>, mut editor: bevy::prelude::ResMut<crate::editor::Editor>, worker: bevy::prelude::Res<crate::worker::BuildWorker>) {
     if exits.read().next().is_none() {
+        return;
+    }
+    // Exit already wrote them, with its progress window.
+    if editor.disk_cache.frozen_for_exit {
         return;
     }
     let Some((store, terrain)) = editor.closing_freeze() else {

@@ -41,14 +41,14 @@ fn saturate(value: f32) -> f32 {
     value.clamp(0.0, 1.0)
 }
 
-/// Erosion2: droplet erosion with suspended, bed and coarse load.
-pub struct Erosion2;
+/// ErosionPro: droplet erosion with suspended, bed and coarse load.
+pub struct ErosionPro;
 
-impl NodeBuilder for Erosion2 {
+impl NodeBuilder for ErosionPro {
     fn build(&self, context: &mut BuildContext) -> Result<(), NodeError> {
         let input = context.require_input("In")?;
         context.render_secondary_as(RenderIntent::Mask);
-        let mut inhibitors = if context.bool("Enable") { Some(erosion2_inhibitors(context, &input)) } else { None };
+        let mut inhibitors = if context.bool("Enable") { Some(erosion_pro_inhibitors(context, &input)) } else { None };
         let precipitation = context.input("Precipitation");
         if let (Some(inhibitors), Some(precipitation)) = (inhibitors.as_mut(), precipitation.as_deref()) {
             // `Process(mapB, (i, a) => i * a)`: the inhibitors keep their one
@@ -92,11 +92,12 @@ impl NodeBuilder for Erosion2 {
     }
 }
 
-/// `Erosion2.BuildInhibitors`, the orographic influence: rain falls on the
-/// slopes and altitudes in range and, when it is directional, only where
-/// the terrain does not shadow it from the rain's direction. A stronger
-/// rain shadow lowers that "sun" towards the horizon and narrows its disk.
-fn erosion2_inhibitors(context: &BuildContext, heights: &Map) -> Map {
+/// The inhibitors (`BuildInhibitors`), the orographic influence: rain
+/// falls on the slopes and altitudes in range and, when it is directional,
+/// only where the terrain does not shadow it from the rain's direction. A
+/// stronger rain shadow lowers that "sun" towards the horizon and narrows
+/// its disk.
+fn erosion_pro_inhibitors(context: &BuildContext, heights: &Map) -> Map {
     let terrain = (context.terrain_width(), context.terrain_height());
     let [slope_min, slope_max] = context.float2("Slope");
     let [altitude_min, altitude_max] = context.float2("Altitude");

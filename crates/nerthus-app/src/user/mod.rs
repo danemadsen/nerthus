@@ -1,10 +1,12 @@
 //! The user's settings (`User` and `Paths`): the interface options
-//! (`user.options`), the engine preferences (`preferences.options`) and
-//! the files opened lately (`recent-files.mru`). They live in the user's
-//! Nerthus folder: `~/.nerthus` on macOS and Linux,
-//! `%LOCALAPPDATA%\Nerthus` on Windows.
+//! (`user.options`), the engine preferences (`preferences.options`), the
+//! files opened lately (`recent-files.mru`) and the folders the file
+//! dialogs used last (`locations.mru`). They live in the user's Nerthus
+//! folder: `~/.nerthus` on macOS and Linux, `%LOCALAPPDATA%\Nerthus` on
+//! Windows.
 
 mod graph_options;
+pub mod locations;
 mod members;
 mod options;
 mod preferences;
@@ -13,6 +15,7 @@ mod usage;
 use std::path::{Path, PathBuf};
 
 pub use graph_options::{ToolboxMode, ToolboxStyle};
+pub use locations::Locations;
 pub use options::{IconState, UserOptions};
 pub use preferences::Preferences;
 pub use usage::UsageStats;
@@ -34,6 +37,8 @@ pub struct User {
     pub options: UserOptions,
     pub preferences: Preferences,
     pub recent: RecentFiles,
+    /// The folders the open and save dialogs used last.
+    pub locations: Locations,
     /// How often node types are added and connected (`usage.stats`).
     pub usage: UsageStats,
     /// Where the files are; none keeps the settings in memory only.
@@ -48,6 +53,7 @@ impl User {
             options: UserOptions::new(),
             preferences: Preferences::new(),
             recent: RecentFiles::default(),
+            locations: Locations::default(),
             usage: UsageStats::default(),
             folder: None,
         }
@@ -73,8 +79,9 @@ impl User {
             preferences.mark_changed();
         }
         let recent = RecentFiles::load(folder.join(RECENT_FILE));
+        let locations = Locations::load(folder.join(locations::LOCATIONS_FILE));
         let usage = UsageStats::load(folder.join(usage::USAGE_FILE));
-        Self { options, preferences, recent, usage, folder: Some(folder) }
+        Self { options, preferences, recent, locations, usage, folder: Some(folder) }
     }
 
     /// Writes the options and preferences that changed since last saved.

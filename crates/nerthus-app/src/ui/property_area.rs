@@ -586,7 +586,8 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
             Edit::Browse => {
                 let folder = spec.parameter(&name).is_some_and(|parameter| parameter.kind == "Folder");
                 let extensions = file_extensions(&spec.name);
-                editor.dialog = Some(DialogRequest::BrowseFile { node: node_id, parameter: name, extensions, folder });
+                let current = values.get(&name).and_then(Value::as_str).unwrap_or_default().to_string();
+                editor.dialog = Some(DialogRequest::BrowseFile { node: node_id, parameter: name, extensions, folder, current });
             }
         }
     }
@@ -725,7 +726,7 @@ fn modifier_slider(ui: &mut Ui, id: egui::Id, parameter: &ParameterSpec, value: 
     }
 }
 
-/// Parameters with a `[CustomEditor]`: the SatMap library list, the curve
+/// Parameters with a `[CustomEditor]`: the SatelliteMap library list, the curve
 /// editor and Mixer's layers; `None` for the rest. Edits name the
 /// property they change.
 fn custom_editor(ui: &mut Ui, id: egui::Id, parameter: &ParameterSpec, value: &Value, node: &nerthus_engine::NodeData, nodes: &indexmap::IndexMap<i32, nerthus_engine::NodeData>) -> Option<Vec<(String, Edit)>> {
@@ -733,7 +734,7 @@ fn custom_editor(ui: &mut Ui, id: egui::Id, parameter: &ParameterSpec, value: &V
     // `Dictionary<string, Variable>` (Macro) gets the variable editors.
     let editor = if parameter.value_type == nerthus_engine::ValueType::Dictionary { Some("VariableEditorControl") } else { parameter.editor.as_deref() };
     match editor? {
-        "SatMapListBox" => {
+        "SatelliteMapListBox" => {
             let library = node.values.get("Library").and_then(Value::as_str).unwrap_or("Rock");
             let current = value.as_i64().unwrap_or(-1);
             let chosen = editors::library_list(ui, id, library, current);
