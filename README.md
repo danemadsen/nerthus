@@ -172,10 +172,11 @@ These parts of Gaea 2.0 are not in Nerthus yet.
   patterns and ships 12 examples of its own.
 - Gaea's colour library. Nerthus's palettes are its own, taken from
   Sentinel-2 satellite imagery to look like Gaea's palette with the same
-  number, so SatelliteMap, SuperColor, and Cartography through a
-  SatelliteMap build with somewhat different colours from Gaea's, and so do
-  Weathering and TextureBase masks with New accentuation (which read Rock
-  palette 117). Projects saved by Gaea keep their palette numbers.
+  number, so SatelliteMap, SuperColor, Cartography through a SatelliteMap,
+  and Weathering build with somewhat different colours from Gaea's, and
+  TextureBase with New accentuation builds a somewhat different mask
+  (Weathering and TextureBase read Rock palette 117). Projects saved by Gaea
+  keep their palette numbers.
 
 ## License
 

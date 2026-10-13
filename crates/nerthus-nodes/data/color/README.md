@@ -104,7 +104,7 @@ palettes.
 ## Rebuilding
 
 `build_palettes.py` rebuilds the `.clut` files from `palettes.json`. It
-downloads the 741 images it needs into `.cache` (about 2.4 GB):
+downloads the 740 images it needs into `.cache` (about 2.3 GB):
 
 ```sh
 pip install numpy scipy pillow rasterio
@@ -204,7 +204,7 @@ searched, when one is within 30 km of the path's middle.
 | 79 | S2A_18FXL_20240516_0_L2A | 80 m | -49.0129, -72.2935 | -49.1501, -72.2651 |  |
 | 80 | S2A_22WEV_20240812_0_L2A | 20 m window | 66.9928, -49.8264 | 67.0011, -49.8284 | Kangerlussuaq ice margin, Greenland (14 km) |
 | 81 | S2B_28WDT_20231030_0_L2A | 20 m window | 65.5636, -16.9492 | 65.5542, -16.9616 | Myvatn lava and lake, Iceland (5 km) |
-| 82 | S2B_33XWH_20230705_1_L2A | 20 m window | 78.5324, 16.5121 | 78.5140, 16.6215 | Billefjorden, Svalbard (9 km) |
+| 82 | S2A_12SWJ_20240211_0_L2A | 20 m window | 38.8969, -110.8586 | 38.8777, -110.8721 | San Rafael Swell, Utah USA (11 km) |
 | 83 | S2A_59GMM_20230605_0_L2A | 20 m window | -44.0888, 170.1713 | -44.1126, 170.1916 | Lake Pukaki, New Zealand (6 km) |
 | 84 | S2B_41XMD_20240731_0_L2A | 80 m | 75.0539, 59.7822 | 75.0902, 59.6611 |  |
 | 85 | S2A_30VVJ_20230226_0_L2A | 20 m window | 57.1443, -3.6454 | 57.1380, -3.6405 | Cairngorms heather moorland, Scotland (10 km) |
@@ -553,7 +553,7 @@ searched, when one is within 30 km of the path's middle.
 | 239 | S2A_38SNG_20241108_0_L2A | 80 m | 37.4828, 45.6153 | 37.5281, 45.7694 | Lake Urmia, Iran (14 km) |
 | 240 | S2A_10TES_20240625_0_L2A | 20 m window | 46.2395, -122.1638 | 46.2536, -122.1607 | Mount St Helens, USA (5 km) |
 | 241 | S2A_17RNH_20231101_0_L2A | 20 m window | 25.0760, -80.6951 | 25.0831, -80.6985 | Florida Bay, USA (10 km) |
-| 242 | S2A_49JGM_20240203_0_L2A | 20 m window | -25.8726, 113.9986 | -25.8730, 114.0339 | Faure Sill, Shark Bay, Australia (12 km) |
+| 242 | S2B_46SFF_20240818_0_L2A | 20 m window | 36.8903, 95.0972 | 36.8088, 95.2506 | Qarhan potash evaporation ponds, Qinghai, China (2 km) |
 | 243 | S2A_43RDP_20241003_0_L2A | 80 m | 30.1202, 74.6325 | 30.1136, 74.6663 |  |
 | 244 | S2B_18GXP_20230619_0_L2A | 20 m window | -46.5438, -72.7554 | -46.5285, -72.7301 | Lago General Carrera, Chile (8 km) |
 | 245 | S2A_58GGR_20241216_0_L2A | 20 m window | -44.5055, 168.0307 | -44.5138, 167.9977 | Milford Sound, Fiordland (14 km) |
@@ -1013,7 +1013,7 @@ searched, when one is within 30 km of the path's middle.
 | 377 | S2B_52KDA_20240314_0_L2A | 20 m window | -22.4053, 128.5960 | -22.4117, 128.6005 | Lake Mackay (Australia) (10 km) |
 | 378 | S2B_28RFT_20240715_0_L2A | 20 m window | 28.9770, -13.8331 | 28.9811, -13.8140 | Timanfaya, Lanzarote Spain (8 km) |
 | 379 | S2B_13RGK_20241008_0_L2A | 20 m window | 26.7581, -102.1063 | 26.8980, -102.1109 | Cuatro Cienegas gypsum dunes (Mexico) (3 km) |
-| 380 | S2B_27WXN_20240423_0_L2A | 80 m | 65.5076, -18.1838 | 65.4964, -18.2081 |  |
+| 380 | S2B_28WDT_20231030_0_L2A | 20 m window | 65.5892, -17.1401 | 65.5827, -17.1350 | Myvatn lava and lake, Iceland (7 km) |
 | 381 | S2B_12VVJ_20231217_0_L2A | 20 m window | 56.9526, -111.3278 | 56.9494, -111.3323 | Athabasca oil sands mines, Alberta Canada (14 km) |
 | 382 | S2B_38UPU_20240520_0_L2A | 20 m window | 48.3132, 47.0316 | 48.3025, 47.0115 | Lake Baskunchak, Russia (16 km) |
 | 383 | S2A_37MCS_20230128_0_L2A | 20 m window | -3.0293, 37.4665 | -3.0947, 37.3917 | Kilimanjaro, Tanzania (9 km) |
@@ -1332,7 +1332,7 @@ searched, when one is within 30 km of the path's middle.
 | 159 | S2A_35KLT_20240730_0_L2A | 80 m | -20.1820, 25.2078 | -20.0156, 25.3654 |  |
 | 160 | S2B_11SMA_20241009_0_L2A | 80 m | 36.4981, -117.7395 | 36.3403, -117.6577 | Owens Lake, California (21 km) |
 | 161 | S2A_36MZC_20230128_0_L2A | 20 m window | -2.4112, 36.0520 | -2.3952, 36.0035 | Lake Natron, Tanzania (0 km) |
-| 162 | S2B_12TVK_20241003_0_L2A | 20 m window | 40.6175, -111.9135 | 40.5798, -111.9243 | Bingham Canyon Mine, Utah (21 km) |
+| 162 | S2A_31TGJ_20241229_0_L2A | 20 m window | 43.9018, 5.9314 | 43.9606, 6.1332 | Valensole Plateau, Provence (9 km) |
 | 163 | S2B_32SMC_20240731_0_L2A | 80 m | 33.4910, 8.9971 | 33.9290, 8.6615 |  |
 | 164 | S2A_35KLT_20240122_0_L2A | 80 m | -20.3099, 25.9923 | -20.1486, 26.0660 |  |
 | 165 | S2A_59GMM_20240220_0_L2A | 20 m window | -43.7006, 170.2178 | -43.7112, 170.2086 | Aoraki / Mount Cook, New Zealand (13 km) |
