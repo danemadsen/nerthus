@@ -177,10 +177,13 @@ pub enum Command {
     /// A preset applied to the selected node (Presets menus).
     ApplyPreset(String),
     /// The 2D viewport: docked (F6), floating for the selected node
-    /// (Ctrl F6), its port (`RenderPort`, which the 3D view shows too),
-    /// picking and measuring (the Measure menu) and Save to file.
+    /// (Ctrl F6), Ctrl M's floating view (`Show2DView`: of the selected
+    /// node, else the Map Viewer shown or hidden), its port (`RenderPort`,
+    /// which the 3D view shows too), picking and measuring (the Measure
+    /// menu) and Save to file.
     Toggle2DViewport,
     ShowLocked2DViewport,
+    Show2DView,
     SetPreviewPort(String),
     TogglePickHeight,
     ToggleMeasure,
@@ -722,6 +725,7 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
                 ui_state.viewport_2d.open_floating(node);
             }
         }
+        Command::Show2DView => ui_state.viewport_2d.show_2d_view(editor),
         Command::SetPreviewPort(port) => {
             editor.preview_port = port;
             editor.show_preview();

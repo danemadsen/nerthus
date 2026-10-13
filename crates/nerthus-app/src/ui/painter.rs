@@ -72,6 +72,15 @@ fn settings_id() -> Id {
     Id::new("painter-settings")
 }
 
+fn painting_id() -> Id {
+    Id::new("painter-painting")
+}
+
+/// Whether a stroke is under way (`Image_MouseDown` until `Image_MouseUp`).
+pub fn painting(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(painting_id())).unwrap_or(false)
+}
+
 /// `Editor_CommandExecuted("OpenPainter")`: the window for a Draw node.
 pub fn open(ctx: &egui::Context, editor: &Editor, node: i32) {
     let stroke_data = editor.document.node(node).and_then(|data| data.values.get("StrokeData")).and_then(Value::as_str).unwrap_or_default().to_string();
@@ -103,6 +112,7 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor) {
     };
     if editor.document.node(state.node).is_none_or(|node| node.type_name != "Draw") {
         ctx.data_mut(|data| data.remove::<PainterState>(window_id()));
+        ctx.data_mut(|data| data.remove::<bool>(painting_id()));
         return;
     }
     let mut settings: PainterSettings = ctx.data(|data| data.get_temp(settings_id())).unwrap_or_default();
@@ -126,8 +136,10 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor) {
     ctx.data_mut(|data| data.insert_temp(settings_id(), settings));
     if !open {
         ctx.data_mut(|data| data.remove::<PainterState>(window_id()));
+        ctx.data_mut(|data| data.remove::<bool>(painting_id()));
         return;
     }
+    ctx.data_mut(|data| data.insert_temp(painting_id(), state.painting));
     ctx.data_mut(|data| data.insert_temp(window_id(), state));
 }
 

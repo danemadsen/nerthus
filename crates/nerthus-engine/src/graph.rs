@@ -93,6 +93,13 @@ pub trait NodeBuilder: Send + Sync {
     fn custom_colour_map(&self, _context: &BuildContext) -> Option<Map> {
         None
     }
+
+    /// `Node.GetCustomUnderlay`: for a type with `CustomUnderlayAttribute`,
+    /// the node whose main output the viewport shows this node over.
+    /// `None` names no node.
+    fn custom_underlay(&self, _context: &BuildContext) -> Option<i32> {
+        None
+    }
 }
 
 /// A modifier implementation (`Modifier.Process`).
@@ -376,6 +383,12 @@ impl<'a> BuildContext<'a> {
         let spec = Catalogue::get().node(&node.type_name);
         let classification = spec.and_then(|spec| spec.classification.as_deref()).unwrap_or_default();
         !matches!(classification, "Mask" | "Colorizer")
+    }
+
+    /// The editor's chosen underlay node (`TerrainState.UnderlayNode`), 0
+    /// for none.
+    pub fn underlay_node(&self) -> i32 {
+        self.underlay
     }
 
     /// The heightfield a colour or mask node is shown over
@@ -981,6 +994,19 @@ impl Engine {
         let builder = self.registry.node(&current.type_name)?;
         let context = self.context_for(terrain, &current, resolution).ok()?;
         builder.custom_colour_map(&context)
+    }
+
+    /// What the viewport shows a node over when its type has
+    /// `CustomUnderlayAttribute` (`RendererBase.ResolveHeightfield`): the
+    /// cached main output of the node `Node.GetCustomUnderlay` names.
+    /// `None` when it names none or that output is not cached.
+    pub fn custom_underlay(&self, terrain: &Terrain, node: i32, resolution: Resolution) -> Option<Arc<Map>> {
+        let node = terrain.nodes.get(&node)?;
+        let current = self.current_node(node);
+        let builder = self.registry.node(&current.type_name)?;
+        let context = self.context_for(terrain, &current, resolution).ok()?;
+        let source = builder.custom_underlay(&context)?;
+        self.cache.get(source, "Out")
     }
 
     pub fn error(&self, node: i32) -> Option<&NodeError> {

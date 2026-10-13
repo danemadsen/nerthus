@@ -6,8 +6,12 @@
 //! view shows; its menu also picks heights and colours and opens the
 //! measurement tools. Floating (Ctrl F6, `Show2DView(node)`: a
 //! `MapViewer` window titled with the node's name) it shows one node,
-//! whatever is selected, as builds leave it. Both menus save the image
-//! (Save to file) and show any of the node's outputs.
+//! whatever is selected, as builds leave it. Ctrl M opens one of those for
+//! the selected node, or with nothing selected shows or hides the Map
+//! Viewer (`Show2DView()`), which follows the preview: what the 3D view
+//! shows, or another output of the previewed node picked from its menu.
+//! Every menu saves the image (Save to file) and shows any of the node's
+//! outputs.
 
 use std::sync::Arc;
 
@@ -20,7 +24,7 @@ use crate::ui::gizmos::{gizmo_layer, GizmoKind, GizmoState};
 use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::widgets::{check_item, icon_menu, menu_caption, menu_item, menu_separator};
-use crate::viewport_render::{MaskEnhancement, ViewportRenderer};
+use crate::viewport_render::{MaskEnhancement, RenderJob, RenderQuality, ViewportRenderer};
 
 /// `ZoomSpeed`.
 const ZOOM_STEP: f32 = 1.1;
@@ -31,8 +35,9 @@ const MAX_ZOOM: f32 = 40.0;
 const BACKGROUND: Color32 = Color32::from_rgb(0x18, 0x18, 0x18);
 /// The readouts' backing (`#66000000`).
 const READOUT_BACKING: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 0x66);
-/// `MapViewer`: 720 square.
+/// `MapViewer`: 720 square, and its title when it shows no one node.
 const FLOATING_SIZE: f32 = 720.0;
+const FOLLOWING_TITLE: &str = "Map Viewer";
 /// The docked column's narrowest.
 const MIN_DOCKED: f32 = 120.0;
 
@@ -80,11 +85,44 @@ pub struct FloatingView {
     view: View2D,
     renderer: ViewportRenderer,
     /// What was last sent to the renderer: the watched maps' revision and
-    /// the render settings and port, and the generation it got.
+    /// the render settings and port, and the generation it got; whether it
+    /// was lit quickly (a gizmo or the painter was held).
     sent: Option<(u64, String)>,
     generation: u64,
+    rendered_quickly: bool,
     colours: Option<Arc<TerrainColours>>,
     open: bool,
+}
+
+/// The Map Viewer that follows the preview (`O.MainMapViewer`): the 3D
+/// view's render, or the previewed node's output picked from its menu
+/// (`RenderPort`), rendered for it alone until another node is previewed
+/// (`G_AfterNodeChanged`).
+pub struct FollowingView {
+    view: View2D,
+    /// The output picked, and the node it was picked for.
+    picked: Option<(i32, String)>,
+    renderer: ViewportRenderer,
+    /// What the picked output's last render was made from, the generation
+    /// it got, and whether it was lit quickly.
+    sent: Option<String>,
+    generation: u64,
+    rendered_quickly: bool,
+    colours: Option<Arc<TerrainColours>>,
+}
+
+impl FollowingView {
+    fn new() -> Self {
+        Self {
+            view: View2D::default(),
+            picked: None,
+            renderer: ViewportRenderer::start(),
+            sent: None,
+            generation: 0,
+            rendered_quickly: false,
+            colours: None,
+        }
+    }
 }
 
 /// A sample `HeightPicked` reports (`Viewport2D_HeightPicked`): the values
@@ -103,13 +141,18 @@ pub struct Viewport2DState {
     /// The docked column's width once the splitter moved it.
     docked_width: Option<f32>,
     docked_view: View2D,
+    /// Where the docked view was last drawn (the Lazy Menu moves the
+    /// pointer there).
+    docked_rect: Option<Rect>,
     floating: Vec<FloatingView>,
+    following: Option<FollowingView>,
     picked: Option<Picked>,
     /// The gizmo on the docked view (`Gizmo2DLayer`/`GizmoSRTLayer`), and
     /// whether Toggle Gizmo was on last frame.
     gizmo: Option<GizmoState>,
     gizmo_was_on: bool,
     gizmo_at_launch: bool,
+    following_at_launch: bool,
     /// The node selected last frame.
     last_active: Option<i32>,
 }
@@ -121,7 +164,13 @@ impl Viewport2DState {
         if !self.docked {
             self.docked_view.picking = false;
             self.docked_view.measuring = false;
+            self.docked_rect = None;
         }
+    }
+
+    /// Where the docked view is, while it shows.
+    pub fn docked_rect(&self) -> Option<Rect> {
+        self.docked_rect.filter(|_| self.docked)
     }
 
     /// `BtnPickHeight_OnClick`: the docked view opened if needed, then
@@ -175,10 +224,30 @@ impl Viewport2DState {
             renderer: ViewportRenderer::start(),
             sent: None,
             generation: 0,
+            rendered_quickly: false,
             colours: None,
             open: true,
         };
         self.floating.push(view);
+    }
+
+    /// Ctrl M: a floating view of the selected node (`Show2DView(node)`),
+    /// or with none selected the Map Viewer shown or hidden
+    /// (`Show2DView()`).
+    pub fn show_2d_view(&mut self, editor: &Editor) {
+        if let Some(node) = editor.active_node() {
+            self.open_floating(node);
+            return;
+        }
+        self.following = match self.following {
+            Some(_) => None,
+            None => Some(FollowingView::new()),
+        };
+    }
+
+    /// Whether the docked view's gizmo is being dragged.
+    pub fn gizmo_held(&self) -> bool {
+        self.gizmo.as_ref().is_some_and(GizmoState::held)
     }
 
     /// The nodes the floating views show, and the input under a Snow
@@ -230,11 +299,12 @@ impl Viewport2DState {
         self.docked_view.texture = None;
     }
 
-    /// `--show`: what to open once the editor runs (`viewport-2d`, `gizmo`,
-    /// `pick`, `measure`).
+    /// `--show`: what to open once the editor runs (`viewport-2d`,
+    /// `map-viewer`, `gizmo`, `pick`, `measure`).
     pub fn open_at_launch(&mut self, what: &str) {
         match what {
             "viewport-2d" => self.docked = true,
+            "map-viewer" => self.following_at_launch = true,
             "gizmo" => self.gizmo_at_launch = true,
             "pick" => {
                 self.docked = true;
@@ -268,6 +338,7 @@ pub fn dock(ui: &mut Ui, area: Rect, editor: &Editor, state: &mut Viewport2DStat
     if response.dragged() {
         state.docked_width = Some(width - response.drag_delta().x);
     }
+    state.docked_rect = Some(column);
     show_docked(ui, column, editor, state, commands);
     Rect::from_min_max(area.min, Pos2::new(column.left() - 2.0, area.bottom()))
 }
@@ -364,13 +435,18 @@ fn show_docked(ui: &mut Ui, rect: Rect, editor: &Editor, state: &mut Viewport2DS
 }
 
 /// The floating views (`MapViewer`s), each in its own window titled with
-/// its node's name; the editor keeps their nodes' maps coming.
-/// `also_watched` are other nodes whose maps are wanted (the Constructor's
-/// inputs).
+/// its node's name, and the Map Viewer; the editor keeps their nodes' maps
+/// coming. `also_watched` are other nodes whose maps are wanted (the
+/// Constructor's inputs).
 pub fn show_floating(ctx: &egui::Context, editor: &mut Editor, state: &mut Viewport2DState, also_watched: &[i32], commands: &mut Vec<Command>) {
     state.floating.retain(|view| view.open && editor.document.node(view.node).is_some());
     if std::mem::take(&mut state.gizmo_at_launch) {
         editor.gizmo_active = true;
+    }
+    // `--show map-viewer`, once the first render is in.
+    if state.following_at_launch && editor.rendered() {
+        state.following_at_launch = false;
+        state.following = Some(FollowingView::new());
     }
     state.follow_selection(editor);
     state.follow_gizmo(editor);
@@ -386,41 +462,130 @@ pub fn show_floating(ctx: &egui::Context, editor: &mut Editor, state: &mut Viewp
         let title = editor.document.node(floating.node).map(|node| node.name.clone()).unwrap_or_default();
         let window_id = Id::new(("map-viewer", floating.node));
         let mut open = true;
-        let mut window = egui::Window::new(title);
-        window = window.id(window_id);
-        window = window.open(&mut open);
-        window = window.default_size(Vec2::splat(FLOATING_SIZE));
-        window = window.collapsible(false);
-        window = window.order(egui::Order::Foreground);
-        window = window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_DARK).inner_margin(0));
+        let window = map_viewer_window(ctx, window_id, title, &mut open);
         let ports = output_ports(editor, floating.node);
+        let colours = floating.colours.clone();
+        let texture_name = format!("map-viewer-{}", floating.node);
         let mut menu = ViewMenu::default();
         window.show(ctx, |ui| {
-            let size = ui.available_size().max(Vec2::splat(64.0));
-            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-            let colours = floating.colours.clone();
-            upload(ui.ctx(), &mut floating.view, colours.as_ref(), &format!("map-viewer-{}", floating.node));
-            let resolution = colours.as_ref().map(|colours| colours.width).unwrap_or(1);
             let port = floating.port.clone();
-            view_contents(ui, rect, window_id.with("view"), &mut floating.view, resolution, &mut menu, |ui, menu| {
+            window_view(ui, window_id.with("view"), &mut floating.view, colours.as_ref(), &texture_name, &mut menu, |ui, menu| {
                 context_menu(ui, menu, &ports, &port, false, colours.is_some());
             });
         });
         if !open {
             floating.open = false;
         }
-        let colours = floating.colours.clone();
         if let Some(port) = apply_menu(&menu, colours, commands) {
             // `RenderPort` for a floating view: only it renders the port.
             floating.port = port;
             floating.sent = None;
         }
     }
+    show_following(ctx, editor, state, commands);
     picked_dialog(ctx, state, commands);
 }
 
+/// A `MapViewer` window: 720 square (its title bar included) in the
+/// middle of the screen, on top of the shell.
+fn map_viewer_window<'open>(ctx: &egui::Context, id: Id, title: String, open: &'open mut bool) -> egui::Window<'open> {
+    let left_top = ctx.content_rect().center() - Vec2::splat(FLOATING_SIZE / 2.0);
+    let mut window = egui::Window::new(title);
+    window = window.id(id);
+    window = window.open(open);
+    window = window.default_size(Vec2::splat(FLOATING_SIZE));
+    window = window.default_pos(left_top);
+    window = window.collapsible(false);
+    window = window.order(egui::Order::Foreground);
+    window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_DARK).inner_margin(0))
+}
+
+/// A floating view filling its window.
+fn window_view(ui: &mut Ui, id: Id, view: &mut View2D, colours: Option<&Arc<TerrainColours>>, texture_name: &str, menu: &mut ViewMenu, contents: impl Fn(&mut Ui, &mut ViewMenu)) {
+    let size = ui.available_size().max(Vec2::splat(64.0));
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    upload(ui.ctx(), view, colours, texture_name);
+    let resolution = colours.map(|colours| colours.width).unwrap_or(1);
+    view_contents(ui, rect, id, view, resolution, menu, contents);
+}
+
+/// The Map Viewer while it shows: the previewed node's outputs in its
+/// menu, the one shown checked.
+fn show_following(ctx: &egui::Context, editor: &Editor, state: &mut Viewport2DState, commands: &mut Vec<Command>) {
+    let Some(following) = state.following.as_mut() else {
+        return;
+    };
+    refresh_following(editor, following);
+    let window_id = Id::new("map-viewer-following");
+    let mut open = true;
+    let window = map_viewer_window(ctx, window_id, FOLLOWING_TITLE.to_string(), &mut open);
+    let ports = editor.preview_node.map(|node| output_ports(editor, node)).unwrap_or_default();
+    let shown_port = match &following.picked {
+        Some((_, port)) => port.clone(),
+        None => editor.preview_port.clone(),
+    };
+    let colours = if following.picked.is_some() { following.colours.clone() } else { editor.render_colours.clone() };
+    let mut menu = ViewMenu::default();
+    window.show(ctx, |ui| {
+        window_view(ui, window_id.with("view"), &mut following.view, colours.as_ref(), "map-viewer-following", &mut menu, |ui, menu| {
+            context_menu(ui, menu, &ports, &shown_port, false, colours.is_some());
+        });
+    });
+    if let Some(port) = apply_menu(&menu, colours, commands) {
+        // `RenderPort`: another output is rendered here alone; the one the
+        // 3D view shows is followed again.
+        following.picked = match editor.preview_node {
+            Some(node) if port != editor.preview_port => Some((node, port)),
+            _ => None,
+        };
+        following.sent = None;
+    }
+    if !open {
+        state.following = None;
+    }
+}
+
+/// Renders the Map Viewer's picked output when its map or the render
+/// settings changed, or when it was lit quickly and nothing is held any
+/// more, and takes in what came back. Another node previewed drops the
+/// pick.
+fn refresh_following(editor: &Editor, following: &mut FollowingView) {
+    if let Some(view) = following.renderer.poll()
+        && view.generation == following.generation
+    {
+        following.colours = view.colours;
+    }
+    let previewed = editor.preview_node;
+    if following.picked.as_ref().is_some_and(|(node, _)| Some(*node) != previewed) {
+        following.picked = None;
+        following.sent = None;
+        following.colours = None;
+    }
+    let Some((_, port)) = following.picked.clone() else {
+        return;
+    };
+    let Some((_, map)) = editor.outputs.iter().find(|(name, _)| *name == port) else {
+        return;
+    };
+    let settings = format!("{}|{:?}|{:?}|{:?}|{:?}", Arc::as_ptr(map) as usize, editor.render_mode, editor.mask_enhancement, editor.mask_gradient, editor.lighting);
+    let lit_again = following.rendered_quickly && editor.render_quality() == RenderQuality::Normal;
+    if following.sent.as_deref() == Some(settings.as_str()) && !lit_again {
+        return;
+    }
+    let mut source = editor.preview_source();
+    source.port = &port;
+    following.generation += 1;
+    let job = editor.render_job_for(&source, following.generation);
+    following.rendered_quickly = job.as_ref().is_some_and(RenderJob::lit_quickly);
+    if let Some(job) = job {
+        following.renderer.request(job);
+    }
+    following.sent = Some(settings);
+}
+
 /// Sends a floating view's node to its renderer when its maps, its port or
-/// the render settings changed, and takes in what came back.
+/// the render settings changed, or when it was lit quickly and nothing is
+/// held any more, and takes in what came back.
 fn refresh_floating(editor: &Editor, floating: &mut FloatingView) {
     if let Some(view) = floating.renderer.poll()
         && view.generation == floating.generation
@@ -432,7 +597,10 @@ fn refresh_floating(editor: &Editor, floating: &mut FloatingView) {
     };
     let settings = format!("{:?}|{:?}|{:?}|{:?}|{}", editor.render_mode, editor.mask_enhancement, editor.mask_gradient, editor.lighting, floating.port);
     let wanted = (editor.watched_revision, settings);
-    if floating.sent.as_ref() == Some(&wanted) {
+    // Lit quickly while a gizmo or the painter was held: lit again once
+    // nothing is.
+    let lit_again = floating.rendered_quickly && editor.render_quality() == RenderQuality::Normal;
+    if floating.sent.as_ref() == Some(&wanted) && !lit_again {
         return;
     }
     let source = RenderSource {
@@ -440,11 +608,14 @@ fn refresh_floating(editor: &Editor, floating: &mut FloatingView) {
         port: &floating.port,
         outputs: &watched.outputs,
         underlay: watched.underlay.as_ref(),
+        custom_underlay: watched.custom_underlay.as_ref(),
         custom_colours: watched.custom_colours.as_ref(),
         port_intents: &watched.port_intents,
     };
     floating.generation += 1;
-    if let Some(job) = editor.render_job_for(&source, floating.generation) {
+    let job = editor.render_job_for(&source, floating.generation);
+    floating.rendered_quickly = job.as_ref().is_some_and(RenderJob::lit_quickly);
+    if let Some(job) = job {
         floating.renderer.request(job);
     }
     floating.sent = Some(wanted);
@@ -899,5 +1070,52 @@ mod tests {
         assert!(text.starts_with("0.000, 0.000, 0.000\n × \n1.000, 0.000, 0.000\n\nDistance 2D: 1.000"));
         let metres = measure_text(points, true, None, 5000.0, 2500.0);
         assert!(metres.contains("Distance 2D: 5,000.00m"));
+    }
+
+    #[test]
+    fn ctrl_m_opens_the_selected_node_else_shows_or_hides_the_map_viewer() {
+        let mut document = crate::document::Document::new();
+        let node = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut state = Viewport2DState::default();
+        editor.select(None);
+        state.show_2d_view(&editor);
+        assert!(state.following.is_some());
+        state.show_2d_view(&editor);
+        assert!(state.following.is_none());
+
+        editor.select(Some(node));
+        state.show_2d_view(&editor);
+        assert_eq!(state.floating.iter().map(|view| view.node).collect::<Vec<_>>(), [node]);
+        assert!(state.following.is_none());
+        // One view a node.
+        state.show_2d_view(&editor);
+        assert_eq!(state.floating.len(), 1);
+    }
+
+    #[test]
+    fn the_map_viewer_renders_a_pick_until_another_node_is_previewed() {
+        let mut document = crate::document::Document::new();
+        let erosion = document.add_node("Erosion2", [26000.0, 26000.0]).unwrap();
+        let other = document.add_node("Mountain", [26300.0, 26000.0]).unwrap();
+        let mut editor = Editor::new(document);
+        editor.select(Some(erosion));
+        let resolution = nerthus_engine::Resolution::square(4);
+        let heights = Arc::new(Map::filled(resolution, 0.5));
+        let deposits = Arc::new(Map::filled(resolution, 0.25));
+        editor.outputs = vec![("Out".to_string(), heights), ("Deposits".to_string(), deposits)];
+
+        let mut following = FollowingView::new();
+        following.picked = Some((erosion, "Deposits".to_string()));
+        refresh_following(&editor, &mut following);
+        assert_eq!(following.generation, 1);
+        // Nothing changed: no render.
+        refresh_following(&editor, &mut following);
+        assert_eq!(following.generation, 1);
+
+        editor.select(Some(other));
+        refresh_following(&editor, &mut following);
+        assert!(following.picked.is_none());
+        assert!(following.sent.is_none());
     }
 }

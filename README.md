@@ -66,17 +66,6 @@ licensing, the Houdini, Unity and Unreal bridges (and Tools › Install
 Plugins), and features Gaea ships disabled or unfinished, such as Network
 Build.
 
-### Viewport
-
-- Ctrl+M, Gaea's other shortcut for a floating 2D view of the current node
-  (with none, one that follows the preview).
-- The Lazy Menu's 2D Viewport entry, which only says the 2D viewport isn't
-  available.
-- Mixer previewed over the terrain wired into its Terrain port. Nerthus
-  shows it over the general underlay instead.
-- Faster rendering while a gizmo is dragged or Draw's painter is in use:
-  Gaea drops to quick occlusion and shadows until the drag ends.
-
 ### Build and Export
 
 - Close Gaea and Build, the Build and Export dialog's choice to close the

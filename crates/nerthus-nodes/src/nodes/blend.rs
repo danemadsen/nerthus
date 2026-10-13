@@ -378,4 +378,78 @@ impl NodeBuilder for Mixer {
         node.values.insert("PortCount".to_string(), Value::from(count + 2));
         Some(layer)
     }
+
+    /// `Mixer.GetCustomUnderlay`: the editor's underlay node when one is
+    /// set, else the node wired into Terrain.
+    fn custom_underlay(&self, context: &BuildContext) -> Option<i32> {
+        let underlay = context.underlay_node();
+        if underlay > 0 {
+            return Some(underlay);
+        }
+        context.source_node("Terrain").map(|source| source.id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use indexmap::IndexMap;
+    use nerthus_engine::{Catalogue, ConnectionRecord, Engine, Resolution, Terrain};
+
+    use super::*;
+
+    fn node(type_name: &str, id: i32) -> NodeData {
+        let spec = Catalogue::get().node(type_name).expect("the type exists");
+        NodeData::new(spec, id, 1234)
+    }
+
+    fn wire(to: &mut NodeData, to_port: &str, from: i32) {
+        let record = ConnectionRecord { from, to: to.id, from_port: "Out".to_string(), to_port: to_port.to_string(), is_valid: true };
+        to.port_mut(to_port).expect("the port exists").record = Some(record);
+    }
+
+    #[test]
+    fn a_mixer_is_shown_over_its_terrain_unless_an_underlay_is_set() {
+        let base = node("Mountain", 1);
+        let relief = node("Perlin", 2);
+        let mut colours = node("SatMap", 3);
+        wire(&mut colours, "In", 1);
+        let mut mixer = node("Mixer", 4);
+        wire(&mut mixer, "In", 3);
+        wire(&mut mixer, "Terrain", 2);
+        let nodes: IndexMap<i32, NodeData> = [base, relief, colours, mixer].into_iter().map(|node| (node.id, node)).collect();
+        let terrain = Terrain { id: String::new(), nodes, width: 5000.0, height: 2500.0, extra: Default::default() };
+        let mut engine = Engine::new(Arc::new(crate::registry()));
+        let resolution = Resolution::square(64);
+        engine.build(&terrain, 4, resolution);
+
+        let relief_map = engine.cache.get(2, "Out").expect("the Terrain input built");
+        let shown = engine.custom_underlay(&terrain, 4, resolution).expect("the Mixer names its Terrain input");
+        assert!(Arc::ptr_eq(&shown, &relief_map));
+
+        // The editor's underlay comes first.
+        engine.underlay = 1;
+        let base_map = engine.cache.get(1, "Out").expect("the base built");
+        let shown = engine.custom_underlay(&terrain, 4, resolution).expect("the Mixer names the underlay");
+        assert!(Arc::ptr_eq(&shown, &base_map));
+
+        // Other types name none.
+        assert!(engine.custom_underlay(&terrain, 3, resolution).is_none());
+    }
+
+    #[test]
+    fn a_mixer_without_a_terrain_names_nothing() {
+        let base = node("Mountain", 1);
+        let mut colours = node("SatMap", 2);
+        wire(&mut colours, "In", 1);
+        let mut mixer = node("Mixer", 3);
+        wire(&mut mixer, "In", 2);
+        let nodes: IndexMap<i32, NodeData> = [base, colours, mixer].into_iter().map(|node| (node.id, node)).collect();
+        let terrain = Terrain { id: String::new(), nodes, width: 5000.0, height: 2500.0, extra: Default::default() };
+        let mut engine = Engine::new(Arc::new(crate::registry()));
+        let resolution = Resolution::square(64);
+        engine.build(&terrain, 3, resolution);
+        assert!(engine.custom_underlay(&terrain, 3, resolution).is_none());
+    }
 }

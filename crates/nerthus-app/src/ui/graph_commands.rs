@@ -1112,8 +1112,8 @@ fn lazy_action(tag: &str, editor: &mut Editor, ui_state: &mut UiState) {
             None
         }
         "2d" => {
-            editor.report("The 2D viewport is not available in Nerthus yet");
-            None
+            ui_state.viewport_2d.toggle_docked();
+            Some(LazyTarget::Viewport2D)
         }
         _ => None,
     };
@@ -1149,6 +1149,17 @@ mod tests {
         assert_eq!(editor.document.undo_labels()[0], "Nodes combined as inputs.");
         editor.document.undo();
         assert!(editor.document.node(combined).is_none());
+    }
+
+    #[test]
+    fn the_lazy_menus_2d_viewport_toggles_the_docked_view() {
+        let mut editor = Editor::new(crate::document::Document::new());
+        let mut ui_state = UiState::default();
+        lazy_action("2d", &mut editor, &mut ui_state);
+        assert!(ui_state.viewport_2d.docked);
+        assert_eq!(ui_state.graph.lazy_cursor, Some(LazyTarget::Viewport2D));
+        lazy_action("2d", &mut editor, &mut ui_state);
+        assert!(!ui_state.viewport_2d.docked);
     }
 
     #[test]

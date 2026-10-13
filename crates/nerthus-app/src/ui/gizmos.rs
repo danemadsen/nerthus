@@ -210,6 +210,11 @@ impl GizmoState {
     pub fn kind(&self) -> GizmoKind {
         self.kind
     }
+
+    /// Whether one of its handles is held.
+    pub fn held(&self) -> bool {
+        self.drag.is_some()
+    }
 }
 
 /// Draws the gizmo over the map (`image`, the map's square as shown; the

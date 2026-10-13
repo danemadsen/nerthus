@@ -117,6 +117,11 @@ impl ConstructorWindow {
         self.node
     }
 
+    /// Whether the chosen gizmo's handles are held.
+    pub fn gizmo_held(&self) -> bool {
+        self.drag.is_some()
+    }
+
     /// The nodes whose maps the previews are made from (`In` and each
     /// `Terrain`), for the builds to report.
     pub fn sources(&self, editor: &Editor) -> Vec<i32> {

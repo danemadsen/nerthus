@@ -86,6 +86,7 @@ pub struct WatchedNode {
     pub node: i32,
     pub outputs: Vec<(String, Arc<Map>)>,
     pub underlay: Option<Arc<Map>>,
+    pub custom_underlay: Option<Arc<Map>>,
     pub custom_colours: Option<Arc<Map>>,
     pub port_intents: PortIntents,
 }
@@ -146,6 +147,10 @@ pub enum BuildEvent {
         outputs: Vec<(String, Arc<Map>)>,
         /// The heightfield colour and mask outputs drape over.
         underlay: Option<Arc<Map>>,
+        /// The map the target is shown over when its type has its own
+        /// underlay (`CustomUnderlayAttribute`); `None` otherwise or when
+        /// that map is missing.
+        custom_underlay: Option<Arc<Map>>,
         /// `Node.GetCustomColorMap()` when the target's type has its own
         /// colours (`CustomColorizationAttribute`); `None` otherwise or
         /// when it is null.
@@ -388,6 +393,7 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         outputs.sort_by_key(|(port, _)| port != "Out");
         let error = engine.error(target).map(ToString::to_string);
         let underlay = engine.underlay_heightfield(&terrain, target, request.resolution);
+        let custom_underlay = engine.custom_underlay(&terrain, target, request.resolution);
         let port_intents = engine.port_intents(target).cloned().unwrap_or_default();
         let cache_bytes = engine.cache.bytes();
         let node_caches = node_caches(&engine);
@@ -396,6 +402,7 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
             target,
             outputs,
             underlay,
+            custom_underlay,
             custom_colours,
             port_intents,
             error,
@@ -532,8 +539,6 @@ fn load_editor_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, 
     }
 }
 
-/// `RendererBase.ResolveColorfield`'s `Node.GetCustomColorMap()` for a
-/// built target whose type has `CustomColorizationAttribute`.
 /// A built node's maps and what the viewport needs to render them.
 fn watched_node(engine: &Engine, terrain: &Terrain, node: i32, resolution: Resolution) -> Option<WatchedNode> {
     if !matches!(engine.state(node), NodeState::Built | NodeState::Baked) {
@@ -545,12 +550,15 @@ fn watched_node(engine: &Engine, terrain: &Terrain, node: i32, resolution: Resol
         node,
         outputs,
         underlay: engine.underlay_heightfield(terrain, node, resolution),
+        custom_underlay: engine.custom_underlay(terrain, node, resolution),
         custom_colours: target_custom_colours(engine, terrain, node, resolution),
         port_intents: engine.port_intents(node).cloned().unwrap_or_default(),
     };
     Some(watched)
 }
 
+/// `RendererBase.ResolveColorfield`'s `Node.GetCustomColorMap()` for a
+/// built target whose type has `CustomColorizationAttribute`.
 fn target_custom_colours(engine: &Engine, terrain: &Terrain, target: i32, resolution: Resolution) -> Option<Arc<Map>> {
     let node = terrain.nodes.get(&target)?;
     let spec = Catalogue::get().node(&node.type_name)?;

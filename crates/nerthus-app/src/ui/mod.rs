@@ -74,7 +74,7 @@ use crate::document::CombineKind;
 use crate::editor::Editor;
 use crate::theme;
 use crate::user::UserOptions;
-use crate::viewport_render::MaskGradient;
+use crate::viewport_render::{MaskGradient, RenderQuality};
 use commands::Command;
 use graph_canvas::GraphState;
 use graph_commands::GraphCommand;
@@ -311,7 +311,7 @@ impl UiState {
             "updates" => self.tools_at_launch.push(tool_commands::ToolCommand::CheckForUpdates),
             "lighting" => self.sun_open = true,
             "skybox" => self.graph.toggle_skybox = true,
-            "viewport-2d" | "gizmo" | "pick" | "measure" => self.viewport_2d.open_at_launch(panel),
+            "viewport-2d" | "map-viewer" | "gizmo" | "pick" | "measure" => self.viewport_2d.open_at_launch(panel),
             "edit-variable" => self.commands_at_launch.push(Command::EditVariable(detail.to_string())),
             // `edit-expression:<node id>.<property>`.
             "edit-expression" => {
@@ -464,8 +464,15 @@ pub fn draw(
     }
     let constructor_sources = ui_state.constructor.as_ref().map(|window| window.sources(&editor)).unwrap_or_default();
     viewport_2d::show_floating(&ctx, &mut editor, &mut ui_state.viewport_2d, &constructor_sources, &mut pending);
+    // `RendererQuality.FastAO` while a gizmo or Draw's painter is held.
+    let constructor_held = ui_state.constructor.as_ref().is_some_and(constructor::ConstructorWindow::gizmo_held);
+    let held = ui_state.viewport_2d.gizmo_held() || painter::painting(&ctx) || constructor_held;
+    let quality = if held { RenderQuality::Fast } else { RenderQuality::Normal };
+    editor.set_render_quality(quality);
     ui_state.graph.areas.graph = layout.graph;
     ui_state.graph.areas.properties = properties_rect;
+    // Floating, the docked 2D view is in the viewport's own window.
+    ui_state.graph.areas.viewport_2d = if floating { None } else { ui_state.viewport_2d.docked_rect() };
     if let Some(show) = ui_state.graph_at_launch.take() {
         graph_commands::open_at_launch(&show, &mut editor, &mut ui_state);
     }
@@ -766,6 +773,7 @@ fn move_lazy_cursor(ctx: &egui::Context, graph: &mut GraphState, window: &mut Wi
     };
     let areas = graph.areas;
     let rect = match target {
+        graph_canvas::LazyTarget::Viewport2D => areas.viewport_2d,
         graph_canvas::LazyTarget::Graph => Some(areas.graph),
         graph_canvas::LazyTarget::Properties | graph_canvas::LazyTarget::Modifiers => Some(areas.properties),
         graph_canvas::LazyTarget::DataView => areas.data_view,
@@ -808,6 +816,7 @@ fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
         (KeyboardShortcut::new(command, Key::F3), Command::ShowDataTab(data_view::DataTab::Build)),
         (KeyboardShortcut::new(command, Key::F9), Command::SaveViewportScreenshotAs),
         (KeyboardShortcut::new(command, Key::F6), Command::ShowLocked2DViewport),
+        (KeyboardShortcut::new(command, Key::M), Command::Show2DView),
     ];
     let typing = ctx.egui_wants_keyboard_input();
     for (shortcut, action) in bindings {

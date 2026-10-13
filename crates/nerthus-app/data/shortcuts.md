@@ -13,6 +13,7 @@
 | Redo                               |         `Ctrl + Y` |
 | Toggle 2D Viewport                 |               `F6` |
 | Floating Viewport for current node |        `Ctrl + F6` |
+| Floating Viewport or Map Viewer    |         `Ctrl + M` |
 | Suspend/Resume Engine              |            `` ` `` |
 | Attempt to cancel preview build    |              `Esc` |
 | Build Settings                     |         `Ctrl + B` |

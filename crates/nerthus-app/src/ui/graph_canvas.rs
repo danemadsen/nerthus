@@ -110,6 +110,8 @@ impl GraphView {
 /// the pointer into (`SetCursorPosition`).
 #[derive(Clone, Copy, Debug)]
 pub struct GraphAreas {
+    /// The docked 2D view, while it shows in the shell.
+    pub viewport_2d: Option<Rect>,
     pub graph: Rect,
     pub properties: Rect,
     pub data_view: Option<Rect>,
@@ -117,13 +119,14 @@ pub struct GraphAreas {
 
 impl Default for GraphAreas {
     fn default() -> Self {
-        Self { graph: Rect::NOTHING, properties: Rect::NOTHING, data_view: None }
+        Self { viewport_2d: None, graph: Rect::NOTHING, properties: Rect::NOTHING, data_view: None }
     }
 }
 
 /// What a Lazy Menu entry moves the pointer to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LazyTarget {
+    Viewport2D,
     Graph,
     Properties,
     Modifiers,

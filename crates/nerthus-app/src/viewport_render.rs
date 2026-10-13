@@ -70,6 +70,21 @@ pub enum MaskEnhancement {
     Equalize,
 }
 
+/// `RendererQuality`: how much of its lighting the realistic renderer
+/// takes the time for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RenderQuality {
+    /// `FastestNoAOShadow`: no occlusion and no shadows (the Constructor's
+    /// Faster Previews).
+    Fastest,
+    /// `FastAO`: local occlusion and quick shadows (the Constructor's
+    /// previews, and the viewport while a gizmo or Draw's painter is held).
+    Fast,
+    /// Soft shadows and hybrid occlusion.
+    #[default]
+    Normal,
+}
+
 /// `MaskGradient`: the colours masks are shown in. It starts from
 /// `Options.MaskGradient` and the lighting panel changes it for the
 /// session.
@@ -357,6 +372,8 @@ pub struct RenderJob {
     pub colorfield: Option<Colorfield>,
     pub intent: RenderIntent,
     pub mode: RenderMode,
+    /// How the realistic renderer lights it.
+    pub quality: RenderQuality,
     pub mask_enhancement: MaskEnhancement,
     pub mask_gradient: MaskGradient,
     pub lighting: ViewportLighting,
@@ -364,6 +381,14 @@ pub struct RenderJob {
     pub terrain: (f32, f32),
     /// The overlay laid over the render (`B.ShowOverlay`), if any.
     pub overlay: Option<crate::overlays::OverlayJob>,
+}
+
+impl RenderJob {
+    /// Whether the realistic renderer lights it at less than its `Normal`
+    /// quality.
+    pub fn lit_quickly(&self) -> bool {
+        self.mode == RenderMode::Realistic && self.quality != RenderQuality::Normal
+    }
 }
 
 /// A finished render: the terrain and what to drape over it (nothing when
@@ -388,7 +413,7 @@ pub fn render(job: &RenderJob) -> Option<TerrainColours> {
     let rendered = match job.mode {
         RenderMode::Data => raw_render(&job.heightfield, colorfield),
         RenderMode::Clay => clay_render(&job.heightfield, colorfield, job.terrain),
-        RenderMode::Realistic => realistic_render(&job.heightfield, colorfield.as_ref(), &job.lighting, job.terrain),
+        RenderMode::Realistic => realistic_render(&job.heightfield, colorfield.as_ref(), &job.lighting, job.terrain, job.quality),
     };
     let overlaid = match &job.overlay {
         Some(overlay) => crate::overlays::apply(rendered, overlay),
@@ -456,11 +481,11 @@ fn clay_render(heightfield: &Map, colorfield: Option<Map>, terrain: (f32, f32)) 
     }
 }
 
-/// `RealisticRenderer` at its `Normal` quality: the lighting rig from the
-/// viewport's lighting, sun and sky, soft shadows and hybrid occlusion.
-/// `Normal` turns shadows and occlusion on whatever the lighting says.
-fn realistic_render(heightfield: &Map, colorfield: Option<&Map>, lighting: &ViewportLighting, terrain: (f32, f32)) -> Map {
-    let rig = realistic_rig(lighting);
+/// `RealisticRenderer`: the lighting rig from the viewport's lighting, sun
+/// and sky at the quality asked for. `Normal` and `Fast` turn shadows and
+/// occlusion on whatever the lighting says.
+fn realistic_render(heightfield: &Map, colorfield: Option<&Map>, lighting: &ViewportLighting, terrain: (f32, f32), quality: RenderQuality) -> Map {
+    let rig = realistic_rig(lighting, quality);
     let sky = rig.sky(lighting.sun_azimuth, lighting.sun_elevation);
     let maps = rig.shade(&sky, heightfield, colorfield, terrain);
     maps.color
@@ -468,25 +493,37 @@ fn realistic_render(heightfield: &Map, colorfield: Option<&Map>, lighting: &View
 
 /// The Constructor's `RealisticRenderer`s: `RefreshLighting(resolution)`
 /// keeps the project's lighting but puts the sun at -33° and 25°; they
-/// render at `FastAO` (local occlusion, quick shadows) or, `faster`,
-/// `FastestNoAOShadow` (neither).
+/// render at `Fast` quality or, `faster`, `Fastest`.
 pub fn constructor_render(heightfield: &Map, colorfield: Option<&Map>, lighting: &ViewportLighting, terrain: (f32, f32), faster: bool) -> TerrainColours {
-    let mut rig = realistic_rig(lighting);
-    if faster {
-        rig.ambient_occlusion = false;
-        rig.shadows = false;
-    } else {
-        rig.ao_model = AmbientOcclusionModel::Local;
-        rig.shadow_quality = -1;
-    }
+    let quality = if faster { RenderQuality::Fastest } else { RenderQuality::Fast };
+    let rig = realistic_rig(lighting, quality);
     let sky = rig.sky(-33.0, 25.0);
     let maps = rig.shade(&sky, heightfield, colorfield, terrain);
     pack_bytes(&maps.color)
 }
 
+/// `RefreshLighting`, then the quality's switches: soft shadows and hybrid
+/// occlusion at `Normal`, quick shadows and local occlusion at `Fast`,
+/// neither at `Fastest`.
+fn realistic_rig(lighting: &ViewportLighting, quality: RenderQuality) -> LightRig {
+    let mut rig = normal_rig(lighting);
+    match quality {
+        RenderQuality::Fastest => {
+            rig.ambient_occlusion = false;
+            rig.shadows = false;
+        }
+        RenderQuality::Fast => {
+            rig.ao_model = AmbientOcclusionModel::Local;
+            rig.shadow_quality = -1;
+        }
+        RenderQuality::Normal => {}
+    }
+    rig
+}
+
 /// `RefreshLighting` at `Normal`: the viewport's lighting with soft
 /// shadows and hybrid occlusion.
-fn realistic_rig(lighting: &ViewportLighting) -> LightRig {
+fn normal_rig(lighting: &ViewportLighting) -> LightRig {
     LightRig {
         ao_model: AmbientOcclusionModel::Hybrid,
         sun_intensity: lighting.sun_intensity,
@@ -601,6 +638,7 @@ mod tests {
             colorfield: colorfield.map(|map| Colorfield::Port(Arc::new(map))),
             intent,
             mode,
+            quality: RenderQuality::Normal,
             mask_enhancement: MaskEnhancement::None,
             mask_gradient: MaskGradient::Greyscale,
             lighting: ViewportLighting::default(),
@@ -654,6 +692,25 @@ mod tests {
         mask_job.colorfield = Some(Colorfield::Custom(Arc::new(colours)));
         let shown = render(&mask_job).unwrap();
         assert_eq!(&shown.rgb[0..6], &[51, 51, 51, 76, 76, 76]);
+    }
+
+    #[test]
+    fn quick_lighting_trades_occlusion_and_shadows() {
+        let lighting = ViewportLighting { shadows: false, ambient_occlusion: false, ..ViewportLighting::default() };
+        let normal = realistic_rig(&lighting, RenderQuality::Normal);
+        assert_eq!((normal.ao_model, normal.shadow_quality), (AmbientOcclusionModel::Hybrid, -4));
+        assert!(normal.ambient_occlusion && normal.shadows);
+        let fast = realistic_rig(&lighting, RenderQuality::Fast);
+        assert_eq!((fast.ao_model, fast.shadow_quality), (AmbientOcclusionModel::Local, -1));
+        assert!(fast.ambient_occlusion && fast.shadows);
+        let fastest = realistic_rig(&lighting, RenderQuality::Fastest);
+        assert!(!fastest.ambient_occlusion && !fastest.shadows);
+
+        let mut quick = job(Map::new(Resolution::square(2), 1), None, RenderIntent::Heightfield, RenderMode::Realistic);
+        quick.quality = RenderQuality::Fast;
+        assert!(quick.lit_quickly());
+        quick.mode = RenderMode::Clay;
+        assert!(!quick.lit_quickly());
     }
 
     #[test]

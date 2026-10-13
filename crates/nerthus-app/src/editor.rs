@@ -20,7 +20,7 @@ use crate::launch::LaunchOptions;
 use crate::user::User;
 pub use crate::viewport_render::RenderMode;
 use crate::viewport_camera;
-use crate::viewport_render::{Colorfield, MaskEnhancement, MaskGradient, RenderJob, ViewportLighting, ViewportRenderer};
+use crate::viewport_render::{Colorfield, MaskEnhancement, MaskGradient, RenderJob, RenderQuality, ViewportLighting, ViewportRenderer};
 use crate::worker::{BakeJob, BuildEvent, BuildRequest, BuildWorker, NodeCache};
 
 /// Preview resolutions offered (`Preview > Resolution`).
@@ -114,18 +114,22 @@ pub struct Editor {
     /// The region the editor previews (`CurrentPortion.Region`), by name;
     /// none for the whole terrain.
     pub preview_region: Option<String>,
-    /// The renderer (`B.Current`) and what it reads: its mask enhancement
-    /// (`AutolevelMasks`), the mask gradient (`B.ClutMap`) and the
-    /// project's lighting.
+    /// The renderer (`B.Current`) and what it reads: its quality
+    /// (`Quality`, quick while a gizmo or Draw's painter is held), its
+    /// mask enhancement (`AutolevelMasks`), the mask gradient
+    /// (`B.ClutMap`) and the project's lighting.
     pub render_mode: RenderMode,
+    render_quality: RenderQuality,
     pub mask_enhancement: MaskEnhancement,
     pub mask_gradient: MaskGradient,
     pub lighting: ViewportLighting,
     /// The overlay laid over renders (Viewport Helpers › Overlay).
     pub overlay: crate::overlays::OverlaySettings,
-    /// The last render asked for and the last one shown.
+    /// The last render asked for and the last one shown, and whether the
+    /// last one asked for was lit quickly.
     render_generation: u64,
     shown_render: u64,
+    rendered_quickly: bool,
     /// The colours of the render shown last (`B.Current.GetRender`), which
     /// the Regions tab shows behind the regions.
     pub render_colours: Option<Arc<nerthus_render::TerrainColours>>,
@@ -156,6 +160,9 @@ pub struct Editor {
     /// The previewed node's maps by port, and what colours drape over.
     pub outputs: Vec<(String, Arc<Map>)>,
     pub underlay: Option<Arc<Map>>,
+    /// What the previewed node is shown over when its type has its own
+    /// underlay (`Node.GetCustomUnderlay`).
+    pub custom_underlay: Option<Arc<Map>>,
     /// The previewed node's own colours (`Node.GetCustomColorMap()`) when
     /// its type has them.
     pub custom_colours: Option<Arc<Map>>,
@@ -237,12 +244,14 @@ impl Editor {
             preview_resolution,
             preview_region: None,
             render_mode: RenderMode::Realistic,
+            render_quality: RenderQuality::Normal,
             mask_enhancement: MaskEnhancement::None,
             mask_gradient: MaskGradient::default(),
             lighting: ViewportLighting::default(),
             overlay: crate::overlays::OverlaySettings::default(),
             render_generation: 0,
             shown_render: 0,
+            rendered_quickly: false,
             render_colours: None,
             needs_render: false,
             camera: CameraValues::DEFAULT,
@@ -257,6 +266,7 @@ impl Editor {
             statuses: HashMap::new(),
             outputs: Vec::new(),
             underlay: None,
+            custom_underlay: None,
             custom_colours: None,
             port_intents: PortIntents::new(),
             preview_error: None,
@@ -322,6 +332,7 @@ impl Editor {
         self.node_caches.clear();
         self.outputs.clear();
         self.underlay = None;
+        self.custom_underlay = None;
         self.custom_colours = None;
         self.port_intents.clear();
         self.preview_error = None;
@@ -974,7 +985,7 @@ impl Editor {
                 self.document.set_value_as(node, &property, value, &label);
                 self.changed();
             }
-            BuildEvent::Finished { generation, target, outputs, underlay, custom_colours, port_intents, error, cache_bytes, node_caches } => {
+            BuildEvent::Finished { generation, target, outputs, underlay, custom_underlay, custom_colours, port_intents, error, cache_bytes, node_caches } => {
                 self.cache_bytes = cache_bytes;
                 let built_intents = node_caches.iter().map(|(id, cache)| (*id, cache.port_intents.clone())).collect();
                 self.document.set_built_intents(built_intents);
@@ -994,6 +1005,7 @@ impl Editor {
                 }
                 self.outputs = outputs;
                 self.underlay = underlay;
+                self.custom_underlay = custom_underlay;
                 self.custom_colours = custom_colours;
                 self.port_intents = port_intents;
                 self.preview_error = error;
@@ -1009,6 +1021,7 @@ impl Editor {
             port: &self.preview_port,
             outputs: &self.outputs,
             underlay: self.underlay.as_ref(),
+            custom_underlay: self.custom_underlay.as_ref(),
             custom_colours: self.custom_colours.as_ref(),
             port_intents: &self.port_intents,
         }
@@ -1063,6 +1076,14 @@ impl Editor {
         spec.is_some_and(|spec| spec.has_flag("CustomColorization"))
     }
 
+    /// Whether a node is shown over a map of its own choosing
+    /// (`NodeMetadata.HasCustomUnderlay`).
+    fn has_custom_underlay(&self, source: &RenderSource) -> bool {
+        let node = source.node.and_then(|id| self.document.terrain().nodes.get(&id));
+        let spec = node.and_then(|node| nerthus_engine::Catalogue::get().node(&node.type_name));
+        spec.is_some_and(|spec| spec.custom_underlay)
+    }
+
     /// Whether the previewed port shows as a heightfield (`Node.IsHeightfield`
     /// for the main output).
     pub fn previews_heightfield(&self) -> bool {
@@ -1091,7 +1112,9 @@ impl Editor {
     }
 
     /// `RendererBase.GetRender(node, port)`'s inputs. `ResolveHeightfield`:
-    /// a heightfield shapes the terrain itself; another port of a node
+    /// a heightfield shapes the terrain itself, unless its node has an
+    /// underlay of its own (Mixer: the editor's underlay, else what feeds
+    /// its Terrain port), which shapes it instead; another port of a node
     /// whose main output is a heightfield lies over that output; anything
     /// else lies over the underlay, else a flat map.
     /// `ResolveColorfield`: masks, colours and raw data are draped, and a
@@ -1100,7 +1123,26 @@ impl Editor {
     fn render_job(&mut self) -> Option<RenderJob> {
         self.render_generation += 1;
         let generation = self.render_generation;
-        self.render_job_for(&self.preview_source(), generation)
+        let job = self.render_job_for(&self.preview_source(), generation)?;
+        self.rendered_quickly = job.lit_quickly();
+        Some(job)
+    }
+
+    /// The renderer's quality (`B.Current.Quality`): `Fast` while a gizmo
+    /// or Draw's painter is held, `Normal` once it is let go, when a
+    /// preview lit quickly is rendered again.
+    pub fn set_render_quality(&mut self, quality: RenderQuality) {
+        if self.render_quality == quality {
+            return;
+        }
+        self.render_quality = quality;
+        if quality == RenderQuality::Normal && self.rendered_quickly {
+            self.show_preview();
+        }
+    }
+
+    pub fn render_quality(&self) -> RenderQuality {
+        self.render_quality
     }
 
     /// The render job for any node and port (a floating 2D view's too).
@@ -1111,12 +1153,14 @@ impl Editor {
         let main_intent = source.port_intents.get("Out").copied().unwrap_or_default();
         let main_shows_heights = matches!(main_intent, RenderIntent::Default | RenderIntent::Heightfield);
         let main_output = source.outputs.iter().find(|(port, _)| port == "Out").map(|(_, main)| main.clone());
+        // A node's own underlay replaces its own heights, even when that
+        // underlay is missing.
+        let own = shows_heights.then(|| map.clone());
+        let resolved = if self.has_custom_underlay(source) { source.custom_underlay.cloned() } else { own };
         let underlay = if source.port != "Out" && main_shows_heights && main_output.is_some() {
             main_output
-        } else if shows_heights {
-            Some(map.clone())
         } else {
-            source.underlay.cloned()
+            resolved.or_else(|| source.underlay.cloned())
         };
         let heightfield = underlay.unwrap_or_else(|| Arc::new(Map::new(map.resolution(), 1)));
         let drapes = matches!(intent, RenderIntent::Mask | RenderIntent::Color | RenderIntent::Raw);
@@ -1133,6 +1177,7 @@ impl Editor {
             colorfield,
             intent,
             mode: self.render_mode,
+            quality: self.render_quality,
             mask_enhancement: self.mask_enhancement,
             mask_gradient: self.mask_gradient,
             lighting: self.lighting,
@@ -1357,6 +1402,9 @@ pub struct RenderSource<'a> {
     pub outputs: &'a [(String, Arc<Map>)],
     /// The heightfield colour and mask outputs drape over.
     pub underlay: Option<&'a Arc<Map>>,
+    /// What a type with its own underlay is shown over
+    /// (`Node.GetCustomUnderlay`).
+    pub custom_underlay: Option<&'a Arc<Map>>,
     /// `Node.GetCustomColorMap()`, for types with their own colours.
     pub custom_colours: Option<&'a Arc<Map>>,
     pub port_intents: &'a PortIntents,
@@ -1642,4 +1690,73 @@ fn copy_folder(from: &Path, to: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Mixer previewed, its Terrain fed by a Perlin, as a build of it
+    /// would leave the editor (`underlay` the general one).
+    fn mixer_editor() -> (Editor, i32, i32) {
+        let mut document = Document::new();
+        let base = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let colours = document.add_node("SatMap", [26300.0, 26000.0]).unwrap();
+        let relief = document.add_node("Perlin", [26300.0, 26300.0]).unwrap();
+        let mixer = document.add_node("Mixer", [26600.0, 26000.0]).unwrap();
+        document.connect(base, "Out", colours, "In");
+        document.connect(colours, "Out", mixer, "In");
+        document.connect(relief, "Out", mixer, "Terrain");
+        let mut editor = Editor::new(document);
+        editor.select(Some(mixer));
+        let resolution = Resolution::square(4);
+        let colour_map = Map::from_channels(resolution, vec![vec![0.5; 16]; 3]);
+        editor.outputs = vec![("Out".to_string(), Arc::new(colour_map))];
+        editor.port_intents = PortIntents::from([("Out".to_string(), RenderIntent::Color)]);
+        editor.underlay = Some(Arc::new(Map::filled(resolution, 0.25)));
+        (editor, mixer, colours)
+    }
+
+    #[test]
+    fn a_mixer_lies_over_its_own_underlay_else_the_general_one() {
+        let (mut editor, mixer, colours) = mixer_editor();
+        assert_eq!(editor.preview_node, Some(mixer));
+        let own = Arc::new(Map::filled(Resolution::square(4), 0.75));
+        editor.custom_underlay = Some(own.clone());
+        let job = editor.render_job_for(&editor.preview_source(), 1).unwrap();
+        assert!(Arc::ptr_eq(&job.heightfield, &own));
+
+        // Its own underlay missing: the general one.
+        editor.custom_underlay = None;
+        let job = editor.render_job_for(&editor.preview_source(), 2).unwrap();
+        assert!(Arc::ptr_eq(&job.heightfield, editor.underlay.as_ref().unwrap()));
+
+        // Other types never look at it.
+        editor.custom_underlay = Some(own);
+        let mut source = editor.preview_source();
+        source.node = Some(colours);
+        let job = editor.render_job_for(&source, 3).unwrap();
+        assert!(Arc::ptr_eq(&job.heightfield, editor.underlay.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn a_quick_render_is_made_again_once_nothing_is_held() {
+        let (mut editor, _, _) = mixer_editor();
+        editor.render_mode = RenderMode::Realistic;
+        editor.set_render_quality(RenderQuality::Fast);
+        let job = editor.render_job().unwrap();
+        assert_eq!(job.quality, RenderQuality::Fast);
+        editor.needs_render = false;
+        editor.set_render_quality(RenderQuality::Normal);
+        assert!(editor.needs_render);
+        assert_eq!(editor.render_job().unwrap().quality, RenderQuality::Normal);
+
+        // Clay ignores the quality: nothing to make again.
+        editor.render_mode = RenderMode::Clay;
+        editor.set_render_quality(RenderQuality::Fast);
+        editor.render_job().unwrap();
+        editor.needs_render = false;
+        editor.set_render_quality(RenderQuality::Normal);
+        assert!(!editor.needs_render);
+    }
 }
