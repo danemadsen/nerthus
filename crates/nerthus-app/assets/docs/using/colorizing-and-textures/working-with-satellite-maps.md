@@ -1,8 +1,8 @@
 # Working with Satellite Maps
 
-Our library of over 1400 color maps, derived from real satellite data, helps you colorize your terrains quickly without sacrificing realism.
+Our library of 2,026 color maps, taken from Copernicus Sentinel-2 satellite imagery, helps you colorize your terrains quickly without sacrificing realism.
 
-Nerthus provides an extensive library covering all natural locations, giving you a vast playground for colorizing your terrains.
+The maps come from deserts, mountains, ice, forests, farmland, coasts and lakes all over the world, giving you a vast playground for colorizing your terrains.
 
 This TextureMap node is attached to a SatelliteMap node. The SatelliteMap is adapted to the mask as described in [Crafting Masks](crafting-masks.md).
 
