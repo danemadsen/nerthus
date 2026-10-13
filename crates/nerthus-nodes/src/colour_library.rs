@@ -7,6 +7,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// The notice the Copernicus Sentinel data terms ask to go with the palettes.
+pub const NOTICE: &str = "Contains modified Copernicus Sentinel data 2023–2024";
+
 /// One palette: 512 RGB colours from low to high.
 pub type Palette = [[u8; 3]; 512];
 

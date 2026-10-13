@@ -301,8 +301,9 @@ fn about_window(ctx: &egui::Context) -> bool {
         ui.label(RichText::new(authors()).font(theme::interface(13.0)).color(theme::LABEL_DEFAULT));
         ui.add_space(12.0);
         ui.label(caption("Built with"));
-        let built_with = "Bevy, egui, wgpu, resvg, and the Roboto and Roboto Mono fonts";
+        let built_with = "Bevy, egui, wgpu, resvg, the Roboto and Roboto Mono fonts, and palettes from Copernicus Sentinel-2 imagery";
         ui.add(egui::Label::new(RichText::new(built_with).font(theme::interface(12.0)).color(theme::LABEL_DEFAULT)).wrap());
+        ui.label(RichText::new(nerthus_nodes::colour_library::NOTICE).font(theme::interface(10.0)).color(Color32::from_gray(0x80)));
         ui.add_space(24.0);
         let rows = [("Version", env!("CARGO_PKG_VERSION")), ("License", env!("CARGO_PKG_LICENSE"))];
         for (name, value) in rows {
