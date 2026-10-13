@@ -59,6 +59,121 @@ The server only takes connections from this machine and has no other
 authentication, so while it is on, any program running on this machine can
 use it.
 
+## Not done yet
+
+These parts of Gaea 2.0 are not in Nerthus yet. Left out on purpose:
+licensing, the Houdini, Unity and Unreal bridges (and Tools › Install
+Plugins), and features Gaea ships disabled or unfinished, such as Network
+Build.
+
+### Graph
+
+- Dropping a connection from an output onto another node's output. Gaea
+  joins the two outputs through a new Combine node.
+- Ctrl+Shift drag on an empty part of the graph, which pushes every node,
+  group and note to the right of the pointer sideways to make room.
+- Render intents carried along connections: connecting a mask, or a node set
+  to render as a mask, to a node's main input makes that node render as a
+  mask too.
+- The Create Connection window, for picking both ports when a connection is
+  drawn from one compact node's hidden ports to another's.
+
+### Properties
+
+- Help tooltips for about 275 parameters on 74 nodes. Gaea finds a
+  parameter's help by its spaced-out name ("Restrict to group"); Nerthus's
+  node catalogue looked it up by the bare name ("RestrictToGroup"), so most
+  multi-word parameters have none.
+- The Edit Expression dialog's syntax highlighting, line numbers and
+  Expression Examples help. Nerthus's is a plain text box.
+- The palette behind SatMap's and SuperColor's Range slider.
+
+### Viewport
+
+- Ctrl+M, Gaea's other shortcut for a floating 2D view of the current node
+  (with none, one that follows the preview).
+- The Lazy Menu's 2D Viewport entry, which only says the 2D viewport isn't
+  available.
+- Mixer previewed over the terrain wired into its Terrain port. Nerthus
+  shows it over the general underlay instead.
+- Faster rendering while a gizmo is dragged or Draw's painter is in use:
+  Gaea drops to quick occlusion and shadows until the drag ends.
+
+### Build and Export
+
+- Close Gaea and Build, the Build and Export dialog's choice to close the
+  editor to free memory while the build runs.
+- Save cached build: when the preview resolution matches the build's
+  (single images up to 8K) and every marked node is built, Gaea offers to
+  export the editor's results instead of building again.
+- The warning before a bake that may need more than a third of the
+  installed memory.
+- `nerthus-build` keeps no log file (Gaea's command-line build writes one to
+  `Logs` for every run) and has no `--verbose` or `--safemode` (build with
+  default preferences).
+- A resident build host, Gaea.SwarmHost, which stays loaded and builds the
+  projects that later runs hand to it.
+
+### Files
+
+- File › Open's repairs of damaged projects: nodes on graph tabs that no
+  longer exist (offered back as "Recovered Graph" tabs), stale export
+  settings, and bookmarks or selected and locked nodes that no longer exist.
+- Saving the selected node, the open graph tab and a preview lock (F) with
+  the project, and reopening on them. Nerthus reopens on the selected node
+  of a project Gaea saved, but saves none of the three.
+- Macros that use other macros. Gaea lists them when it exports a macro and
+  adds them to a project along with it.
+- Remembering the last Open and Save folders between sessions.
+- Progress windows for long operations other than baking: opening a file,
+  writing the preview cache to disk, loading baked caches and loading a
+  region preview.
+- Reading Windows metafiles (`.emf`, which the File node offers) and
+  Photoshop files (`.psd`), which Gaea reads through ImageMagick.
+- Example projects. Gaea ships 59 for File › Open Examples; Nerthus ships
+  none.
+
+### Options with no effect yet
+
+Nerthus shows these in Options but does not act on them:
+
+- Toolbox: Show SatMaps List as a Single Stack.
+- Graph: Allow node shortcuts only when cursor is inside the graph; Hide
+  Graph Tabs (when there is only one); Record Graph Movements and Zoom in
+  Undos (on by default: panning the graph adds an undo step).
+- Node: Node Style (Muted or Vibrant); Show shine effect on Node when build
+  completes; Show values with high precision; Accept values when clicking
+  outside of editable field; Use slider for Seed instead of new Seed control.
+- Viewport: Antialiasing; Do not clear viewport when unselecting a node
+  (Nerthus never clears it, Gaea does unless this is on); Conserve memory
+  when displaying 4K terrains.
+- Build: Purge unnecessary cache during build to conserve memory.
+- Experimental: Compact Interface; Use new Auto Layout method; Use Adaptive
+  Debounce for Smoother Node Updates.
+- Two settings Gaea reads from its settings files without showing them:
+  `ShowTicks` (slider ticks) and `AllowValuesBeyondRange` (node results not
+  clamped to 0–1).
+
+### Compute
+
+- The NVIDIA profile that Options › Compute and the first-run GPU setup
+  create on Windows (prefer the NVIDIA GPU; CUDA without system-memory
+  fallback).
+
+### Help and Tools
+
+- Project › Statistics, which says it isn't available (the Data View opens
+  the same window).
+- Documentation. Help › Node Reference, the property panel's Show Help for
+  this Node, a parameter's Help with Automation and the "More Info" and
+  "Learn more" links open Gaea's online documentation; Nerthus has none, and
+  Help › User Guide opens this README.
+- Installing updates. Gaea downloads the new installer and runs it; Nerthus
+  opens the release page.
+- The console's hidden commands: `error` (a simulated crash, for testing
+  crash reporting) and the joke ones (`iddqd`, `idkfa`, `idclip`,
+  `crocodile`, `openpodbaydoors`).
+
 ## License
 
 MIT (see [LICENSE](LICENSE)). The Roboto and Roboto Mono fonts in
