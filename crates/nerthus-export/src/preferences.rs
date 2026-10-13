@@ -1,7 +1,9 @@
 //! What builds read from the user's preferences (`Preferences`, saved as
 //! `preferences.options` in the data folder): the file name delimiter, the
-//! builds folder, where baked maps are kept and the compute devices to
-//! activate. The editor and `nerthus-build` read them alike.
+//! builds folder, where baked maps are kept, the compute devices to
+//! activate, whether results are clamped to 0–1 and whether results go as
+//! soon as the build is done with them. The editor and `nerthus-build`
+//! read them alike.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,6 +85,19 @@ pub fn compute_backends(values: &PreferenceValues) -> Vec<String> {
     names.map(str::to_string).collect()
 }
 
+/// `AllowValuesBeyondRange`: node results keep values outside 0–1. The
+/// preference has no page in Options; it is read from the file.
+pub fn allow_values_beyond_range(values: &PreferenceValues) -> bool {
+    values.get("AllowValuesBeyondRange").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// `Cache.OffloadBuildCache` (Options › Build).
+pub fn offload_build_cache(values: &PreferenceValues) -> bool {
+    let cache = section(values, "Cache");
+    let offload = cache.and_then(|cache| cache.get("OffloadBuildCache")).and_then(Value::as_bool);
+    offload.unwrap_or(false)
+}
+
 impl ExportPreferences {
     /// What a build takes from the preferences.
     pub fn from_preferences(values: &PreferenceValues) -> Self {
@@ -90,6 +105,8 @@ impl ExportPreferences {
             filename_delimiter: filename_delimiter(values),
             builds_root: builds_folder(values),
             central_bake_cache: central_bake_cache(values),
+            allow_values_beyond_range: allow_values_beyond_range(values),
+            offload_build_cache: offload_build_cache(values),
             ..Self::default()
         }
     }
@@ -126,6 +143,16 @@ mod tests {
         assert_eq!(preferences.builds_root, PathBuf::from("/work/builds"));
         assert_eq!(preferences.central_bake_cache, Some(PathBuf::from("/work/cache")));
         assert_eq!(compute_backends(&saved), ["Native/Cpu/Native/Apple/Apple M3/cpu"]);
+        assert!(!preferences.allow_values_beyond_range);
+        assert!(!preferences.offload_build_cache);
+    }
+
+    #[test]
+    fn range_and_purge_preferences_are_read() {
+        let saved = values(json!({"AllowValuesBeyondRange": true, "Cache": {"$id": "2", "OffloadBuildCache": true}}));
+        let preferences = ExportPreferences::from_preferences(&saved);
+        assert!(preferences.allow_values_beyond_range);
+        assert!(preferences.offload_build_cache);
     }
 
     #[test]

@@ -50,6 +50,10 @@ struct UndoEntry {
     /// The node and property a value edit changed: further edits of the
     /// same one join this entry.
     merge_key: Option<(i32, String)>,
+    /// Going back to it reopens the whole project, the graph's view with
+    /// it (`ExecuteUndo` of a full record); a value edit only sets the
+    /// value back.
+    restores_view: bool,
 }
 
 pub struct Document {
@@ -69,6 +73,9 @@ pub struct Document {
     /// as the engine last reported them, which new connections pass on.
     built_intents: HashMap<i32, PortIntents>,
     random: SmallRandom,
+    /// Counts the undos and redos that put the graph tabs' views
+    /// (`ViewportLocation`, `ZoomFactor`) back: the graph takes them again.
+    view_generation: u64,
 }
 
 impl Document {
@@ -91,6 +98,7 @@ impl Document {
             stale_all: true,
             built_intents: HashMap::new(),
             random,
+            view_generation: 0,
         }
     }
 
@@ -162,10 +170,12 @@ impl Document {
     }
 
     fn push_undo(&mut self, label: String, merge_key: Option<(i32, String)>) {
+        let restores_view = merge_key.is_none();
         let entry = UndoEntry {
             label,
             project: self.project.clone(),
             merge_key,
+            restores_view,
         };
         self.undo.push(entry);
         if self.undo.len() > UNDO_LIMIT {
@@ -199,7 +209,10 @@ impl Document {
         };
         let current = std::mem::replace(&mut self.project, entry.project);
         self.mark_changed_nodes(&current);
-        let redo_entry = UndoEntry { label: entry.label, project: current, merge_key: None };
+        if entry.restores_view {
+            self.view_generation += 1;
+        }
+        let redo_entry = UndoEntry { label: entry.label, project: current, merge_key: None, restores_view: entry.restores_view };
         self.redo.push(redo_entry);
         self.dirty = true;
         true
@@ -211,10 +224,18 @@ impl Document {
         };
         let current = std::mem::replace(&mut self.project, entry.project);
         self.mark_changed_nodes(&current);
-        let undo_entry = UndoEntry { label: entry.label, project: current, merge_key: None };
+        if entry.restores_view {
+            self.view_generation += 1;
+        }
+        let undo_entry = UndoEntry { label: entry.label, project: current, merge_key: None, restores_view: entry.restores_view };
         self.undo.push(undo_entry);
         self.dirty = true;
         true
+    }
+
+    /// Bumped by each undo or redo that puts the graph's views back.
+    pub fn view_generation(&self) -> u64 {
+        self.view_generation
     }
 
     /// Marks stale every node that differs between `previous` and now.

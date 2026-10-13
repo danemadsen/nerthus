@@ -1,5 +1,6 @@
 //! Tools' and Help's commands (the Console, Verbose Logging, the Artifact
-//! Explorer, Run Diagnostics, the help windows and update checks), the
+//! Explorer, Run Diagnostics, the help windows, the documentation and
+//! update checks), the
 //! keys the shell gives them (`Shell.OnPreviewKeyDown`: F12, backtick,
 //! Esc and M), and drawing their windows and the first-run setup.
 
@@ -10,11 +11,12 @@ use crate::ui::artifact_explorer::{self, ArtifactExplorer};
 use crate::ui::commands::Command;
 use crate::ui::console_window::{self, ConsoleWindow};
 use crate::ui::diagnostics_window::{self, DiagnosticsRequest, DiagnosticsWindow};
+use crate::ui::docs_window::{self, DocsWindow};
 use crate::ui::help_windows::{self, UpdateDialog};
 use crate::ui::onboard::{self, Onboard};
 use crate::ui::prompt::Prompt;
 use crate::ui::UiState;
-use crate::updates::ProxySettings;
+use crate::updates::{DownloadOutcome, ProxySettings};
 use crate::user::Preferences;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +39,15 @@ pub enum ToolCommand {
     ShowWhatsNew,
     CheckForUpdates,
     ShowAbout,
+    /// Help › User Guide and Node Reference, and the help links around
+    /// the editor: the documentation at a page (`path#heading`).
+    ShowDocs(String),
+    /// The property area's Show Help for this Node: the selected node's
+    /// page (`MiHelp_OnClick`).
+    ShowNodeHelp,
+    /// The downloaded update's installer run; with `close`, Nerthus
+    /// closes at once (Yes to "Close Nerthus before proceeding?").
+    InstallUpdate { path: std::path::PathBuf, close: bool },
     /// Esc: the preview build stops; with Ctrl the
     /// cancellation is reset.
     CancelPreviewBuild,
@@ -84,6 +95,24 @@ pub fn run(command: ToolCommand, editor: &mut Editor, ui_state: &mut UiState) {
             }
         }
         ToolCommand::ShowAbout => ui_state.help.about = true,
+        ToolCommand::ShowDocs(target) => open_docs(ui_state, &target),
+        ToolCommand::ShowNodeHelp => {
+            let Some(node) = editor.active_node().and_then(|id| editor.document.node(id)) else {
+                return;
+            };
+            log::info!("Open help for {}", node.type_name);
+            let library = crate::docs::library();
+            let target = library.node_page(&node.type_name).unwrap_or(crate::docs::NODE_REFERENCE).to_string();
+            open_docs(ui_state, &target);
+        }
+        ToolCommand::InstallUpdate { path, close } => {
+            crate::updates::run_installer(&path);
+            // Closing does not ask about unsaved changes: the question
+            // said they would be lost.
+            if close {
+                editor.files.exit_now = true;
+            }
+        }
         ToolCommand::CheckForUpdates => {
             let proxy = proxy_settings(&editor.user.preferences);
             match ui_state.updates.ask(proxy) {
@@ -100,6 +129,37 @@ pub fn run(command: ToolCommand, editor: &mut Editor, ui_state: &mut UiState) {
             log::info!("Manual reset of Cancellation Token.");
             editor.cancel_build = false;
         }
+    }
+}
+
+/// Download Update's download: started when asked for; once it is in,
+/// "Close Nerthus before proceeding?" (Yes closes Nerthus and runs the
+/// installer, No only runs it).
+fn update_download(editor: &mut Editor, ui_state: &mut UiState) {
+    if let Some(token) = ui_state.help.download_requested.take() {
+        let proxy = proxy_settings(&editor.user.preferences);
+        ui_state.updates.start_download(&token, proxy);
+    }
+    match ui_state.updates.poll_download() {
+        Some(DownloadOutcome::Finished(path)) => {
+            let text = "Close Nerthus before proceeding? Unsaved work will be lost!\n\nOr click NO, save your work, close Nerthus, and then proceed with the installer.";
+            let yes = Command::Tools(ToolCommand::InstallUpdate { path: path.clone(), close: true });
+            let no = Command::Tools(ToolCommand::InstallUpdate { path, close: false });
+            let mut prompt = Prompt::new("Close Nerthus?", text, yes);
+            prompt.no = Some(no.clone());
+            prompt.dismissed = Some(no);
+            ui_state.prompt = Some(prompt);
+        }
+        Some(DownloadOutcome::Failed(error)) => editor.report(format!("The update could not be downloaded. {error}")),
+        None => {}
+    }
+}
+
+/// The documentation at `target`, in its window (opened if need be).
+fn open_docs(ui_state: &mut UiState, target: &str) {
+    match ui_state.docs.as_mut() {
+        Some(window) => window.go(target),
+        None => ui_state.docs = Some(DocsWindow::open(target)),
     }
 }
 
@@ -183,7 +243,8 @@ pub fn show_windows(ctx: &egui::Context, editor: &mut Editor, ui_state: &mut UiS
     if let Some(answer) = ui_state.updates.poll() {
         ui_state.help.update = Some(UpdateDialog::new(answer));
     }
-    if ui_state.updates.checking() {
+    update_download(editor, ui_state);
+    if ui_state.updates.checking() || ui_state.updates.downloading() {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
     if let Some(console) = ui_state.console.as_mut()
@@ -211,6 +272,11 @@ pub fn show_windows(ctx: &egui::Context, editor: &mut Editor, ui_state: &mut UiS
         }
     }
     help_windows::show(ctx, &mut ui_state.help);
+    if let Some(window) = ui_state.docs.as_mut()
+        && !docs_window::show(ctx, window)
+    {
+        ui_state.docs = None;
+    }
     if let Some(setup) = ui_state.onboard.as_mut()
         && !onboard::show(ctx, editor, setup, &mut ui_state.file_dialogs)
     {

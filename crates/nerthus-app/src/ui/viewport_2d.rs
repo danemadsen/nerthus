@@ -777,7 +777,8 @@ fn view_contents(ui: &mut Ui, rect: Rect, id: Id, view: &mut View2D, resolution:
 
     // `Toolbar` at the top right: the menu button (`tglToolbar`) and Mask
     // Enhancement.
-    let toolbar = Rect::from_min_size(Pos2::new(rect.right() - 4.0 - 40.0, rect.top() + 4.0), Vec2::new(40.0, 2.0 * 32.0 + 12.0));
+    let button = crate::ui::widgets::toolbar_button(ui);
+    let toolbar = Rect::from_min_size(Pos2::new(rect.right() - 4.0 - 40.0, rect.top() + 4.0), Vec2::new(40.0, 2.0 * button + 12.0));
     crate::ui::widgets::toolbar_background(ui, toolbar, theme::MENU_BORDER, 1.5);
     let inner = toolbar.shrink(1.5).shrink2(Vec2::new(2.0, 4.0));
     let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Center)));

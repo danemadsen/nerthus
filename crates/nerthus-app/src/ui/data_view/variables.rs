@@ -502,7 +502,7 @@ fn variable_editor(ui: &mut Ui, editor: &mut Editor, key: &str, variable: &Varia
             let integer = variable.var_type == VarType::Int;
             let mut spec = SliderSpec::linear(float(&min_value), float(&max_value));
             spec.integer = integer;
-            spec.inset = 0.0;
+            spec.inset = Some(0.0);
             let value = float(&variable.value);
             let changed = frame.show(ui, |ui| slider(ui, id, &variable.name, value, &spec, color)).inner;
             if let Some(changed) = changed {
@@ -516,7 +516,7 @@ fn variable_editor(ui: &mut Ui, editor: &mut Editor, key: &str, variable: &Varia
                 VariableValue::Float2(pair) => *pair,
                 _ => [0.0, 1.0],
             };
-            let spec = RangeSpec { min: float(&min_value), max: float(&max_value), integer: false, inset: 0.0 };
+            let spec = RangeSpec { min: float(&min_value), max: float(&max_value), integer: false, inset: Some(0.0) };
             let changed = frame.show(ui, |ui| range_slider(ui, id, &variable.name, low as f64, high as f64, &spec, color)).inner;
             if let Some((low, high)) = changed {
                 let value = VariableValue::Float2([low as f32, high as f32]);
@@ -685,9 +685,9 @@ enum RowTyping {
 }
 
 /// The row's `EditablePopup` (monospace 16): over the name 48 in and 96
-/// wide, over the value 112 in and as wide as the row less 128. Enter,
-/// Tab or leaving it commits (`EditablePopup_EditSuccess`), Escape drops
-/// it. `Some` once committed.
+/// wide, over the value 112 in and as wide as the row less 128, closing as
+/// [`crate::ui::widgets::popup_outcome`] says. `Some` once committed
+/// (`EditablePopup_EditSuccess`).
 fn row_typing(ui: &mut Ui, typing_id: egui::Id, row: Rect) -> Option<RowTyping> {
     let mut typing: RowTyping = ui.data(|data| data.get_temp(typing_id))?;
     let (offset, width) = match typing {
@@ -715,13 +715,12 @@ fn row_typing(ui: &mut Ui, typing_id: egui::Id, row: Rect) -> Option<RowTyping> 
         })
     });
     let edit_response = shown.inner.inner;
-    if edit_response.lost_focus() {
-        ui.data_mut(|data| data.remove::<RowTyping>(typing_id));
-        let escaped = ui.input(|input| input.key_pressed(Key::Escape));
-        return (!escaped).then_some(typing);
-    }
-    ui.data_mut(|data| data.insert_temp(typing_id, typing));
-    None
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
+        ui.data_mut(|data| data.insert_temp(typing_id, typing));
+        return None;
+    };
+    ui.data_mut(|data| data.remove::<RowTyping>(typing_id));
+    accepted.then_some(typing)
 }
 
 /// `GetIconFromVar`.

@@ -1,7 +1,8 @@
 //! The engine preferences (`Preferences`, saved as
 //! `preferences.options`): caches, compute backends, export defaults,
 //! folders and network builds. Nerthus uses the compute backends, the
-//! export defaults and the builds folder so far.
+//! export defaults, the folders, the caches and whether results are
+//! clamped to 0–1.
 
 use std::path::PathBuf;
 
@@ -251,6 +252,14 @@ impl Preferences {
     /// What a build reads from the preferences.
     pub fn export_preferences(&self) -> ExportPreferences {
         ExportPreferences::from_preferences(&self.values)
+    }
+
+    /// What the engine reads from the preferences: `AllowValuesBeyondRange`
+    /// (no page in Options shows it).
+    pub fn engine_preferences(&self) -> nerthus_engine::EnginePreferences {
+        nerthus_engine::EnginePreferences {
+            allow_values_beyond_range: nerthus_export::preferences::allow_values_beyond_range(&self.values),
+        }
     }
 }
 

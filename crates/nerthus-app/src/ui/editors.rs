@@ -10,24 +10,17 @@ use serde_json::{json, Value};
 use crate::icons;
 use crate::theme;
 
-/// `Slider.MinHeight`.
-pub const SLIDER_HEIGHT: f32 = 26.0;
-/// `Slider.Margin`: a slider's bar starts this far into its row.
-pub const SLIDER_INSET: f32 = 20.0;
 /// While a slider holds its default, its shading, thumb and value show at
 /// this opacity (`SliderX.AnimateSlider`).
 const DEFAULT_OPACITY: f32 = 0.4;
 /// The thumb: a 2px bar with a 2px margin each side (`Slider-Thumb`).
 const THUMB_WIDTH: f32 = 6.0;
-/// `Column.Size`: the header column of dropdowns and toggles.
-const HEADER_COLUMN: f32 = 160.0;
-/// `OptionsX.Item.MinHeight`.
-const OPTIONS_HEIGHT: f32 = 32.0;
-/// An option's cell: text 11 high, `OptionsX.Item.Padding` 4 and
-/// `OptionsX.Item.Margin` 2 above and below.
-const OPTION_ROW_HEIGHT: f32 = 27.0;
+/// The line of an option's 11-point text.
+const OPTION_LINE: f32 = 15.0;
 /// `NudgeButton`.
 const NUDGE_BUTTON: Vec2 = Vec2::new(28.0, 24.0);
+/// The largest seed (`ParameterAttribute(Parameters.Seed)`'s `Max`).
+const SEED_MAX: f64 = 65535.0;
 
 /// `ParamsY`, `ParamsX` and `ParamsZ`: the palettes editors cycle through
 /// (`EditorBase.colorFlip`), eight colours each.
@@ -69,7 +62,8 @@ pub enum Edit {
     Expression,
     /// `CommandX`: run the node's command.
     Command,
-    Unavailable(&'static str),
+    /// Open the documentation at this page (Help with Automation).
+    ShowDocs(&'static str),
 }
 
 /// What shapes an editor besides its value.
@@ -109,10 +103,17 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
         }
         ValueType::Int => {
             let current = value.as_f64().unwrap_or(0.0);
-            if spec.is_seed() {
+            let seed_slider = spec.is_seed() && theme::settings(ui.ctx()).seed_sliders;
+            if spec.is_seed() && !seed_slider {
                 return seed_box(ui, id, label, current as i64);
             }
-            let slider_spec = SliderSpec::of(spec, context.default, true);
+            let mut slider_spec = SliderSpec::of(spec, context.default, true);
+            // A seed's `ParameterAttribute` runs from 0 to 65535.
+            if seed_slider {
+                slider_spec.min = 0.0;
+                slider_spec.max = SEED_MAX;
+                slider_spec.ticks = Ticks::None;
+            }
             match slider(ui, id, label, current, &slider_spec, context.color) {
                 Some(new_value) => Edit::Set(json!(new_value.round_ties_even() as i64)),
                 None => Edit::None,
@@ -143,7 +144,7 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
             let high = value.get("Y").and_then(Value::as_f64).unwrap_or(0.0);
             let (min, max) = range_of(spec, 0.0, 1.0);
             let integer = spec.value_type == ValueType::Int2;
-            let range = RangeSpec { min, max, integer, inset: SLIDER_INSET };
+            let range = RangeSpec { min, max, integer, inset: None };
             // `Parameters.RangeClipper` gets a palette range slider.
             let look = if spec.kind == "RangeClipper" {
                 RangeLook::Palette(range_palette(ui.ctx(), context.values))
@@ -211,9 +212,11 @@ pub struct SliderSpec {
     pub curve: f64,
     pub integer: bool,
     pub ticks: Ticks,
-    /// `Slider.Margin`'s left padding (none in modifier and layer editors).
-    pub inset: f32,
-    pub height: f32,
+    /// `Slider.Margin`'s left padding (none in modifier and layer editors)
+    /// and the height; `None` is the size theme's (`Slider.Margin`,
+    /// `Slider.MinHeight`).
+    pub inset: Option<f32>,
+    pub height: Option<f32>,
 }
 
 impl SliderSpec {
@@ -226,8 +229,8 @@ impl SliderSpec {
             curve: 0.0,
             integer: false,
             ticks: Ticks::None,
-            inset: SLIDER_INSET,
-            height: SLIDER_HEIGHT,
+            inset: None,
+            height: None,
         }
     }
 
@@ -316,10 +319,13 @@ impl SliderSpec {
         nearest.unwrap_or(position)
     }
 
-    /// `FormattedString`: two decimals, whole numbers for integers.
-    fn format(&self, value: f64) -> String {
+    /// `FormattedString`: two decimals, or four when `precise`; whole
+    /// numbers for integers.
+    fn format(&self, value: f64, precise: bool) -> String {
         if self.integer {
             format!("{}", value as i64)
+        } else if precise {
+            format!("{value:.4}")
         } else {
             format!("{value:.2}")
         }
@@ -457,9 +463,12 @@ fn nudged(nudge: Nudge, value: f64, spec: &SliderSpec) -> f64 {
 /// marks it. Click or drag to set (Shift snaps to the ticks), double-click
 /// to type, right-click for the nudge bar.
 pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, color: Color32) -> Option<f64> {
+    let sizes = theme::sizes(ui.ctx());
     let width = ui.available_width();
-    let (row, _) = ui.allocate_exact_size(Vec2::new(width, spec.height), Sense::hover());
-    let content = Rect::from_min_max(Pos2::new(row.left() + spec.inset, row.top()), row.max);
+    let height = spec.height.unwrap_or(sizes.slider_height);
+    let inset = spec.inset.unwrap_or(sizes.slider_inset);
+    let (row, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let content = Rect::from_min_max(Pos2::new(row.left() + inset, row.top()), row.max);
     let response = ui.interact(content, id.with("slider"), Sense::click_and_drag());
     let enabled = ui.is_enabled();
     // `SliderEditor_IsEnabledChanged`: a disabled slider shows at half.
@@ -467,26 +476,35 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     let is_default = spec.default.is_some_and(|default| (value - default).abs() < 1e-5);
     let value_opacity = control_opacity * if is_default { DEFAULT_OPACITY } else { 1.0 };
 
-    // `border`: the bar's frame, a pixel over the control above and below.
+    // `border`: the bar's frame, a pixel over the control above and below,
+    // outlined `Slider.BorderStroke.Thickness` wide.
     let border = content.expand2(Vec2::new(0.0, 1.0));
     let painter = ui.painter();
     painter.rect_filled(border, 4.0, theme::SLIDER_BACKGROUND.gamma_multiply(control_opacity));
-    painter.rect_stroke(border, 4.0, Stroke::new(1.0, theme::SLIDER_BORDER.gamma_multiply(control_opacity)), StrokeKind::Inside);
+    if sizes.slider_border > 0.0 {
+        let outline = Stroke::new(sizes.slider_border, theme::SLIDER_BORDER.gamma_multiply(control_opacity));
+        painter.rect_stroke(border, 4.0, outline, StrokeKind::Inside);
+    }
 
-    // `_slider` (margin 3.5, 1): the shading up to the thumb (margin 1, 2,
-    // 0, 2, 20% of the accent), the ticks and the thumb.
+    // `_slider` (margin 3.5, 1): the shading up to the thumb (margin
+    // `Slider.InnerMargin`, 20% of the accent), the ticks and the thumb.
     let track = content.shrink2(Vec2::new(3.5, 1.0));
     let position = spec.position(value) as f32;
     let travel = (track.width() - THUMB_WIDTH).max(0.0);
     let thumb_left = track.left() + position * travel;
-    let shading = Rect::from_min_max(Pos2::new(track.left() + 1.0, track.top() + 2.0), Pos2::new(thumb_left, track.bottom() - 2.0));
+    let [shading_left, shading_top, _, shading_bottom] = sizes.slider_shading_margin;
+    let shading_min = Pos2::new(track.left() + shading_left, track.top() + shading_top);
+    let shading = Rect::from_min_max(shading_min, Pos2::new(thumb_left, track.bottom() - shading_bottom));
     if shading.width() > 0.0 {
         let corners = CornerRadius { nw: 3, sw: 3, ne: 0, se: 0 };
         painter.rect_filled(shading, corners, color.gamma_multiply(0.2 * value_opacity));
     }
     let tick_y = track.bottom() - 3.0 - 1.0;
     let tick_color = color.gamma_multiply(0.75 * value_opacity);
-    if spec.ticks != Ticks::None {
+    // An integer slider's steps are marked only with `ShowTicks`.
+    let settings = theme::settings(ui.ctx());
+    let ticks_shown = spec.ticks != Ticks::None && (spec.ticks != Ticks::Steps || settings.show_ticks);
+    if ticks_shown {
         let mut tick_positions = spec.tick_positions();
         tick_positions.push(0.0);
         tick_positions.push(1.0);
@@ -507,9 +525,9 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     // The value keeps its room; the name gets what is left, trimmed, and
     // nothing leaves the bar.
     let text_painter = painter.with_clip_rect(content);
-    let shown = spec.format(value);
+    let shown = spec.format(value, settings.precise_values);
     let shown_color = color.gamma_multiply(value_opacity);
-    let value_galley = painter.layout_no_wrap(shown.clone(), theme::monospace(13.0), shown_color);
+    let value_galley = painter.layout_no_wrap(shown, theme::monospace(13.0), shown_color);
     let value_box_top = content.top() + 3.0 + (content.height() - 4.0 - 18.0) / 2.0;
     let value_rect = Rect::from_min_size(Pos2::new(content.right() - 10.0 - value_galley.size().x, value_box_top), Vec2::new(value_galley.size().x, 18.0));
     text_painter.galley(value_rect.min, value_galley, shown_color);
@@ -520,7 +538,7 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     let label_top = content.top() - 1.0 + (content.height() + 1.0 - label_galley.size().y) / 2.0;
     text_painter.galley(Pos2::new(label_left, label_top), label_galley, label_color);
 
-    if let Some(typed) = slider_typing(ui, id, &shown, value_rect, spec) {
+    if let Some(typed) = slider_typing(ui, id, &spec.format(value, true), value_rect, spec) {
         return typed;
     }
     if let Some(nudge) = nudge_bar(ui, id, &response, content, spec, color) {
@@ -528,7 +546,9 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
         return if (new_value - value).abs() > f64::EPSILON { Some(new_value) } else { None };
     }
     if response.double_clicked() {
-        ui.data_mut(|data| data.insert_temp(id.with("typing"), spec.format(value)));
+        // The popup starts from the value at four decimals, whatever the
+        // slider shows.
+        ui.data_mut(|data| data.insert_temp(id.with("typing"), spec.format(value, true)));
         return None;
     }
     let pressed = response.is_pointer_button_down_on() || response.dragged();
@@ -544,9 +564,10 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
 }
 
 /// The double-click editor (`EditablePopup`): monospace 16 over the value,
-/// 16 wider than it (64 at least); Enter or leaving it commits.
-/// `Some(change)` while typing.
-fn slider_typing(ui: &mut Ui, id: Id, shown: &str, value_rect: Rect, spec: &SliderSpec) -> Option<Option<f64>> {
+/// 16 wider than it (64 at least), starting from `started`; it closes as
+/// [`crate::ui::widgets::popup_outcome`] says. `Some(change)` while
+/// typing.
+fn slider_typing(ui: &mut Ui, id: Id, started: &str, value_rect: Rect, spec: &SliderSpec) -> Option<Option<f64>> {
     let typing_id = id.with("typing");
     let mut text: String = ui.data(|data| data.get_temp(typing_id))?;
     let width = (value_rect.width() + 16.0).max(64.0);
@@ -569,21 +590,20 @@ fn slider_typing(ui: &mut Ui, id: Id, shown: &str, value_rect: Rect, spec: &Slid
         })
     });
     let edit_response = response.inner.inner;
-    if edit_response.lost_focus() {
-        ui.data_mut(|data| data.remove::<String>(typing_id));
-        let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
-        if escaped || text.trim() == shown {
-            return Some(None);
-        }
-        let parsed = text.trim().parse::<f64>().ok();
-        let committed = parsed.map(|number| {
-            let clamped = number.clamp(spec.min, spec.max);
-            if spec.integer { clamped.round_ties_even() } else { clamped }
-        });
-        return Some(committed);
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
+        ui.data_mut(|data| data.insert_temp(typing_id, text));
+        return Some(None);
+    };
+    ui.data_mut(|data| data.remove::<String>(typing_id));
+    if !accepted || text.trim() == started {
+        return Some(None);
     }
-    ui.data_mut(|data| data.insert_temp(typing_id, text));
-    Some(None)
+    let parsed = text.trim().parse::<f64>().ok();
+    let committed = parsed.map(|number| {
+        let clamped = number.clamp(spec.min, spec.max);
+        if spec.integer { clamped.round_ties_even() } else { clamped }
+    });
+    Some(committed)
 }
 
 /// The right-click bar (`NudgePopup`): nine buttons in the accent over the
@@ -636,8 +656,9 @@ pub struct RangeSpec {
     pub min: f64,
     pub max: f64,
     pub integer: bool,
-    /// `Slider.Margin` (none in the layer editor).
-    pub inset: f32,
+    /// `Slider.Margin` (none in the layer editor); `None` is the size
+    /// theme's.
+    pub inset: Option<f32>,
 }
 
 /// How a `SliderY` is drawn.
@@ -688,13 +709,15 @@ pub fn range_slider(ui: &mut Ui, id: Id, label: &str, low: f64, high: f64, spec:
 
 /// A `SliderY` in either look.
 pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &RangeSpec, look: &RangeLook) -> Option<(f64, f64)> {
+    let sizes = theme::sizes(ui.ctx());
     let width = ui.available_width();
     let height = match look {
-        RangeLook::Accent { .. } => SLIDER_HEIGHT,
+        RangeLook::Accent { .. } => sizes.slider_height,
         RangeLook::Palette(_) => PALETTE_SLIDER_HEIGHT,
     };
+    let inset = spec.inset.unwrap_or(sizes.slider_inset);
     let (row, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    let content = Rect::from_min_max(Pos2::new(row.left() + spec.inset, row.top()), row.max);
+    let content = Rect::from_min_max(Pos2::new(row.left() + inset, row.top()), row.max);
     let response = ui.interact(content, id.with("range"), Sense::click_and_drag());
     let opacity = if ui.is_enabled() { 1.0 } else { 0.5 };
     let accent = match look {
@@ -732,7 +755,16 @@ pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &Rang
     // and the thumbs (100) lie over them.
     let text_painter = painter.with_clip_rect(content);
     let text_color = accent.gamma_multiply(opacity);
-    let format = |value: f64| if spec.integer { format!("{}", value.round_ties_even() as i64) } else { format!("{value:.2}") };
+    let precise = theme::settings(ui.ctx()).precise_values;
+    let format = |value: f64| {
+        if spec.integer {
+            format!("{}", value.round_ties_even() as i64)
+        } else if precise {
+            format!("{value:.4}")
+        } else {
+            format!("{value:.2}")
+        }
+    };
     let low_galley = painter.layout_no_wrap(format(low), theme::monospace(13.0), text_color);
     let high_galley = painter.layout_no_wrap(format(high), theme::monospace(13.0), text_color);
     let low_top = content.top() + 2.0 + (content.height() - 3.0 - 15.0) / 2.0;
@@ -922,8 +954,8 @@ fn seed_memory_menu(ui: &mut Ui, saved_id: Id, drawn_id: Id, seed: i64) -> Optio
 }
 
 /// The seed's `EditablePopup` (`PlacementMode.RelativePoint` 4 above the
-/// button, 32 wider, 64 at least; monospace 16): Enter, Tab or leaving it
-/// commits the text, Escape drops it. `Some` once it closes with text.
+/// button, 32 wider, 64 at least; monospace 16), closing as
+/// [`crate::ui::widgets::popup_outcome`] says. `Some` once it closes.
 fn seed_typing(ui: &mut Ui, typing_id: Id, button: Rect) -> Option<Edit> {
     let mut text: String = ui.data(|data| data.get_temp(typing_id))?;
     let width = (button.width() + 32.0).max(64.0);
@@ -945,16 +977,15 @@ fn seed_typing(ui: &mut Ui, typing_id: Id, button: Rect) -> Option<Edit> {
         })
     });
     let edit_response = response.inner.inner;
-    if edit_response.lost_focus() {
-        ui.data_mut(|data| data.remove::<String>(typing_id));
-        let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
-        if escaped {
-            return Some(Edit::None);
-        }
-        return Some(Edit::SeedText(text));
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
+        ui.data_mut(|data| data.insert_temp(typing_id, text));
+        return None;
+    };
+    ui.data_mut(|data| data.remove::<String>(typing_id));
+    if !accepted {
+        return Some(Edit::None);
     }
-    ui.data_mut(|data| data.insert_temp(typing_id, text));
-    None
+    Some(Edit::SeedText(text))
 }
 
 /// `HasShrunk`: how far a labelled editor has narrowed.
@@ -971,7 +1002,7 @@ pub fn toggle(ui: &mut Ui, id: Id, label: &str, value: bool, accent: Color32) ->
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), Sense::hover());
     let shrunk = if width < 300.0 { Shrunk::Little } else { Shrunk::None };
-    let column = if shrunk == Shrunk::None { HEADER_COLUMN } else { 100.0 };
+    let column = if shrunk == Shrunk::None { theme::sizes(ui.ctx()).header_column } else { 100.0 };
     let enabled = ui.is_enabled();
     let header = Rect::from_min_size(rect.min, Vec2::new(column.min(width), rect.height()));
     // Disabled: the control at 0.8, its name at 0.3, the switch at 0.33.
@@ -1041,10 +1072,15 @@ fn options(ui: &mut Ui, label: &str, spec: &ParameterSpec, current: &str, style:
         _ => 18.0,
     };
     let rows = entries.len().max(1).div_ceil(columns);
-    let list_height = (rows as f32 * OPTION_ROW_HEIGHT + 4.0).max(OPTIONS_HEIGHT);
+    // A row: the text's line, `OptionsX.Item.Padding` and
+    // `OptionsX.Item.Margin` above and below; at least
+    // `OptionsX.Item.MinHeight` in all.
+    let sizes = theme::sizes(ui.ctx());
+    let row_height = OPTION_LINE + 2.0 * sizes.option_padding[1] + 2.0 * sizes.option_margin;
+    let list_height = (rows as f32 * row_height + 4.0).max(sizes.options_min_height);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, list_height), Sense::hover());
     if style == OptionsStyle::Labelled {
-        let header_height = if shrunk == Shrunk::Lot { OPTIONS_HEIGHT } else { rect.height() };
+        let header_height = if shrunk == Shrunk::Lot { sizes.options_min_height } else { rect.height() };
         let header = Rect::from_min_size(rect.min, Vec2::new(list_left, header_height));
         header_label(ui, header, label, theme::LABEL_DEFAULT.gamma_multiply(opacity));
     }
@@ -1061,15 +1097,17 @@ pub fn option_list(ui: &mut Ui, id: Id, entries: &[String], selected: Option<usi
     let width = ui.available_width();
     let columns = columns.max(1);
     let rows = entries.len().max(1).div_ceil(columns);
-    // An item: the text's line, padding 4 and margin 2 above and below.
-    let row_height = font_size * 1.36 + 8.0 + 4.0;
+    // An item: the text's line, `OptionsX.Item.Padding` and
+    // `OptionsX.Item.Margin` above and below.
+    let sizes = theme::sizes(ui.ctx());
+    let row_height = font_size * 1.36 + 2.0 * sizes.option_padding[1] + 2.0 * sizes.option_margin;
     let height = rows as f32 * row_height + 4.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     option_cells(ui, id, rect, entries, selected, columns, font_size)
 }
 
 /// Paints the box and its cells into `list` (border 1, grid margin 2, 1,
-/// item margin 2) and handles clicks.
+/// item margin `OptionsX.Item.Margin`) and handles clicks.
 fn option_cells(ui: &mut Ui, id: Id, list: Rect, entries: &[String], selected: Option<usize>, columns: usize, font_size: f32) -> Option<usize> {
     let enabled = ui.is_enabled();
     let opacity = if enabled { 1.0 } else { 0.3 };
@@ -1080,13 +1118,14 @@ fn option_cells(ui: &mut Ui, id: Id, list: Rect, entries: &[String], selected: O
     let grid = list.shrink(1.0).shrink2(Vec2::new(2.0, 1.0));
     let cell_width = grid.width() / columns as f32;
     let cell_height = grid.height() / rows as f32;
+    let sizes = theme::sizes(ui.ctx());
     let mut chosen = None;
     for (index, entry) in entries.iter().enumerate() {
         let column = index % columns;
         let row = index / columns;
         let cell_origin = Pos2::new(grid.left() + column as f32 * cell_width, grid.top() + row as f32 * cell_height);
         let cell = Rect::from_min_size(cell_origin, Vec2::new(cell_width, cell_height));
-        let item = cell.shrink(2.0);
+        let item = cell.shrink(sizes.option_margin);
         let response = ui.interact(item, id.with(index), Sense::click());
         let is_selected = selected == Some(index);
         let hovered = response.hovered() && enabled;
@@ -1097,7 +1136,7 @@ fn option_cells(ui: &mut Ui, id: Id, list: Rect, entries: &[String], selected: O
         }
         let text_color = if is_selected || hovered { theme::LABEL_EMPHASIS } else { theme::OPTIONS_LABEL };
         let shown_color = text_color.gamma_multiply(opacity);
-        let galley = fitted_line(ui, entry, theme::interface(font_size), shown_color, item.width() - 16.0);
+        let galley = fitted_line(ui, entry, theme::interface(font_size), shown_color, item.width() - 2.0 * sizes.option_padding[0]);
         ui.painter().galley(item.center() - galley.size() / 2.0, galley, shown_color);
         if response.clicked() && enabled && !is_selected {
             chosen = Some(index);
@@ -1127,7 +1166,7 @@ pub fn dropdown_row(ui: &mut Ui, id: Id, label: &str, entries: &[(String, String
         Shrunk::None
     };
     let column = match shrunk {
-        Shrunk::None => HEADER_COLUMN,
+        Shrunk::None => theme::sizes(ui.ctx()).header_column,
         Shrunk::Little => 100.0,
         Shrunk::Lot => 18.0,
     };
@@ -1211,15 +1250,22 @@ pub fn dropdown_box(ui: &mut Ui, id: Id, header: Option<&str>, column: f32, heig
 /// `FileBrowser`: the name (90 column), the path in blue on a dark field,
 /// and a folder button. Clicking the path types a new one
 /// (`PART_FileTextBox`): Enter, Tab or clicking away takes it unless it
-/// is empty, Escape puts the old one back.
+/// is empty, Escape puts the old one back. Files dragged over the control
+/// light its border (`IsDragOver`); dropped on it, the first one's path is
+/// taken, whatever the file (`OnDrop`).
 fn file_browser(ui: &mut Ui, id: Id, label: &str, path: &str) -> Edit {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::hover());
     let header = Rect::from_min_size(rect.min, Vec2::new(90.0, rect.height()));
     header_label(ui, header, label, theme::LABEL_DEFAULT);
     let field = Rect::from_min_max(Pos2::new(header.right(), rect.top() + 3.0), Pos2::new(rect.right() - 30.0, rect.bottom() - 3.0));
+    let under_pointer = ui.rect_contains_pointer(rect);
+    let dragged_over = under_pointer && ui.input(|input| !input.raw.hovered_files.is_empty());
+    let border = if dragged_over { theme::ACCENT_PRIMARY } else { theme::TEXTBOX_FILE_BORDER };
     ui.painter().rect_filled(field, 3.0, theme::TEXTBOX_BACKGROUND);
-    ui.painter().rect_stroke(field, 3.0, Stroke::new(1.0, theme::TEXTBOX_FILE_BORDER), StrokeKind::Inside);
+    ui.painter().rect_stroke(field, 3.0, Stroke::new(1.0, border), StrokeKind::Inside);
+    let dropped = ui.input(|input| input.raw.dropped_files.first().map(|file| file.path().to_string_lossy().to_string()));
+    let dropped = dropped.filter(|_| under_pointer);
 
     // `PART_FileTextBlock` (margins 9, 0, 2, 0; one line, centred): a
     // click starts typing.
@@ -1227,8 +1273,13 @@ fn file_browser(ui: &mut Ui, id: Id, label: &str, path: &str) -> Edit {
     let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
     let text_rect = Rect::from_min_max(Pos2::new(field.left() + 9.0, field.center().y - line_height / 2.0), Pos2::new(field.right() - 2.0, field.center().y + line_height / 2.0));
     let typing_id = id.with("typed-path");
-    let typed: Option<String> = ui.data(|data| data.get_temp(typing_id));
     let edit_id = id.with("path-box");
+    // A drop ends any typing.
+    if dropped.is_some() {
+        ui.data_mut(|data| data.remove::<String>(typing_id));
+        ui.memory_mut(|memory| memory.surrender_focus(edit_id));
+    }
+    let typed: Option<String> = ui.data(|data| data.get_temp(typing_id));
     let mut edit = Edit::None;
     match typed {
         Some(text) => edit = path_box(ui, edit_id, typing_id, field, text, path),
@@ -1252,6 +1303,9 @@ fn file_browser(ui: &mut Ui, id: Id, label: &str, path: &str) -> Edit {
     let button_rect = Rect::from_min_max(Pos2::new(rect.right() - 30.0, rect.top()), rect.max);
     let mut button_ui = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
     let browse = crate::ui::widgets::icon_button(&mut button_ui, "folder", "Browse...", None);
+    if let Some(dropped) = dropped {
+        return Edit::Set(Value::String(dropped));
+    }
     if browse.clicked() {
         return Edit::Browse;
     }
@@ -1391,43 +1445,67 @@ fn information(ui: &mut Ui, text: &str, margin: egui::Margin, format: Option<&[V
     });
 }
 
-/// `TextEditor` (margin 20, 2, 4, 2; a 90 header column): edits a copy
-/// while focused and commits it when focus leaves.
+/// `TextEditor` (margin 20, 2, 4, 2): the name in a 90 header column and
+/// the value in a text box that only shows it (`TextBox`: #101010 with a
+/// #363636 line, padding 4, corners 3). A click opens an `EditablePopup`
+/// over the value (monospace 16, as wide as the value, 96 at least),
+/// which closes as [`crate::ui::widgets::popup_outcome`] says.
 fn text_box(ui: &mut Ui, id: Id, label: &str, current: &str) -> Edit {
-    let buffer_id = id.with("text-buffer");
-    let mut buffer: String = ui.data(|data| data.get_temp(buffer_id)).unwrap_or_else(|| current.to_string());
-    let mut frame = egui::Frame::new();
-    frame.inner_margin = egui::Margin { left: 20, right: 4, top: 2, bottom: 2 };
-    let response = frame
-        .show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                let (header, _) = ui.allocate_exact_size(Vec2::new(90.0, 26.0), Sense::hover());
-                header_label(ui, header, label, theme::LABEL_DEFAULT);
-                let mut edit = egui::TextEdit::multiline(&mut buffer);
-                edit = edit.font(theme::monospace(12.0));
-                edit = edit.text_color(theme::ACCENT_MUTED_BLUE);
-                edit = edit.desired_rows(2);
-                edit = edit.desired_width(ui.available_width());
-                ui.add(edit)
-            })
-            .inner
-        })
-        .inner;
-    if response.has_focus() {
-        ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
+    let width = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::hover());
+    let control = Rect::from_min_max(row.min + Vec2::new(20.0, 2.0), row.max - Vec2::new(4.0, 2.0));
+    let response = ui.interact(control, id.with("text-editor"), Sense::click());
+    let header = Rect::from_min_size(control.min, Vec2::new(90.0, control.height()));
+    header_label(ui, header, label, theme::LABEL_DEFAULT);
+    let field = Rect::from_min_max(Pos2::new(header.right(), control.top()), control.max);
+    let opacity = if ui.is_enabled() { 1.0 } else { 0.5 };
+    ui.painter().rect_filled(field, 3.0, theme::TEXTBOX_BACKGROUND.gamma_multiply(opacity));
+    ui.painter().rect_stroke(field, 3.0, Stroke::new(1.0, theme::TEXTBOX_BORDER.gamma_multiply(opacity)), StrokeKind::Inside);
+    let text_color = theme::LABEL_DEFAULT.gamma_multiply(opacity);
+    let galley = ui.painter().layout_no_wrap(current.to_string(), theme::interface(12.0), text_color);
+    let text_area = field.shrink(1.0 + 4.0);
+    let text_position = Pos2::new(text_area.left(), field.center().y - galley.size().y / 2.0);
+    ui.painter().with_clip_rect(text_area).galley(text_position, galley, text_color);
+
+    let typing_id = id.with("text-typing");
+    if response.clicked() && ui.is_enabled() {
+        ui.data_mut(|data| data.insert_temp(typing_id, current.to_string()));
+    }
+    let Some(mut text) = ui.data(|data| data.get_temp::<String>(typing_id)) else {
         return Edit::None;
-    }
-    ui.data_mut(|data| data.remove::<String>(buffer_id));
-    if response.lost_focus() && buffer != current {
-        return Edit::Set(json!(buffer));
-    }
-    Edit::None
+    };
+    let popup_width = field.width().max(96.0);
+    let area = egui::Area::new(typing_id.with("area")).fixed_pos(field.min).order(egui::Order::Foreground);
+    let shown = area.show(ui.ctx(), |ui| {
+        let mut frame = egui::Frame::new();
+        frame.fill = theme::TEXTBOX_BACKGROUND;
+        frame.stroke = Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER);
+        frame.corner_radius = CornerRadius::same(3);
+        frame.inner_margin = egui::Margin::same(4);
+        frame.show(ui, |ui| {
+            let mut edit = egui::TextEdit::singleline(&mut text);
+            edit = edit.font(theme::monospace(16.0));
+            edit = edit.text_color(theme::LABEL_EMPHASIS);
+            edit = edit.desired_width(popup_width - 10.0);
+            edit = edit.frame(egui::Frame::NONE);
+            let edit_response = ui.add(edit);
+            edit_response.request_focus();
+            edit_response
+        })
+    });
+    let edit_response = shown.inner.inner;
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
+        ui.data_mut(|data| data.insert_temp(typing_id, text));
+        return Edit::None;
+    };
+    ui.data_mut(|data| data.remove::<String>(typing_id));
+    if accepted && text != current { Edit::Set(json!(text)) } else { Edit::None }
 }
 
 /// A read-only value beside its name (90 header column).
 fn caption(ui: &mut Ui, label: &str, text: &str) {
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, SLIDER_HEIGHT), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, theme::sizes(ui.ctx()).slider_height), Sense::hover());
     let header = Rect::from_min_size(rect.min, Vec2::new(90.0, rect.height()));
     header_label(ui, header, label, theme::LABEL_DEFAULT);
     let room = rect.right() - 8.0 - header.right();
@@ -1452,8 +1530,10 @@ fn set_color(value: &mut Value, rgba: [f32; 4]) {
 }
 
 /// `SatelliteMapListBox`: the palettes of the node's library as 72 by 28
-/// strips filling the width (`VirtualizingWrapPanel`, uniform), the chosen
-/// one framed in yellow with its number; at most 360 tall.
+/// strips filling the width (`VirtualizingWrapPanel`, uniform), or one
+/// full-width strip a row (`SatelliteMapListBoxStacked`, a `StackPanel`,
+/// with Show Satellite Maps List as a Single Stack); the chosen one framed
+/// in yellow with its number; at most 360 tall.
 pub fn library_list(ui: &mut Ui, id: Id, library: &str, current: i64) -> Option<i64> {
     let Some(palettes) = nerthus_nodes::colour_library::category(library) else {
         caption(ui, "Library", "(not available)");
@@ -1473,13 +1553,18 @@ pub fn library_list(ui: &mut Ui, id: Id, library: &str, current: i64) -> Option<
         scroll.show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             let width = ui.available_width();
-            let columns = ((width / 72.0).floor() as usize).max(1);
+            let stacked = theme::settings(ui.ctx()).stacked_palettes;
+            let columns = if stacked { 1 } else { ((width / 72.0).floor() as usize).max(1) };
             let item_width = width / columns as f32;
+            // Stacked, a strip is as tall as its item's template: the
+            // hidden number (monospace 10, padding 2) in the border's
+            // padding of 4 and its line.
+            let item_height = if stacked { 27.0 } else { 28.0 };
             for (row, chunk) in palettes.chunks(columns).enumerate() {
                 ui.horizontal(|ui| {
                     for (column, palette) in chunk.iter().enumerate() {
                         let index = (row * columns + column) as i64;
-                        let (rect, response) = ui.allocate_exact_size(Vec2::new(item_width, 28.0), Sense::click());
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(item_width, item_height), Sense::click());
                         let texture = palette_texture(ui.ctx(), library, index as usize, palette);
                         let strip = rect.shrink(1.0);
                         let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -1668,7 +1753,7 @@ pub fn macro_variables(ui: &mut Ui, id: Id, variables: &Value, color: Color32) -
             "Range" => {
                 let low = value.get("X").and_then(Value::as_f64).unwrap_or(min);
                 let high = value.get("Y").and_then(Value::as_f64).unwrap_or(max);
-                let spec = RangeSpec { min, max, integer: false, inset: SLIDER_INSET };
+                let spec = RangeSpec { min, max, integer: false, inset: None };
                 range_slider(ui, variable_id, label, low, high, &spec, color).map(|(low, high)| {
                     let mut range = value.clone();
                     if !range.is_object() {
@@ -1684,7 +1769,8 @@ pub fn macro_variables(ui: &mut Ui, id: Id, variables: &Value, color: Color32) -
                 let current = value.as_i64().unwrap_or(0).max(0) as usize;
                 let entries: Vec<(String, String)> = choices.iter().enumerate().map(|(index, choice)| (index.to_string(), choice.clone())).collect();
                 let shown = choices.get(current).cloned().unwrap_or_default();
-                let picked = dropdown_box(ui, variable_id, Some(label), HEADER_COLUMN, 26.0, &shown, &entries, &current.to_string(), theme::interface(12.0));
+                let column = theme::sizes(ui.ctx()).header_column;
+                let picked = dropdown_box(ui, variable_id, Some(label), column, 26.0, &shown, &entries, &current.to_string(), theme::interface(12.0));
                 picked.and_then(|index| index.parse::<i64>().ok()).filter(|index| *index as usize != current).map(|index| json!(index))
             }
             "Bool" => toggle(ui, variable_id, label, value.as_bool().unwrap_or(false), theme::ACCENT_PRIMARY).map(|flag| json!(flag)),
@@ -1796,8 +1882,28 @@ mod tests {
 
     /// One frame of a file field holding `path`, with these events.
     fn file_frame(context: &egui::Context, path: &str, events: Vec<egui::Event>) -> Edit {
+        file_frame_dropping(context, path, events, Vec::new())
+    }
+
+    /// A file dropped on the window.
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// One frame of a file field in which these files drop.
+    fn file_frame_dropping(context: &egui::Context, path: &str, events: Vec<egui::Event>, dropped: Vec<&str>) -> Edit {
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
-        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let dropped_files: Vec<egui::DroppedFileHandle> = dropped.into_iter().map(|file| std::sync::Arc::new(Dropped(file.into())) as egui::DroppedFileHandle).collect();
+        let input = egui::RawInput { screen_rect: Some(screen), events, dropped_files, ..Default::default() };
         let mut edit = Edit::None;
         let output = context.run_ui(input, |ui| {
             let mut row = ui.new_child(egui::UiBuilder::new().max_rect(FILE_ROW));
@@ -1845,6 +1951,20 @@ mod tests {
         // Nothing typed: the old path stays.
         let edits = type_into_file_field("", vec![key(egui::Key::Enter)]);
         assert!(edits.iter().all(|edit| matches!(edit, Edit::None)));
+    }
+
+    #[test]
+    fn files_dropped_on_a_file_field_set_its_path() {
+        let context = themed_context();
+        let on_field = Pos2::new(200.0, 16.0);
+        file_frame(&context, "/old.png", vec![egui::Event::PointerMoved(on_field)]);
+        let edit = file_frame_dropping(&context, "/old.png", Vec::new(), vec!["/maps/height.psd", "/maps/other.png"]);
+        assert!(matches!(&edit, Edit::Set(Value::String(path)) if path == "/maps/height.psd"));
+        // Dropped below the field: not its.
+        let below = Pos2::new(200.0, 120.0);
+        file_frame(&context, "/old.png", vec![egui::Event::PointerMoved(below)]);
+        let edit = file_frame_dropping(&context, "/old.png", Vec::new(), vec!["/maps/height.psd"]);
+        assert!(matches!(edit, Edit::None));
     }
 
     #[test]

@@ -4,13 +4,16 @@
 //! and dialog buttons.
 
 use egui::containers::menu::{MenuButton, MenuConfig, SubMenu};
-use egui::{Button, Color32, CornerRadius, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
+use egui::{Button, Color32, CornerRadius, FontId, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::icons;
 use crate::theme;
 
-/// `Toolbar.ButtonSize`.
-pub const TOOLBAR_BUTTON: f32 = 32.0;
+/// `Toolbar.ButtonSize` as the size theme has it.
+pub fn toolbar_button(ui: &Ui) -> f32 {
+    theme::sizes(ui.ctx()).toolbar_button
+}
+
 /// A dialog button's least height.
 pub const DIALOG_BUTTON_HEIGHT: f32 = 26.0;
 /// `Default-Menu-Item`: rows 23 high (11px text, padding 2, 4), a 30 icon
@@ -34,10 +37,10 @@ pub fn toolbar_background_corners(ui: &Ui, rect: Rect, corners: CornerRadius, bo
     painter.rect_stroke(rect, corners, stroke, StrokeKind::Inside);
 }
 
-/// A square icon button (`ToolbarButton-IconX`: 32, a 16 icon brightening
-/// over a rounded hover fill).
+/// A square icon button (`ToolbarButton-IconX`: `Toolbar.ButtonSize`, a 16
+/// icon brightening over a rounded hover fill).
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, tint: Option<Color32>) -> Response {
-    let size = Vec2::splat(TOOLBAR_BUTTON);
+    let size = Vec2::splat(toolbar_button(ui));
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let hovered = response.hovered();
     if response.is_pointer_button_down_on() {
@@ -70,7 +73,8 @@ pub fn icon_button_sized(ui: &mut Ui, icon: &str, tooltip: &str, tint: Option<Co
 /// A toggle shown as an icon button (`ToolbarToggleButton-IconX`): on, a
 /// pressed fill with the accent's outline and a bright icon.
 pub fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, on: bool, accent: Color32) -> Response {
-    icon_toggle_sized(ui, icon, tooltip, on, accent, Vec2::splat(TOOLBAR_BUTTON))
+    let size = Vec2::splat(toolbar_button(ui));
+    icon_toggle_sized(ui, icon, tooltip, on, accent, size)
 }
 
 pub fn icon_toggle_sized(ui: &mut Ui, icon: &str, tooltip: &str, on: bool, accent: Color32, size: Vec2) -> Response {
@@ -96,11 +100,12 @@ pub fn icon_toggle_sized(ui: &mut Ui, icon: &str, tooltip: &str, on: bool, accen
     response.on_hover_text(tooltip)
 }
 
-/// An icon that opens a menu (`MenuItem Tag="Icon"`): 32 square, the
-/// `chevron-down-right` mark in its corner, `Menu-TopLevel` under the
-/// pointer.
+/// An icon that opens a menu (`MenuItem Tag="Icon"`): `Toolbar.ButtonSize`
+/// square, the `chevron-down-right` mark in its corner, `Menu-TopLevel`
+/// under the pointer.
 pub fn icon_menu(ui: &mut Ui, icon: &str, tooltip: &str, tint: Option<Color32>, contents: impl FnOnce(&mut Ui)) -> Response {
-    icon_menu_sized(ui, icon, tooltip, tint, Vec2::splat(TOOLBAR_BUTTON), contents)
+    let size = Vec2::splat(toolbar_button(ui));
+    icon_menu_sized(ui, icon, tooltip, tint, size, contents)
 }
 
 pub fn icon_menu_sized(ui: &mut Ui, icon: &str, tooltip: &str, tint: Option<Color32>, size: Vec2, contents: impl FnOnce(&mut Ui)) -> Response {
@@ -309,6 +314,16 @@ pub fn dialog_button(ui: &mut Ui, text: &str, important: bool) -> Response {
     ui.add(widget)
 }
 
+/// `Button-Link`: blue text (darker blue under the pointer) with the hand
+/// cursor, inside `padding`.
+pub fn link_button(ui: &mut Ui, text: &str, font: FontId, padding: Vec2) -> Response {
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, theme::ACCENT_BLUE);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::click());
+    let color = if response.hovered() { theme::ACCENT_STRONG_BLUE } else { theme::ACCENT_BLUE };
+    ui.painter().galley(rect.min + padding, galley, color);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A rule across a vertical toolbar (`Separator` with margins `above` and
 /// `below`, 2 in from each side).
 pub fn toolbar_separator(ui: &mut Ui, above: f32, below: f32) {
@@ -318,4 +333,23 @@ pub fn toolbar_separator(ui: &mut Ui, above: f32, below: f32) {
     let stroke = Stroke::new(1.0, theme::MENU_SEPARATOR.gamma_multiply(0.5));
     ui.painter().line_segment([rect.left_center(), rect.right_center()], stroke);
     ui.add_space(below);
+}
+
+/// How an `EditablePopup`'s text box was left: Enter or Tab take the
+/// text, Escape drops it, and a click elsewhere takes it only with Accept
+/// values when clicking outside of editable field (`AcceptOnLostFocus`).
+/// None while it still has the keyboard.
+pub fn popup_outcome(ui: &Ui, response: &Response) -> Option<bool> {
+    if !response.lost_focus() {
+        return None;
+    }
+    let keys = ui.input(|input| (input.key_pressed(egui::Key::Enter), input.key_pressed(egui::Key::Tab), input.key_pressed(egui::Key::Escape)));
+    let (entered, tabbed, escaped) = keys;
+    if escaped {
+        return Some(false);
+    }
+    if entered || tabbed {
+        return Some(true);
+    }
+    Some(theme::settings(ui.ctx()).accept_on_lost_focus)
 }

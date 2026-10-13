@@ -470,8 +470,9 @@ pub fn project_menu(ui: &mut Ui, commands: &mut Vec<Command>) {
     }
     menu_separator(ui);
     menu_caption(ui, "Reports");
+    // `ShowStatistics`: the Data View's Build Statistics window.
     if menu_item(ui, Some("histogram"), None, "Statistics", "").clicked() {
-        commands.push(Command::Unavailable("Statistics"));
+        commands.push(Command::ShowBuildStatistics);
     }
 }
 
@@ -545,7 +546,10 @@ pub fn tools_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
 pub fn help_menu(ui: &mut Ui, commands: &mut Vec<Command>) {
     menu_style(ui);
     if menu_item(ui, Some("help-square-rounded"), Some(theme::ACCENT_BLUE), "User Guide", "").clicked() {
-        commands.push(Command::OpenUrl("https://github.com/danemadsen/nerthus#readme"));
+        commands.push(Command::Tools(ToolCommand::ShowDocs(crate::docs::HOME.to_string())));
+    }
+    if menu_item(ui, Some("info-square-rounded"), None, "Node Reference", "").clicked() {
+        commands.push(Command::Tools(ToolCommand::ShowDocs(crate::docs::NODE_REFERENCE.to_string())));
     }
     if menu_item(ui, Some("keyboard"), None, "Shortcut Reference", "").clicked() {
         commands.push(Command::Tools(ToolCommand::ShowShortcuts));

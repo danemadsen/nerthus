@@ -122,6 +122,14 @@ pub fn switch_verbose(verbose_logging: bool) {
     }
 }
 
+/// Going on after a crash (`Logging.Initialize(false)`): a new log file
+/// at the standard level.
+pub fn resume_after_crash() {
+    VERBOSE.store(false, Ordering::Relaxed);
+    open_file(false);
+    log::info!("RESUMING AFTER CRASH");
+}
+
 /// A random id for the session.
 fn uuid_text() -> String {
     let nanoseconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
@@ -229,19 +237,37 @@ pub fn terminal_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
     Some(Box::new(layer))
 }
 
-/// A crash's log (`Shell`'s unhandled exception handler): the session so
-/// far written to `Logs/CRASH_<time>.txt`.
+/// A crash's logs (the unhandled exception handlers): the panic logged as
+/// fatal, then the session so far written to `Logs/CRASH_<time>.txt` and
+/// the panic with its backtrace to `Logs/CRASH_Error_<time>.txt`.
 pub fn install_crash_log() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let error = format!("{info}\n{backtrace}");
+        record_fatal(&format!("Unhandled Exception: {info}"));
         // The log may be locked by the thread that panicked.
         let kept = session().try_lock().map(|log| log.text.clone()).unwrap_or_default();
         if let Some(folder) = logs_folder() {
             let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-            let text = format!("{kept}\n{info}\n");
             let _ = std::fs::create_dir_all(&folder);
-            let _ = std::fs::write(folder.join(format!("CRASH_{stamp}.txt")), text);
+            let _ = std::fs::write(folder.join(format!("CRASH_{stamp}.txt")), kept);
+            let _ = std::fs::write(folder.join(format!("CRASH_Error_{stamp}.txt")), error);
         }
         previous(info);
     }));
+}
+
+/// A fatal message (`Log.Fatal`), written straight into the session's log
+/// rather than through the logger, which the panicking thread may hold.
+fn record_fatal(message: &str) {
+    let Ok(mut log) = session().try_lock() else {
+        return;
+    };
+    let stamp = chrono::Local::now().format("%H:%M:%S");
+    let _ = writeln!(log.text, "{stamp} FTL {message}");
+    let line = format!("[{stamp}] FTL {message}\n");
+    if let Some(file) = log.file.as_mut() {
+        let _ = file.write_all(line.as_bytes());
+    }
 }

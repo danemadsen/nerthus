@@ -19,7 +19,8 @@ use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::input_box::{InputAnswer, InputBox};
 use crate::ui::regions::{self, RegionsState};
-use crate::ui::widgets::{icon_menu, menu_item, menu_separator};
+use crate::ui::tool_commands::ToolCommand;
+use crate::ui::widgets::{icon_menu, link_button, menu_item, menu_separator};
 
 /// `BuildSettingsWindow`'s tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,7 +235,7 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, state: &mut Option<BuildSe
                     SettingsTab::Resolution => resolution_tab(ui, editor),
                     SettingsTab::Build => build_tab(ui, editor, settings),
                     SettingsTab::Nodes => nodes_tab(ui, editor, settings, commands),
-                    SettingsTab::Script => script_tab(ui, editor),
+                    SettingsTab::Script => script_tab(ui, editor, commands),
                     SettingsTab::Terrain => terrain_tab(ui, editor),
                     SettingsTab::Tiles => tiles_tab(ui, editor, settings),
                     SettingsTab::Regions => regions::regions_tab(ui, editor, &mut settings.regions, commands),
@@ -937,7 +938,7 @@ fn savable(ui: &mut Ui, editor: &mut Editor, settings: &mut BuildSettingsState, 
     });
 }
 
-fn script_tab(ui: &mut Ui, editor: &mut Editor) {
+fn script_tab(ui: &mut Ui, editor: &mut Editor, commands: &mut Vec<Command>) {
     section(ui, "Post-Build Script");
     caption(ui, "Enter any command line instructions to execute after a successful build.", theme::LABEL_DEFAULT);
     caption(ui, "The working directory will be the current build path.", theme::LABEL_DEFAULT);
@@ -950,6 +951,12 @@ fn script_tab(ui: &mut Ui, editor: &mut Editor) {
     field = field.desired_width(f32::INFINITY);
     if ui.add(field).changed() {
         editor.document.set_build_setting("PostBuildScript", Value::String(script));
+    }
+    // "Learn more" (`Button-Link`, no padding): the documentation on
+    // post-build scripts.
+    ui.add_space(8.0);
+    if link_button(ui, "Learn more", theme::interface(12.0), Vec2::ZERO).clicked() {
+        commands.push(Command::Tools(ToolCommand::ShowDocs(crate::docs::POST_BUILD_SCRIPT.to_string())));
     }
 }
 

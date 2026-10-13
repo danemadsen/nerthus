@@ -86,7 +86,6 @@ pub enum Command {
     WindowMinimize,
     WindowMaximize,
     WindowDrag,
-    OpenUrl(&'static str),
     /// Selects one node (and shows it).
     SelectNode(i32),
     /// Makes the node the underlay, or stops it being one.
@@ -178,8 +177,6 @@ pub enum Command {
     DeleteRegion(String),
     DeleteRegionConfirmed(String),
     RegionNameTaken,
-    /// Shown but not part of Nerthus yet.
-    Unavailable(&'static str),
     /// The graph's own commands (`ui::graph_commands`): the clipboard,
     /// searches, groups, portals, combining, the Lazy Menu and the rest.
     Graph(crate::ui::graph_commands::GraphCommand),
@@ -483,12 +480,6 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
             window.set_maximized(ui_state.maximized);
         }
         Command::WindowDrag => window.start_drag_move(),
-        Command::OpenUrl(url) => {
-            let opened = std::process::Command::new("open").arg(url).spawn();
-            if let Err(error) = opened {
-                editor.report(format!("Cannot open {url}: {error}"));
-            }
-        }
         Command::SelectNode(id) => editor.select(Some(id)),
         Command::ShowDataTab(tab) => ui_state.data_view.show_tab(tab),
         Command::ToggleBookmark => {
@@ -509,6 +500,8 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
             ui_state.graph.tab = tab;
             ui_state.graph.bookmark_removing = None;
             editor.select(Some(id));
+            // `GoToBookmark`: the node shines as the view goes to it.
+            editor.shines.push(id);
             ui_state.graph.zoom_request = Some(crate::ui::graph_canvas::ZoomRequest::Selection);
         }
         Command::ArmBookmarkRemoval(id) => ui_state.graph.bookmark_removing = Some(id),
@@ -693,7 +686,6 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
             let text = "A region with this name already exists. Please choose a different name.";
             ui_state.prompt = Some(Prompt::message("Duplicate Name", text));
         }
-        Command::Unavailable(what) => editor.report(format!("{what} is not available in Nerthus yet")),
         Command::Graph(graph_command) => crate::ui::graph_commands::run(graph_command, editor, ui_state),
         Command::File(command) => crate::ui::file_commands::run(command, editor, ui_state),
         Command::ShowMessage { caption, text } => ui_state.prompt = Some(Prompt::message(&caption, &text)),

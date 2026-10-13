@@ -1,20 +1,63 @@
-//! The previewed terrain: a heightfield mesh draped with the colours the
-//! viewport renderer baked. The tessellation surface emits its
-//! `_Albedo` texture, so the lighting, shadows and occlusion are in the
-//! colours and the mesh is drawn unlit; its underside is `_Backface` grey.
+//! The previewed terrain: a grid lifted by the height map as it draws
+//! (`PlaneX` with `_DisplacementTex`), draped with the colours the viewport
+//! renderer baked. The surface emits its `_Albedo` texture, so the
+//! lighting, shadows and occlusion are in the colours and the mesh is drawn
+//! unlit; its underside is `_Backface` grey.
+//!
+//! The grid has a vertex for each texel of the preview (`ResizeTerrain`:
+//! 512 to 4096 a side), except that Conserve memory when displaying 4K
+//! terrains draws a 4K terrain with the 2K grid.
 
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-use bevy::render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{AsBindGroup, Extent3d, Face, ShaderType, TextureDimension, TextureFormat};
+use bevy::shader::ShaderRef;
 use nerthus_engine::{Map, Resolution};
 
-/// Largest number of vertices per mesh side; bigger maps are sampled.
-const MAX_MESH_SIDE: usize = 1024;
+/// The largest grid (`PlaneX(4096, 4096)`), and the one a 4K terrain gets
+/// while conserving memory (`preventHiMesh`).
+const MAX_MESH_SIDE: usize = 4096;
+const CONSERVING_MESH_SIDE: usize = 2048;
+
+/// The vertex stage that lifts the grid (`terrain.wesl`).
+const TERRAIN_SHADER: &str = "embedded://nerthus_render/terrain.wesl";
+
+/// The terrain's material: the standard one, unlit, with the height map
+/// and its shape for the vertex stage.
+pub(crate) type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainHeights>;
+
+/// What the vertex stage reads: the height map (first channel, 32-bit
+/// float) and its shape.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+pub(crate) struct TerrainHeights {
+    #[uniform(100)]
+    shape: TerrainShape,
+    #[texture(101, sample_type = "float", filterable = false)]
+    heights: Handle<Image>,
+}
+
+/// How high a height of 1 stands, the map's size in texels, and whether
+/// the grid spans the map twice each way (1) or once (0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, ShaderType)]
+struct TerrainShape {
+    height_scale: f32,
+    width: u32,
+    height: u32,
+    tiled: u32,
+}
+
+impl MaterialExtension for TerrainHeights {
+    fn vertex_shader() -> ShaderRef {
+        TERRAIN_SHADER.into()
+    }
+}
 
 /// The terrain before anything has been rendered.
 const UNRENDERED: Color = Color::srgb(0.5, 0.5, 0.5);
@@ -45,6 +88,9 @@ pub struct TerrainPreview {
     /// colours repeat twice each way across the terrain (texture scale 2,
     /// wrapping).
     pub tiled: bool,
+    /// Conserve memory when displaying 4K terrains (`PreventHiRes`): a 4K
+    /// map is drawn with the 2K grid.
+    pub conserve_memory: bool,
     pub revision: u64,
 }
 
@@ -56,6 +102,7 @@ impl Default for TerrainPreview {
             width: 5000.0,
             height: 2500.0,
             tiled: false,
+            conserve_memory: false,
             revision: 0,
         }
     }
@@ -113,141 +160,158 @@ pub struct TerrainSurface;
 #[derive(Component)]
 pub struct TerrainBackface;
 
-/// The terrain revision the current mesh was built from.
+/// What the terrain was last drawn from: the preview's revision, and the
+/// grid's side and tiling.
 #[derive(Resource, Default)]
 pub(crate) struct BuiltTerrain {
     revision: u64,
+    grid: Option<(usize, bool)>,
 }
 
-pub(crate) fn spawn_terrain(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+pub(crate) fn spawn_terrain(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<TerrainMaterial>, images: &mut Assets<Image>) {
+    let mesh = meshes.add(grid_mesh(2, false));
     let flat = Map::new(Resolution::square(2), 1);
-    let mesh = meshes.add(build_mesh(&flat, 0.0, false));
-    let surface_material = StandardMaterial {
-        base_color: UNRENDERED,
-        unlit: true,
-        ..default()
+    let heights = TerrainHeights {
+        shape: TerrainShape { height_scale: 0.0, width: 2, height: 2, tiled: 0 },
+        heights: images.add(height_texture(&flat)),
     };
-    let backface_material = StandardMaterial {
-        base_color: BACKFACE,
-        unlit: true,
-        cull_mode: Some(Face::Front),
-        ..default()
+    let surface_material = TerrainMaterial {
+        base: StandardMaterial {
+            base_color: UNRENDERED,
+            unlit: true,
+            ..default()
+        },
+        extension: heights.clone(),
     };
-    let surface = (TerrainSurface, Mesh3d(mesh.clone()), MeshMaterial3d(materials.add(surface_material)), Transform::default(), NotShadowCaster);
-    let backface = (TerrainBackface, Mesh3d(mesh), MeshMaterial3d(materials.add(backface_material)), Transform::default(), NotShadowCaster);
+    let backface_material = TerrainMaterial {
+        base: StandardMaterial {
+            base_color: BACKFACE,
+            unlit: true,
+            cull_mode: Some(Face::Front),
+            ..default()
+        },
+        extension: heights,
+    };
+    // The grid's bounds are flat; the heights come later, so the terrain is
+    // never culled.
+    let surface = (TerrainSurface, Mesh3d(mesh.clone()), MeshMaterial3d(materials.add(surface_material)), Transform::default(), NotShadowCaster, NoFrustumCulling);
+    let backface = (TerrainBackface, Mesh3d(mesh), MeshMaterial3d(materials.add(backface_material)), Transform::default(), NotShadowCaster, NoFrustumCulling);
     commands.spawn(surface);
     commands.spawn(backface);
 }
 
-/// Rebuilds the terrain mesh and texture when the preview changes.
+/// `ResizeTerrain`: the grid's side for a map, a vertex a texel up to
+/// 4096, 2048 for a 4K map while conserving memory.
+fn grid_side(heights: &Map, conserve_memory: bool) -> usize {
+    let side = heights.width().max(heights.height()).clamp(2, MAX_MESH_SIDE);
+    if conserve_memory && side >= MAX_MESH_SIDE {
+        return CONSERVING_MESH_SIDE;
+    }
+    side
+}
+
+/// Puts the preview on the terrain when it changes: a new grid when its
+/// size or tiling changes, the heights and colours each time.
 pub(crate) fn rebuild_terrain(
     preview: Res<TerrainPreview>,
     mut built: ResMut<BuiltTerrain>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    terrain: Single<(&Mesh3d, &MeshMaterial3d<StandardMaterial>), With<TerrainSurface>>,
+    surface: Single<(&Mesh3d, &MeshMaterial3d<TerrainMaterial>), With<TerrainSurface>>,
+    backface: Single<&MeshMaterial3d<TerrainMaterial>, With<TerrainBackface>>,
 ) {
-    if built.revision == preview.revision {
+    let flat = Arc::new(Map::new(Resolution::square(2), 1));
+    let heights = preview.heights.clone().unwrap_or(flat);
+    let grid = (grid_side(&heights, preview.conserve_memory), preview.tiled);
+    if built.revision == preview.revision && built.grid == Some(grid) {
         return;
     }
     built.revision = preview.revision;
 
-    let (mesh_handle, material_handle) = *terrain;
-    let flat = Arc::new(Map::new(Resolution::square(2), 1));
-    let heights = preview.heights.clone().unwrap_or(flat);
-    let mesh = build_mesh(&heights, preview.height_scale(), preview.tiled);
-    if let Some(mut existing) = meshes.get_mut(&mesh_handle.0) {
-        *existing = mesh;
+    let (mesh_handle, surface_material) = *surface;
+    // Both sides draw the one grid.
+    if built.grid != Some(grid)
+        && let Some(mut existing) = meshes.get_mut(&mesh_handle.0)
+    {
+        *existing = grid_mesh(grid.0, grid.1);
     }
+    built.grid = Some(grid);
 
-    let Some(mut material) = materials.get_mut(&material_handle.0) else {
+    let shape = TerrainShape {
+        height_scale: preview.height_scale(),
+        width: heights.width() as u32,
+        height: heights.height() as u32,
+        tiled: u32::from(preview.tiled),
+    };
+    let height_image = images.add(height_texture(&heights));
+    if let Some(mut material) = materials.get_mut(&backface.0) {
+        material.extension.shape = shape;
+        material.extension.heights = height_image.clone();
+    }
+    let Some(mut material) = materials.get_mut(&surface_material.0) else {
         return;
     };
+    material.extension.shape = shape;
+    material.extension.heights = height_image;
     match &preview.colours {
         Some(colours) => {
             let texture = colour_texture(colours, preview.tiled);
-            material.base_color_texture = Some(images.add(texture));
-            material.base_color = Color::WHITE;
+            material.base.base_color_texture = Some(images.add(texture));
+            material.base.base_color = Color::WHITE;
         }
         None => {
-            material.base_color_texture = None;
-            material.base_color = UNRENDERED;
+            material.base.base_color_texture = None;
+            material.base.base_color = UNRENDERED;
         }
     }
 }
 
-/// A grid mesh over the unit square centred on the origin (X right, Z down
-/// the rows, so the map's top row is north at −Z), heights (the first
-/// channel) scaled by `height_scale`. Each vertex samples its texel's
-/// centre, as `PlaneX`'s UVs do. Tiled, the mesh spans the map twice each
-/// way, its UVs running to 2 for the wrapping texture.
-fn build_mesh(heights: &Map, height_scale: f32, tiled: bool) -> Mesh {
-    let map_width = heights.width();
-    let map_height = heights.height();
-    let repeats = if tiled { 2 } else { 1 };
-    let span_width = map_width * repeats;
-    let span_height = map_height * repeats;
-    let longest = span_width.max(span_height).max(2);
-    let step = longest.div_ceil(MAX_MESH_SIDE).max(1);
-    let columns = ((span_width.max(2) - 1) / step + 1).max(2);
-    let rows = ((span_height.max(2) - 1) / step + 1).max(2);
-    let last_column = (columns - 1) as f32;
-    let last_row = (rows - 1) as f32;
+/// The height map's first channel as a 32-bit float texture.
+fn height_texture(heights: &Map) -> Image {
     let plane = heights.channel(0);
-    let span_x = |column: usize| (column * step).min(span_width - 1);
-    let span_y = |row: usize| (row * step).min(span_height - 1);
-    let sample = |column: usize, row: usize| -> f32 {
-        let map_x = span_x(column) % map_width;
-        let map_y = span_y(row) % map_height;
-        plane[map_y * map_width + map_x] * height_scale
+    let mut bytes = Vec::with_capacity(plane.len() * 4);
+    for value in plane {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let extent = Extent3d {
+        width: heights.width() as u32,
+        height: heights.height() as u32,
+        depth_or_array_layers: 1,
     };
+    Image::new(extent, TextureDimension::D2, bytes, TextureFormat::R32Float, RenderAssetUsages::RENDER_WORLD)
+}
 
-    let mut positions = Vec::with_capacity(columns * rows);
-    let mut uvs = Vec::with_capacity(columns * rows);
-    for row in 0..rows {
-        for column in 0..columns {
-            let x = column as f32 / last_column - 0.5;
-            let z = row as f32 / last_row - 0.5;
-            positions.push([x, sample(column, row), z]);
-            let u = (span_x(column) as f32 + 0.5) / map_width as f32;
-            let v = (span_y(row) as f32 + 0.5) / map_height as f32;
+/// `PlaneX`: a grid of `side` by `side` vertices over the unit square
+/// centred on the origin (X right, Z down the rows, so the map's top row
+/// is north at −Z), flat; the vertex stage lifts it. Each vertex's
+/// coordinates are its cell's centre, `(i + 0.5) / side`, running to 2 when
+/// tiled (the map and its colours repeat twice each way).
+fn grid_mesh(side: usize, tiled: bool) -> Mesh {
+    let side = side.max(2);
+    let last = (side - 1) as f32;
+    let repeats = if tiled { 2.0 } else { 1.0 };
+    let mut positions = Vec::with_capacity(side * side);
+    let mut uvs = Vec::with_capacity(side * side);
+    for row in 0..side {
+        for column in 0..side {
+            positions.push([column as f32 / last - 0.5, 0.0, row as f32 / last - 0.5]);
+            let u = repeats * (column as f32 + 0.5) / side as f32;
+            let v = repeats * (row as f32 + 0.5) / side as f32;
             uvs.push([u, v]);
         }
     }
-
-    let column_spacing = 1.0 / last_column;
-    let row_spacing = 1.0 / last_row;
-    let mut normals = Vec::with_capacity(columns * rows);
-    for row in 0..rows {
-        for column in 0..columns {
-            let previous_column = column.saturating_sub(1);
-            let next_column = (column + 1).min(columns - 1);
-            let previous_row = row.saturating_sub(1);
-            let next_row = (row + 1).min(rows - 1);
-            let left = sample(previous_column, row);
-            let right = sample(next_column, row);
-            let up = sample(column, previous_row);
-            let down = sample(column, next_row);
-            let horizontal_span = column_spacing * (next_column - previous_column) as f32;
-            let vertical_span = row_spacing * (next_row - previous_row) as f32;
-            let normal = Vec3::new(-(right - left) / horizontal_span, 1.0, -(down - up) / vertical_span);
-            normals.push(normal.normalize().to_array());
-        }
-    }
-
-    let mut indices = Vec::with_capacity((columns - 1) * (rows - 1) * 6);
-    for row in 0..rows - 1 {
-        for column in 0..columns - 1 {
-            let corner = (row * columns + column) as u32;
-            let below = corner + columns as u32;
+    let mut indices = Vec::with_capacity((side - 1) * (side - 1) * 6);
+    for row in 0..side - 1 {
+        for column in 0..side - 1 {
+            let corner = (row * side + column) as u32;
+            let below = corner + side as u32;
             indices.extend_from_slice(&[corner, below, corner + 1, corner + 1, below, below + 1]);
         }
     }
-
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    // Only the GPU keeps the grid.
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
     mesh
@@ -286,9 +350,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vertices_sample_texel_centres() {
-        let heights = Map::from_data(Resolution::square(4), (0..16).map(|value| value as f32).collect());
-        let mesh = build_mesh(&heights, 1.0, false);
+    fn vertices_sit_on_cell_centres() {
+        let mesh = grid_mesh(4, false);
         let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
             panic!("the mesh has UVs");
         };
@@ -299,7 +362,32 @@ mod tests {
         };
         assert_eq!(positions[0], [-0.5, 0.0, -0.5]);
         let [x, y, z] = positions[6];
-        assert!((x - 1.0 / 6.0).abs() < 1e-6 && y == 6.0 && (z + 1.0 / 6.0).abs() < 1e-6);
+        assert!((x - 1.0 / 6.0).abs() < 1e-6 && y == 0.0 && (z + 1.0 / 6.0).abs() < 1e-6);
+        let tiled = grid_mesh(4, true);
+        let Some(bevy::mesh::VertexAttributeValues::Float32x2(tiled_uvs)) = tiled.attribute(Mesh::ATTRIBUTE_UV_0) else {
+            panic!("the mesh has UVs");
+        };
+        assert_eq!(tiled_uvs[15], [1.75, 1.75]);
+    }
+
+    #[test]
+    fn grids_follow_the_map_up_to_4k() {
+        let map = |side: usize| Map::new(Resolution::square(side), 1);
+        assert_eq!(grid_side(&map(512), false), 512);
+        assert_eq!(grid_side(&map(1024), true), 1024);
+        assert_eq!(grid_side(&map(2048), true), 2048);
+        assert_eq!(grid_side(&map(4096), false), 4096);
+        assert_eq!(grid_side(&map(4096), true), 2048);
+        assert_eq!(grid_side(&map(8192), false), 4096);
+    }
+
+    #[test]
+    fn heights_go_up_as_floats() {
+        let heights = Map::from_data(Resolution::square(2), vec![0.0, 0.25, 0.5, 1.0]);
+        let texture = height_texture(&heights);
+        assert_eq!(texture.texture_descriptor.format, TextureFormat::R32Float);
+        assert_eq!(texture.data.as_deref().map(<[u8]>::len), Some(16));
+        assert_eq!(texture.data.as_deref().map(|bytes| &bytes[4..8]), Some(&0.25f32.to_le_bytes()[..]));
     }
 
     #[test]

@@ -15,7 +15,8 @@ use crate::editor::Editor;
 use crate::progress::{ProgressStep, StepEnd};
 use crate::theme;
 use crate::ui::commands::Command;
-use crate::ui::widgets::{check_item, menu_caption, menu_item, menu_separator, menu_style, submenu};
+use crate::ui::tool_commands::ToolCommand;
+use crate::ui::widgets::{check_item, link_button, menu_caption, menu_item, menu_separator, menu_style, submenu};
 
 /// `ProportionateRegionsGridUnit`: a grid cell, in build pixels.
 const GRID_UNIT: f32 = 512.0;
@@ -213,8 +214,8 @@ pub fn warning(ui: &mut Ui, text: &str) {
     ui.painter().galley(position, galley, theme::ACCENT_RED);
 }
 
-/// "Manage Regions", then "Preview region" with its menu
-/// (`miBuildSettingsRegionsMenu`).
+/// "Manage Regions", then its Help (the documentation on regions) and
+/// "Preview region" with its menu (`miBuildSettingsRegionsMenu`).
 fn header(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::hover());
@@ -223,6 +224,10 @@ fn header(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
     ui.painter().galley(Pos2::new(rect.left() + 12.0, rect.center().y - title.size().y / 2.0), title, theme::LABEL_EMPHASIS);
 
     let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 2.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    if link_button(&mut bar, "Help", theme::interface(12.0), Vec2::ZERO).clicked() {
+        commands.push(Command::Tools(ToolCommand::ShowDocs(crate::docs::REGIONS.to_string())));
+    }
+    bar.add_space(8.0);
     let current = editor.preview_region.clone().unwrap_or_else(|| "Whole Terrain".to_string());
     bar.menu_button(current, |ui| regions_menu(ui, editor, commands, false));
     bar.label(egui::RichText::new("Preview region").font(theme::interface(12.0)).color(theme::LABEL_DEFAULT));
@@ -704,9 +709,10 @@ fn choices_popup(ui: &Ui, state: &mut RegionsState) {
     }
 }
 
-/// `EditablePopup` under the region's name: Enter renames it (trimmed;
-/// blank or unchanged does nothing, a name another region has, in any
-/// case, is refused), Escape leaves it.
+/// `EditablePopup` under the region's name, closing as
+/// [`crate::ui::widgets::popup_outcome`] says: taken, the name renames the
+/// region (trimmed; blank or unchanged does nothing, a name another region
+/// has, in any case, is refused).
 fn rename_popup(ui: &Ui, editor: &mut Editor, state: &mut RegionsState, canvas: Rect, commands: &mut Vec<Command>) {
     let Some(rename) = state.renaming.as_mut() else {
         return;
@@ -719,8 +725,7 @@ fn rename_popup(ui: &Ui, editor: &mut Editor, state: &mut RegionsState, canvas: 
     let mut area = egui::Area::new(Id::new("region-rename"));
     area = area.fixed_pos(rect.min + Vec2::new(1.0, 24.0));
     area = area.order(egui::Order::Foreground);
-    let mut submitted = false;
-    let mut cancelled = false;
+    let mut outcome: Option<bool> = None;
     let shown = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             let mut field = egui::TextEdit::singleline(&mut rename.text);
@@ -731,19 +736,18 @@ fn rename_popup(ui: &Ui, editor: &mut Editor, state: &mut RegionsState, canvas: 
                 response.request_focus();
                 rename.focused = true;
             }
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                submitted = true;
-            }
-            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                cancelled = true;
-            }
+            outcome = crate::ui::widgets::popup_outcome(ui, &response);
         });
     });
-    if cancelled || (!submitted && shown.response.clicked_elsewhere()) {
-        state.renaming = None;
-        return;
+    // A click elsewhere closes it as leaving the box does.
+    if outcome.is_none() && shown.response.clicked_elsewhere() {
+        outcome = Some(theme::settings(ui.ctx()).accept_on_lost_focus);
     }
+    let Some(submitted) = outcome else {
+        return;
+    };
     if !submitted {
+        state.renaming = None;
         return;
     }
     let new_name = rename.text.trim().to_string();

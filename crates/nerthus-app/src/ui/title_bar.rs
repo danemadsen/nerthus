@@ -56,12 +56,17 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &Editor, ui_state: &UiState, comman
         ui.add_space(24.0);
         // `bAbout` (About Nerthus), and `bUpdate` once a newer version is
         // known.
-        if version_button(ui, concat!("Nerthus ", env!("CARGO_PKG_VERSION")), theme::LABEL_DEFAULT).clicked() {
+        if version_button(ui, concat!("Nerthus ", env!("CARGO_PKG_VERSION")), theme::LABEL_DEFAULT, true).clicked() {
             commands.push(Command::Tools(ToolCommand::ShowAbout));
         }
-        if ui_state.updates.update_available() {
+        // While the update downloads, and after, the button counts it and
+        // can't be clicked.
+        if let Some(label) = ui_state.updates.download_label() {
             ui.add_space(8.0);
-            if version_button(ui, "Update", theme::ACCENT_PRIMARY).clicked() {
+            version_button(ui, &label, theme::LABEL_DEFAULT, false);
+        } else if ui_state.updates.update_available() {
+            ui.add_space(8.0);
+            if version_button(ui, "Update", theme::ACCENT_PRIMARY, true).clicked() {
                 commands.push(Command::Tools(ToolCommand::CheckForUpdates));
             }
         }
@@ -236,12 +241,15 @@ fn undo_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
 
 /// `bAbout` and `bUpdate`: plain buttons (`Button`: padding 24, 6, at
 /// least 87 wide) in 10px semibold.
-fn version_button(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
+fn version_button(ui: &mut Ui, text: &str, color: Color32, enabled: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(text.to_string(), theme::semibold(10.0), color);
     let width = (galley.size().x + 48.0).max(87.0);
     let height = galley.size().y + 12.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    let fill = if response.is_pointer_button_down_on() {
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), sense);
+    let fill = if !enabled {
+        theme::BUTTON_BACKGROUND
+    } else if response.is_pointer_button_down_on() {
         theme::BUTTON_PRESSED
     } else if response.hovered() {
         theme::BUTTON_HOVER

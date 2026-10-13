@@ -13,6 +13,7 @@ mod benchmark;
 mod cpu;
 mod devices;
 mod gpu;
+mod nvidia_profile;
 
 pub use benchmark::{best_device, read_scores, scan, write_scores, Scores, BENCHMARK_FILE};
 pub use devices::{
@@ -20,6 +21,7 @@ pub use devices::{
     try_deactivate, Device, DeviceInfo, DeviceType, NativeResult, FALLBACK_DEVICE,
 };
 pub use gpu::{open_device, Batch, Binding, Entry, GpuDevice, GpuError, Kernel, Shader, GROUP_SIDE, GROUP_SIZE};
+pub use nvidia_profile::{enforce_optimal_settings, ProfileError};
 pub use wgpu;
 
 /// The file in the data folder whose presence puts Nerthus in CPU-only

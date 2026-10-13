@@ -2,7 +2,8 @@
 //! `ShortcutsWindow`), What's new in this version (`WhatsNewWindow`),
 //! About Nerthus (`About`, also the title bar's version button), and what
 //! Help › Check for updates found (`CheckForUpdates` and
-//! `UpdateService.ShowUpdateDialog`).
+//! `UpdateService.ShowUpdateDialog`), whose Download Update starts the
+//! update's download.
 
 use egui::{Align, Align2, Color32, Id, Layout, RichText, Sense, Stroke, Ui, Vec2};
 
@@ -33,6 +34,8 @@ pub struct HelpWindows {
     pub whats_new: Option<usize>,
     pub about: bool,
     pub update: Option<UpdateDialog>,
+    /// Download Update was clicked: the release to download.
+    pub download_requested: Option<UpdateToken>,
 }
 
 impl HelpWindows {
@@ -64,6 +67,7 @@ impl UpdateDialog {
             size: Some(123_456_789),
             url: crate::updates::releases_page(),
             notes: WHATS_NEW.to_string(),
+            download: Some("https://example.com/nerthus-9.9.9.zip".to_string()),
         };
         UpdateDialog { answer: UpdateAnswer::Available(token), notes_open: true }
     }
@@ -90,10 +94,14 @@ pub fn show(ctx: &egui::Context, help: &mut HelpWindows) {
     if help.about && !about_window(ctx) {
         help.about = false;
     }
-    if let Some(dialog) = help.update.as_mut()
-        && !update_window(ctx, dialog)
-    {
-        help.update = None;
+    if let Some(dialog) = help.update.as_mut() {
+        let (open, download) = update_window(ctx, dialog);
+        if download.is_some() {
+            help.download_requested = download;
+        }
+        if !open {
+            help.update = None;
+        }
     }
 }
 
@@ -350,9 +358,11 @@ fn notes_text(token: &UpdateToken) -> String {
     format!("{start}...\n(read more on download page)")
 }
 
-/// The check's answer as a task dialog. Returns whether it stays open.
-fn update_window(ctx: &egui::Context, dialog: &mut UpdateDialog) -> bool {
+/// The check's answer as a task dialog. Returns whether it stays open,
+/// and the release to download when Download Update was clicked.
+fn update_window(ctx: &egui::Context, dialog: &mut UpdateDialog) -> (bool, Option<UpdateToken>) {
     let mut open = true;
+    let mut download = None;
     let caption = match &dialog.answer {
         UpdateAnswer::Available(_) => "Update available!".to_string(),
         _ => concat!("Nerthus ", env!("CARGO_PKG_VERSION")).to_string(),
@@ -401,7 +411,10 @@ fn update_window(ctx: &egui::Context, dialog: &mut UpdateDialog) -> bool {
             }
             UpdateAnswer::Available(token) => {
                 heading(ui, &format!("Nerthus Version {} is available", token.version));
-                let mut text = "Would you like to download the update?\n\n".to_string();
+                // Without a download for this system, the page opens
+                // instead.
+                let question = if token.download.is_some() { "Would you like to download and install the update?" } else { "Would you like to download the update?" };
+                let mut text = format!("{question}\n\n");
                 if let Some(size) = token.size {
                     text.push_str(&format!("Size: {}\n", byte_size(size)));
                 }
@@ -423,7 +436,11 @@ fn update_window(ctx: &egui::Context, dialog: &mut UpdateDialog) -> bool {
                         open = false;
                     }
                     if important_button(ui, "Download Update", 12.0, 0.0, Vec2::new(12.0, 4.0)).clicked() {
-                        crate::export_build::open_url(&token.url);
+                        if token.download.is_some() {
+                            download = Some(token.clone());
+                        } else {
+                            crate::export_build::open_url(&token.url);
+                        }
                         open = false;
                     }
                 });
@@ -440,7 +457,7 @@ fn update_window(ctx: &egui::Context, dialog: &mut UpdateDialog) -> bool {
     if response.should_close() {
         open = false;
     }
-    open
+    (open, download)
 }
 
 #[cfg(test)]

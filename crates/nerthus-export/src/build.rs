@@ -3,7 +3,9 @@
 //! - Standard: the baked nodes' maps loaded, then each node marked for
 //!   export, right to left in the graph, built with everything upstream of
 //!   it, every node that loop builds writing its marked ports straight
-//!   after (`Node.PostBuild`: single images, or tiles cut from them).
+//!   after (`Node.PostBuild`: single images, or tiles cut from them). With
+//!   Purge unnecessary cache during build on, results no node still to
+//!   build needs go as the loop moves on.
 //! - Hybrid and Tiled: the terrain built a bucket at a time, at
 //!   the bucket's size plus its margins, from the baked maps cut for the
 //!   bucket; each bucket's marked ports kept as `.bin` files in the build
@@ -23,7 +25,7 @@
 //! Save cached build ([`export_built`]) builds nothing: it writes the maps
 //! the editor holds, as a Standard build would write them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -338,6 +340,12 @@ pub struct ExportPreferences {
     /// `Locations.Cache` when `Locations.CentralizeCacheBake` is on: where
     /// baked maps are kept instead of beside the project.
     pub central_bake_cache: Option<PathBuf>,
+    /// `AllowValuesBeyondRange`: node results are not clamped to 0–1.
+    pub allow_values_beyond_range: bool,
+    /// `Cache.OffloadBuildCache` (Purge unnecessary cache during build to
+    /// conserve memory): results no node still to build needs are let go
+    /// as the build goes.
+    pub offload_build_cache: bool,
 }
 
 impl Default for ExportPreferences {
@@ -347,6 +355,8 @@ impl Default for ExportPreferences {
             builds_root: crate::destination::default_builds_root(),
             write: WriteOptions::default(),
             central_bake_cache: None,
+            allow_values_beyond_range: false,
+            offload_build_cache: false,
         }
     }
 }
@@ -617,6 +627,7 @@ pub fn run_with(
     on_event: &mut dyn FnMut(BuildEvent),
 ) -> Result<BuildReport, BuildRefusal> {
     let start_time = Local::now();
+    engine.preferences.allow_values_beyond_range = preferences.allow_values_beyond_range;
     let mut report = match definition.build_type {
         BuildType::Standard => run_standard(terrain, engine, project_path, definition, preferences, bakes, options, cancel, on_event)?,
         BuildType::Hybrid | BuildType::Tiled => run_bucketed(terrain, engine, project_path, definition, preferences, bakes, options, cancel, on_event)?,
@@ -781,6 +792,9 @@ struct Session<'a> {
     preferences: &'a ExportPreferences,
     folder: PathBuf,
     report: BuildReport,
+    /// The exporting nodes that have written their files
+    /// (`ExportState.HasExported`).
+    exported: HashSet<i32>,
     on_event: &'a mut dyn FnMut(BuildEvent),
 }
 
@@ -845,6 +859,7 @@ fn run_standard(
         preferences,
         folder: folder.clone(),
         report: BuildReport { folder: folder.clone(), ..BuildReport::default() },
+        exported: HashSet::new(),
         on_event,
     };
     if definition.copy_terrain {
@@ -865,7 +880,7 @@ fn run_standard(
             log::info!("Building {}", node.name);
         }
         let finished = build_chain(engine, terrain, target, resolution, cancel, &mut session, &mut |engine, session, node| {
-            post_build(node, engine, session, None);
+            post_build_and_purge(node, engine, session);
         });
         if !finished {
             log::error!("Build cancelled.");
@@ -901,6 +916,7 @@ pub fn export_built(
         preferences,
         folder: folder.clone(),
         report: BuildReport { folder: folder.clone(), ..BuildReport::default() },
+        exported: HashSet::new(),
         on_event,
     };
     if definition.copy_terrain {
@@ -959,6 +975,7 @@ fn run_region(
         preferences,
         folder: folder.clone(),
         report: BuildReport { folder: folder.clone(), ..BuildReport::default() },
+        exported: HashSet::new(),
         on_event,
     };
     let header = report_header(terrain, definition, project_path, &folder, options, terrain.nodes.len());
@@ -968,7 +985,7 @@ fn run_region(
     session.event(BuildEvent::Started { folder: folder.clone(), nodes: plan.len() });
     for target in exporting_nodes_by_position(terrain) {
         let finished = build_chain(engine, terrain, target, resolution, cancel, &mut session, &mut |engine, session, node| {
-            post_build(node, engine, session, None);
+            post_build_and_purge(node, engine, session);
         });
         if !finished {
             session.report.cancelled = true;
@@ -1067,6 +1084,74 @@ fn port_file_name(port: &str, definition: &BuildDefinition, preferences: &Export
         return String::new();
     }
     format!("{}{port}", preferences.filename_delimiter)
+}
+
+/// `Node.PostBuild` for a node the build loop built: its files written
+/// when it exports. With Purge unnecessary cache during build on, every
+/// result the build no longer needs is let go before a node that exports
+/// nothing returns, and again once an exporting node has written its
+/// files.
+fn post_build_and_purge(node: &NodeData, engine: &mut Engine, session: &mut Session<'_>) {
+    let exporting = exports(node);
+    let purging = session.preferences.offload_build_cache;
+    if purging && !exporting {
+        purge_unneeded(engine, session);
+    }
+    post_build(node, engine, session, None);
+    if !exporting {
+        return;
+    }
+    session.exported.insert(node.id);
+    if purging {
+        purge_unneeded(engine, session);
+    }
+}
+
+/// The purge: every built node's results go unless the node still has to
+/// export, is the underlay, is an accumulation that a node in the project
+/// reads, or feeds a node not built yet.
+fn purge_unneeded(engine: &mut Engine, session: &Session<'_>) {
+    let terrain = session.terrain;
+    let catalogue = Catalogue::get();
+    let reads_accumulation = terrain.nodes.values().any(|node| catalogue.node(&node.type_name).is_some_and(|spec| spec.has_flag("UsesAccumulation")));
+    let mut purged = Vec::new();
+    for node in terrain.nodes.values() {
+        if still_needed(node, engine, session, reads_accumulation) {
+            continue;
+        }
+        purged.push((node.id, node.name.clone()));
+    }
+    for (id, name) in purged {
+        if engine.cache.ports(id).next().is_none() {
+            continue;
+        }
+        engine.cache.remove_node(id);
+        log::debug!("Node {id} :: {name} purged.");
+    }
+}
+
+/// Whether a node's results must stay for the rest of the build.
+fn still_needed(node: &NodeData, engine: &Engine, session: &Session<'_>, reads_accumulation: bool) -> bool {
+    if exports(node) && !session.exported.contains(&node.id) {
+        return true;
+    }
+    if engine.state(node.id) != NodeState::Built {
+        return true;
+    }
+    let spec = Catalogue::get().node(&node.type_name);
+    if spec.is_some_and(|spec| spec.has_flag("PreventPurge")) {
+        return true;
+    }
+    let accumulates = spec.is_some_and(|spec| spec.accumulator.is_some());
+    if accumulates && reads_accumulation {
+        return true;
+    }
+    if engine.underlay == node.id {
+        return true;
+    }
+    let consumers = session.terrain.nodes.values().filter(|other| other.ports.iter().any(|port| port.is_input() && port.record.as_ref().is_some_and(|record| record.from == node.id)));
+    let mut waiting = consumers.map(|other| engine.state(other.id));
+    waiting.any(|state| state == NodeState::Unbuilt)
 }
 
 /// `Node.PostBuild`: every marked output port written, named
@@ -1230,6 +1315,7 @@ fn run_bucketed(
         preferences,
         folder: folder.clone(),
         report: BuildReport { folder: folder.clone(), ..BuildReport::default() },
+        exported: HashSet::new(),
         on_event,
     };
     if definition.copy_terrain {
@@ -1423,7 +1509,7 @@ fn stitch_buckets(engine: &mut Engine, artifacts: &Path, grid: &[Bucket], geomet
             let message = format!("{} has buckets missing; its files may be incomplete", node.name);
             session.report.failures.push((node.id, message));
         }
-        post_build(node, engine, session, None);
+        post_build_and_purge(node, engine, session);
     }
 }
 
@@ -1591,6 +1677,7 @@ pub fn project_path_text(text: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerthus_engine::ConnectionRecord;
     use serde_json::json;
 
     #[test]
@@ -1654,6 +1741,48 @@ mod tests {
         // Nothing but the images: no report, unlike the build.
         assert!(!root.join("exported").join("report.txt").exists());
         assert!(root.join("built").join("report.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A Perlin (1) feeding a Blur (2) marked for export as `Blur_Out.png`.
+    fn chained_terrain() -> Terrain {
+        let catalogue = Catalogue::get();
+        let perlin = NodeData::new(catalogue.node("Perlin").expect("Perlin is in the catalogue"), 1, 1);
+        let mut blur = NodeData::new(catalogue.node("Blur").expect("Blur is in the catalogue"), 2, 1);
+        let save = json!({"IsEnabled": true, "Filename": "Blur", "Format": "PNG16"});
+        blur.base.insert("SaveDefinition".to_string(), save);
+        if let Some(input) = blur.ports.iter_mut().find(|port| port.name == "In") {
+            input.record = Some(ConnectionRecord { from: 1, to: 2, from_port: "Out".to_string(), to_port: "In".to_string(), is_valid: true });
+        }
+        let mut terrain = Terrain { id: String::new(), nodes: Default::default(), width: 5000.0, height: 2500.0, extra: serde_json::Map::new() };
+        terrain.nodes.insert(1, perlin);
+        terrain.nodes.insert(2, blur);
+        terrain
+    }
+
+    #[test]
+    fn purging_lets_results_go_once_nothing_needs_them() {
+        let root = std::env::temp_dir().join(format!("nerthus-purge-{}", std::process::id()));
+        let project_path = root.join("Purge.terrain");
+        let terrain = chained_terrain();
+        let registry = Arc::new(nerthus_nodes::registry());
+        let cancel = AtomicBool::new(false);
+        let mut kept_files = Vec::new();
+        for offload in [false, true] {
+            let preferences = ExportPreferences { offload_build_cache: offload, ..ExportPreferences::default() };
+            let mut definition = BuildDefinition { resolution: 64, ..BuildDefinition::default() };
+            definition.destination = root.join(format!("offload-{offload}")).to_string_lossy().into_owned();
+            let mut engine = Engine::new(registry.clone());
+            let report = run(&terrain, &mut engine, &project_path, &definition, &preferences, None, &cancel, &mut |_| {}).unwrap();
+            assert!(report.failures.is_empty(), "{:?}", report.failures);
+            kept_files.push(fs::read(&report.files[0]).unwrap());
+            // Both nodes built; purged, neither keeps its results.
+            assert_eq!(engine.state(1), NodeState::Built);
+            assert_eq!(engine.state(2), NodeState::Built);
+            assert_eq!(engine.cache.ports(1).next().is_none(), offload);
+            assert_eq!(engine.cache.ports(2).next().is_none(), offload);
+        }
+        assert_eq!(kept_files[0], kept_files[1]);
         fs::remove_dir_all(&root).unwrap();
     }
 

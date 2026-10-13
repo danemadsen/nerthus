@@ -391,6 +391,113 @@ impl UserOptions {
     pub fn populate_recent_on_start(&self) -> bool {
         self.flag("PopulateMRUOnStart")
     }
+
+    /// `PreciseValue`: sliders show four decimals rather than two.
+    pub fn precise_value(&self) -> bool {
+        self.flag("PreciseValue")
+    }
+
+    /// `ShowTicks`: integer sliders under 100 mark each step (no page in
+    /// Options shows it).
+    pub fn show_ticks(&self) -> bool {
+        self.flag("ShowTicks")
+    }
+
+    /// `SliderSeed`: seeds get a slider instead of the seed box.
+    pub fn slider_seed(&self) -> bool {
+        self.flag("SliderSeed")
+    }
+
+    /// `StackedSatelliteMaps`: the palette list is one strip a row.
+    pub fn stacked_satellite_maps(&self) -> bool {
+        self.flag("StackedSatelliteMaps")
+    }
+
+    /// `ClassicNodeStyle` (Node Style › Vibrant): nodes are outlined in
+    /// their colour, and a chosen one in the primary accent.
+    pub fn vibrant_nodes(&self) -> bool {
+        self.flag("ClassicNodeStyle")
+    }
+
+    /// `BuildShine`: a node shines once it has built.
+    pub fn build_shine(&self) -> bool {
+        self.flag("BuildShine")
+    }
+
+    /// `AcceptOnLostFocus`: a value typed into a popup is kept when the
+    /// popup closes by a click elsewhere, not only by Enter or Tab.
+    pub fn accept_on_lost_focus(&self) -> bool {
+        self.flag("AcceptOnLostFocus")
+    }
+
+    /// `ConfineShortcuts`: the node keys work only with the pointer over
+    /// the graph.
+    pub fn confine_shortcuts(&self) -> bool {
+        self.flag("ConfineShortcuts")
+    }
+
+    /// `HideTabs`: no tab strip while the project has a single graph tab.
+    pub fn hide_tabs(&self) -> bool {
+        self.flag("HideTabs")
+    }
+
+    /// `RecordGraphMovementUndos`: panning the graph is an undo step.
+    pub fn record_graph_movements(&self) -> bool {
+        self.flag("RecordGraphMovementUndos")
+    }
+
+    /// `DontClearViewport`: the viewport keeps the last preview when no
+    /// node, or more than one, is selected.
+    pub fn dont_clear_viewport(&self) -> bool {
+        self.flag("DontClearViewport")
+    }
+
+    /// `PreventHiRes` (Conserve memory when displaying 4K terrains): a 4K
+    /// terrain is drawn with the 2K mesh.
+    pub fn prevent_hi_res(&self) -> bool {
+        self.flag("PreventHiRes")
+    }
+
+    /// `ViewportQuality` (Antialiasing): the frames a second the 3D view
+    /// draws while it has the focus (`SetQuality`): None 20, 2x 30, 4x and
+    /// 8x 60. Anything else leaves the view's own 30.
+    pub fn viewport_frame_rate(&self) -> u32 {
+        match self.values.get("ViewportQuality").and_then(Value::as_i64) {
+            Some(0) => 20,
+            Some(1) => 30,
+            Some(2) | Some(3) => 60,
+            _ => 30,
+        }
+    }
+
+    /// `CompactUI` (Compact Interface): the shell drawn at the compact
+    /// sizes (`Size.Compact`).
+    pub fn compact_ui(&self) -> bool {
+        self.flag("CompactUI")
+    }
+
+    /// `NewAutolayout`: the auto layout places nodes on a grid of blocks.
+    pub fn new_autolayout(&self) -> bool {
+        self.flag("NewAutolayout")
+    }
+
+    /// `AdaptiveDebounce`: how long a parameter edit waits before its node
+    /// builds follows how long the node took last time.
+    pub fn adaptive_debounce(&self) -> bool {
+        self.flag("AdaptiveDebounce")
+    }
+
+    /// What the controls read from the options as they draw.
+    pub fn interface_settings(&self) -> crate::theme::InterfaceSettings {
+        crate::theme::InterfaceSettings {
+            compact: self.compact_ui(),
+            precise_values: self.precise_value(),
+            show_ticks: self.show_ticks(),
+            accept_on_lost_focus: self.accept_on_lost_focus(),
+            seed_sliders: self.slider_seed(),
+            stacked_palettes: self.stacked_satellite_maps(),
+        }
+    }
 }
 
 #[cfg(test)]

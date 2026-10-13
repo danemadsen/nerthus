@@ -5,8 +5,11 @@ mod app_icon;
 mod build_profiles;
 mod compute;
 mod constructor_preview;
+mod crash;
 mod disk_cache;
+mod docs;
 mod document;
+mod drop_position;
 mod editor;
 mod export_build;
 mod files;
@@ -86,6 +89,7 @@ fn main() {
     app.add_plugins(app_icon::AppIconPlugin);
     app.insert_resource(egui_settings);
     app.add_plugins(EguiPlugin::default());
+    app.add_plugins(drop_position::DropPositionPlugin);
     app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
     app.add_plugins(TerrainRenderPlugin);
     if let Some(path) = options.screenshot.clone() {
@@ -113,6 +117,9 @@ fn main() {
     app.add_systems(Startup, spawn_ui_camera);
     app.add_systems(EguiPrimaryContextPass, ui::draw);
     app.add_systems(Update, ui::floating_viewport::manage);
+    // The frame rate the Antialiasing choice gives the 3D view.
+    app.insert_resource(ui::frame_pacing(30));
+    app.add_systems(Update, ui::pace_frames);
     app.add_systems(ui::floating_viewport::FloatingViewportPass, ui::floating_viewport::draw);
     app.add_systems(Update, ui::file_dialogs::run);
     app.add_systems(Update, ui::options_pages::count_monitors);

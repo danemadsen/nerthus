@@ -17,5 +17,9 @@ serde_json.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 libc.workspace = true
 
+# The NVIDIA driver's settings API (nvapi64.dll), for the NVIDIA profile.
+[target.'cfg(windows)'.dependencies]
+libloading.workspace = true
+
 [dev-dependencies]
 env_logger.workspace = true

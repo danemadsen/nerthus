@@ -156,11 +156,18 @@ impl Onboard {
     }
 }
 
-/// "Evaluating devices...": the devices listed on a worker thread; it
+/// On a worker thread: on Windows, the NVIDIA profile when the NVIDIA
+/// driver is there; then "Evaluating devices...": the devices listed. It
 /// sends what they had to say about the ones they cannot use.
 fn start_gpu_check() -> GpuCheck {
     let (sender, receiver) = crossbeam_channel::bounded(1);
     let spawned = std::thread::Builder::new().name("onboard devices".to_string()).spawn(move || {
+        if cfg!(windows) {
+            log::info!("Creating NVidia profiles...");
+            if let Err(nerthus_compute::ProfileError::Failed(_)) = nerthus_compute::enforce_optimal_settings() {
+                log::error!("NV Failed.");
+            }
+        }
         log::info!("Evaluating devices...");
         let (_, problems) = nerthus_compute::available_devices();
         let _ = sender.send(problems);

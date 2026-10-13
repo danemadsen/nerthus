@@ -14,6 +14,7 @@ use crate::ui::graph_commands::GraphCommand;
 use crate::ui::graph_popups::swatch_grid;
 use crate::ui::widgets::{icon_button, icon_menu, menu_caption, menu_item, menu_item_enabled, menu_separator, menu_style, submenu, toolbar_background_corners, toolbar_separator};
 use crate::ui::{data_view, graph_canvas, menus, toolbox, UiState};
+use crate::user::ToolboxStyle;
 
 /// Height of the tab strip (`GraphTabsGrid`) and of a tab (`GraphTabItem`).
 const TABS_HEIGHT: f32 = 26.0;
@@ -23,9 +24,11 @@ const TAB_HEIGHT: f32 = 25.0;
 const TAB_BORDER: f32 = 1.5;
 /// `GraphBorder`'s top margin below the tabs.
 const GRAPH_TOP: f32 = 25.0;
-/// `GraphToolbarBorder` (`Toolbar`): a 32 button, padding 4 and a border
-/// of 1.5 each side.
-const TOOLBAR_WIDTH: f32 = 32.0 + 2.0 * (4.0 + 1.5);
+/// `GraphToolbarBorder` (`Toolbar`): a `Toolbar.ButtonSize` button,
+/// `Toolbar.Padding` and a border of 1.5 each side.
+fn toolbar_width(sizes: &theme::Sizes) -> f32 {
+    sizes.toolbar_button + 2.0 * (sizes.toolbar_padding[0] + 1.5)
+}
 /// Each area's margin in the grid.
 const AREA_MARGIN: f32 = 2.0;
 /// `gsVertical1`: 4 wide at the graph column's right edge.
@@ -38,7 +41,7 @@ pub fn show(ui: &mut Ui, graph_grid: Rect, editor: &mut Editor, ui_state: &mut U
     // Data View (`ToggleCollapse`).
     let expanded = ui_state.data_view.expanded;
     let toolbar_left_margin = if expanded { 0.0 } else { AREA_MARGIN };
-    let toolbar_column_width = toolbar_left_margin + TOOLBAR_WIDTH + AREA_MARGIN;
+    let toolbar_column_width = toolbar_left_margin + toolbar_width(theme::sizes(ui.ctx())) + AREA_MARGIN;
     let toolbar_column = Rect::from_min_max(Pos2::new(graph_grid.right() - toolbar_column_width, graph_grid.top()), graph_grid.max);
     let toolbar_rect = Rect::from_min_max(toolbar_column.min + Vec2::new(toolbar_left_margin, AREA_MARGIN), toolbar_column.max - Vec2::splat(AREA_MARGIN));
 
@@ -57,17 +60,42 @@ pub fn show(ui: &mut Ui, graph_grid: Rect, editor: &mut Editor, ui_state: &mut U
     let grid = Rect::from_min_max(area.min, area.max - Vec2::new(1.0, 0.0));
     let tabs_list = editor.document.graph_tabs();
     let selected_color = tabs_list.iter().find(|tab| tab.index == ui_state.graph.tab).map(|tab| theme::swatch_color(&tab.color)).unwrap_or(theme::TAB_BORDER);
-    let border = Rect::from_min_max(grid.min + Vec2::new(0.0, GRAPH_TOP), grid.max);
-    let graph_rect = Rect::from_min_max(border.min + Vec2::new(TAB_BORDER + 2.0, 2.0), border.max - Vec2::splat(TAB_BORDER + 2.0));
+    // `ShowHideGraphTabs`: Hide Graph Tabs with a single tab takes the tab
+    // strip away. The border then reaches the top and closes round the
+    // graph (1.5 all round, corners 3, `Accent-Muted-Gray`), and the
+    // toolbox and the engine's outline move up with it.
+    let tabs_hidden = editor.user.options.hide_tabs() && tabs_list.len() == 1;
+    let graph_rect = if tabs_hidden {
+        graph_border_closed(ui, grid);
+        grid.shrink(TAB_BORDER + 2.0)
+    } else {
+        let border = Rect::from_min_max(grid.min + Vec2::new(0.0, GRAPH_TOP), grid.max);
+        graph_border(ui, border, selected_color);
+        Rect::from_min_max(border.min + Vec2::new(TAB_BORDER + 2.0, 2.0), border.max - Vec2::splat(TAB_BORDER + 2.0))
+    };
     graph_canvas::show(ui, graph_rect, editor, &mut ui_state.graph, commands);
-    graph_border(ui, border, selected_color);
-    let toolbox_area = Rect::from_min_max(grid.min + Vec2::new(0.0, 35.0), grid.max);
+    // `Toolbox`: margin 0, 35, 0, 0 for the menus and 0, 16, 0, 24 for the
+    // panel; none without tabs.
+    let toolbox_area = if tabs_hidden {
+        grid
+    } else if editor.user.options.toolbox_style() == ToolboxStyle::Menus {
+        Rect::from_min_max(grid.min + Vec2::new(0.0, 35.0), grid.max)
+    } else {
+        Rect::from_min_max(grid.min + Vec2::new(0.0, 16.0), grid.max - Vec2::new(0.0, 24.0))
+    };
     toolbox::show(ui, toolbox_area, editor, &mut ui_state.graph, commands);
-    tabs(ui, grid, editor, ui_state, selected_color, commands);
-    bookmark_buttons(ui, grid, editor, commands);
+    if !tabs_hidden {
+        tabs(ui, grid, editor, ui_state, selected_color, commands);
+    }
+    // `stackBookmarks` stays (margin 0, 0, 2, 0; 8 on the right without
+    // tabs).
+    let bookmarks_margin = if tabs_hidden { 8.0 } else { 2.0 };
+    bookmark_buttons(ui, grid, bookmarks_margin, editor, commands);
     footer(ui, grid, editor);
     if !editor.engine_active {
-        engine_suspended_outline(ui, grid);
+        // `EngineRect`: margin 4, 28, 4, 4; 4 all round without tabs.
+        let outline_top = if tabs_hidden { 4.0 } else { 28.0 };
+        engine_suspended_outline(ui, grid, outline_top);
     }
 
     if expanded {
@@ -104,6 +132,13 @@ fn data_view_splitter(ui: &mut Ui, graph_column: Rect, stars: f32, ui_state: &mu
     let current = data_view_width(stars, ui_state.data_view.share);
     let wanted = current - response.drag_delta().x;
     ui_state.data_view.share = (wanted / stars).clamp(0.0, 1.0);
+}
+
+/// `GraphBorder` without tabs: 1.5 all round, corners 3, in
+/// `Accent-Muted-Gray`.
+fn graph_border_closed(ui: &Ui, border: Rect) {
+    let stroke = Stroke::new(TAB_BORDER, theme::ACCENT_MUTED_GRAY);
+    ui.painter().rect_stroke(border, 3.0, stroke, egui::StrokeKind::Inside);
 }
 
 /// `GraphBorder`: left, right and bottom sides (1.5), bottom corners 3.
@@ -236,14 +271,15 @@ fn tabs(ui: &mut Ui, area: Rect, editor: &Editor, ui_state: &mut UiState, select
                 if !edit_response.has_focus() && !edit_response.lost_focus() {
                     edit_response.request_focus();
                 }
-                let cancelled = ui.input(|input| input.key_pressed(egui::Key::Escape));
-                if cancelled {
-                    ui_state.graph.renaming_tab = None;
-                } else if edit_response.lost_focus() {
-                    commands.push(Command::RenameGraphTab(tab.index, text.trim().to_string()));
-                    ui_state.graph.renaming_tab = None;
-                } else {
-                    ui_state.graph.renaming_tab = Some((tab.index, text));
+                // An `EditablePopup`: a blank name is no name.
+                match crate::ui::widgets::popup_outcome(ui, &edit_response) {
+                    None => ui_state.graph.renaming_tab = Some((tab.index, text)),
+                    Some(accepted) => {
+                        if accepted && !text.trim().is_empty() {
+                            commands.push(Command::RenameGraphTab(tab.index, text.trim().to_string()));
+                        }
+                        ui_state.graph.renaming_tab = None;
+                    }
                 }
             }
             None => {
@@ -261,10 +297,10 @@ fn tabs(ui: &mut Ui, area: Rect, editor: &Editor, ui_state: &mut UiState, select
 }
 
 /// `stackBookmarks` (`UpdateBookmarkMenu`): a small bar for each bookmark
-/// at the right of the tab strip, in its node's toolbox colour, its name
-/// as the tooltip; a click goes to the node. `HideBookmarkShortcuts` hides
-/// them.
-fn bookmark_buttons(ui: &mut Ui, area: Rect, editor: &Editor, commands: &mut Vec<Command>) {
+/// at the right of the tab strip, `right_margin` in, in its node's toolbox
+/// colour, its name as the tooltip; a click goes to the node.
+/// `HideBookmarkShortcuts` hides them.
+fn bookmark_buttons(ui: &mut Ui, area: Rect, right_margin: f32, editor: &Editor, commands: &mut Vec<Command>) {
     if editor.user.options.hide_bookmark_shortcuts() {
         return;
     }
@@ -272,7 +308,7 @@ fn bookmark_buttons(ui: &mut Ui, area: Rect, editor: &Editor, commands: &mut Vec
     let nodes: Vec<&nerthus_engine::NodeData> = bookmarks.iter().filter_map(|id| editor.document.node(*id)).collect();
     // `BookmarkButton`: padding 2 around a 6 by 12 bar, margin 2, 0.
     let button_size = Vec2::new(6.0 + 4.0, 12.0 + 4.0);
-    let mut right = area.right() - 2.0;
+    let mut right = area.right() - right_margin;
     let center_y = area.top() + TABS_HEIGHT / 2.0;
     for node in nodes.iter().rev() {
         let rect = Rect::from_min_max(Pos2::new(right - 2.0 - button_size.x, center_y - button_size.y / 2.0), Pos2::new(right - 2.0, center_y + button_size.y / 2.0));
@@ -359,9 +395,10 @@ fn footer(ui: &mut Ui, area: Rect, editor: &Editor) {
     }
 }
 
-/// The crawling red outline while the engine is suspended (`EngineRect`).
-fn engine_suspended_outline(ui: &Ui, area: Rect) {
-    let rect = Rect::from_min_max(area.min + Vec2::new(4.0, 28.0), area.max - Vec2::splat(4.0));
+/// The crawling red outline while the engine is suspended (`EngineRect`),
+/// `top` down.
+fn engine_suspended_outline(ui: &Ui, area: Rect, top: f32) {
+    let rect = Rect::from_min_max(area.min + Vec2::new(4.0, top), area.max - Vec2::splat(4.0));
     let points = vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
     let time = ui.input(|input| input.time) as f32;
     let offset = (time * 16.0) % 6.0;
@@ -377,7 +414,8 @@ fn graph_toolbar(ui: &mut Ui, toolbar_rect: Rect, editor: &Editor, ui_state: &mu
     let expanded = ui_state.data_view.expanded;
     let corners = if expanded { CornerRadius { nw: 0, ne: 4, sw: 0, se: 4 } } else { CornerRadius::same(4) };
     toolbar_background_corners(ui, toolbar_rect, corners, theme::MENU_BORDER, 1.5);
-    let inner = toolbar_rect.shrink(1.5).shrink2(Vec2::new(4.0, 2.0));
+    let [padding_across, padding_down] = theme::sizes(ui.ctx()).toolbar_padding;
+    let inner = toolbar_rect.shrink(1.5).shrink2(Vec2::new(padding_across, padding_down));
 
     let top_builder = UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Center));
     let mut top = ui.new_child(top_builder);
@@ -462,7 +500,7 @@ fn graph_toolbar(ui: &mut Ui, toolbar_rect: Rect, editor: &Editor, ui_state: &mu
 /// `tglEngine`: the engine icon in `Accent-Muted-Red`; checked (the
 /// engine suspended), the pressed fill with an `Accent-Red` outline.
 fn engine_toggle(ui: &mut Ui, suspended: bool) -> egui::Response {
-    let size = Vec2::splat(crate::ui::widgets::TOOLBAR_BUTTON);
+    let size = Vec2::splat(crate::ui::widgets::toolbar_button(ui));
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let hovered = response.hovered();
     if suspended && !hovered {

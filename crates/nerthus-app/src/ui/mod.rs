@@ -16,6 +16,7 @@ mod constructor;
 mod create_connection;
 mod data_view;
 pub mod diagnostics_window;
+mod docs_window;
 pub(crate) mod editors;
 mod expression_dialog;
 mod file_commands;
@@ -60,6 +61,8 @@ mod variable_dialog;
 pub mod viewport_2d;
 mod viewport_area;
 mod widgets;
+
+use std::panic::AssertUnwindSafe;
 
 use bevy::camera::Viewport;
 use bevy::diagnostic::{DiagnosticsStore, SystemInformationDiagnosticsPlugin};
@@ -141,6 +144,8 @@ pub struct UiState {
     pub artifact_explorer: Option<artifact_explorer::ArtifactExplorer>,
     pub diagnostics: Option<diagnostics_window::DiagnosticsWindow>,
     pub help: help_windows::HelpWindows,
+    /// The documentation, while open.
+    pub docs: Option<docs_window::DocsWindow>,
     pub updates: crate::updates::Updates,
     pub onboard: Option<onboard::Onboard>,
     pub onboard_at_launch: bool,
@@ -167,6 +172,10 @@ pub struct UiState {
     /// The document the views were made for (`Editor::document_serial`).
     document_serial: u64,
     styled: bool,
+    /// A caught panic waiting for its questions to be answered, and
+    /// whether Nerthus is still starting.
+    pub crash: Option<crate::crash::Crash>,
+    startup: crate::crash::Startup,
 }
 
 impl Default for UiState {
@@ -204,6 +213,7 @@ impl Default for UiState {
             artifact_explorer: None,
             diagnostics: None,
             help: help_windows::HelpWindows::default(),
+            docs: None,
             updates: crate::updates::Updates::default(),
             onboard: None,
             onboard_at_launch: false,
@@ -219,6 +229,8 @@ impl Default for UiState {
             graph_at_launch: None,
             document_serial: 0,
             styled: false,
+            crash: None,
+            startup: crate::crash::Startup::default(),
         }
     }
 }
@@ -268,6 +280,7 @@ impl UiState {
     /// with an optional `:scale` (F9 once the view has rendered), Tools'
     /// and Help's windows (`console`, `artifacts`, `diagnostics`,
     /// `shortcuts`, `whats-new` with an optional `:notes`, `about`,
+    /// `docs` with an optional `:<page>[#heading]`, `docs-search:<words>`,
     /// `updates`, or `updates:sample` for a made-up newer release), the
     /// first-run setup on a page (`onboard:preferences`), or one of the
     /// graph's menus
@@ -306,6 +319,15 @@ impl UiState {
             "shortcuts" => self.help.shortcuts = true,
             "whats-new" => self.help.whats_new = Some(if detail == "notes" { 2 } else { 0 }),
             "about" => self.help.about = true,
+            "docs" => {
+                let target = if detail.is_empty() { crate::docs::HOME } else { detail };
+                self.docs = Some(docs_window::DocsWindow::open(target));
+            }
+            "docs-search" => {
+                let mut window = docs_window::DocsWindow::open(crate::docs::HOME);
+                window.search_for(detail);
+                self.docs = Some(window);
+            }
             "artifacts" => self.tools_at_launch.push(tool_commands::ToolCommand::ShowArtifactExplorer),
             "updates" if detail == "sample" => self.help.update = Some(help_windows::UpdateDialog::sample()),
             "onboard" => self.onboard = Some(onboard::Onboard::open_at(detail)),
@@ -363,7 +385,8 @@ const MIN_LEFT: f32 = 300.0;
 const MIN_ROW: f32 = 120.0;
 
 /// Draws the editor, runs what it asked for and fits the 3D view into the
-/// viewport area.
+/// viewport area. A panic on the way is caught and asked about
+/// (`crate::crash`); until that is answered, only the question shows.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut contexts: EguiContexts,
@@ -377,17 +400,54 @@ pub fn draw(
     diagnostics: Res<DiagnosticsStore>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    if ui_state.crash.is_some() {
+        crate::crash::show(&ctx, &mut ui_state.crash);
+        return Ok(());
+    }
+    let (mut camera, strategy) = camera.into_inner();
+    let editor_frame = AssertUnwindSafe(|| {
+        draw_editor(&ctx, &mut editor, &mut ui_state, &mut settings, &mut input, &mut link, &mut camera, strategy, &mut window, &diagnostics)
+    });
+    let drawn = std::panic::catch_unwind(editor_frame);
+    match drawn {
+        Ok(result) => {
+            let now = ctx.input(|state| state.time);
+            ui_state.startup.note_frame(now);
+            result
+        }
+        Err(payload) => {
+            let starting = ui_state.startup.starting();
+            ui_state.crash = Some(crate::crash::Crash::caught(payload.as_ref(), starting));
+            ctx.request_repaint();
+            Ok(())
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_editor(
+    ctx: &egui::Context,
+    editor: &mut Editor,
+    ui_state: &mut UiState,
+    settings: &mut ViewportSettings,
+    input: &mut ViewportInput,
+    link: &mut ViewportLink,
+    camera: &mut Camera,
+    strategy: &StrategyCamera,
+    window: &mut Window,
+    diagnostics: &DiagnosticsStore,
+) -> Result {
     // Fonts set now take effect next frame, so the first frame only
     // installs them.
     if !ui_state.styled {
-        theme::apply(&ctx);
+        theme::apply(ctx);
         // The interface scale comes from the options alone (Tools >
         // Interface Scale); egui's own Ctrl +/- zoom stays off.
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
-        egui_extras::install_image_loaders(&ctx);
+        egui_extras::install_image_loaders(ctx);
         ui_state.styled = true;
-        ui_state.apply_options(&editor.user.options, &mut settings);
-        tool_commands::start(&editor, &mut ui_state);
+        ui_state.apply_options(&editor.user.options, settings);
+        tool_commands::start(editor, ui_state);
         if let Some(show) = ui_state.launch_show.take() {
             // Several panels, comma-separated.
             for panel in show.split(',') {
@@ -399,6 +459,7 @@ pub fn draw(
     }
     // `UIScaler`: the whole shell scales by `UiScale`.
     ctx.set_zoom_factor(editor.user.options.ui_scale());
+    theme::set_settings(ctx, editor.user.options.interface_settings());
     if ui_state.document_serial != editor.document_serial {
         ui_state.reset_views();
         // The project opens on the graph tab it was saved showing.
@@ -414,9 +475,11 @@ pub fn draw(
     pending.append(&mut ui_state.floating_commands);
     let floating = editor.user.options.viewport_floating();
     // Modal dialogs keep the shell's keys from it while they show.
-    if !tool_commands::modal_open(&ui_state) {
-        shortcuts(&ctx, &mut pending);
-        tool_commands::shortcuts(&ctx, &mut pending);
+    if !tool_commands::modal_open(ui_state) {
+        // Allow node shortcuts only when cursor is inside the graph.
+        let node_keys = !editor.user.options.confine_shortcuts() || pointer_over_graph(ctx, &ui_state.graph);
+        shortcuts(ctx, node_keys, &mut pending);
+        tool_commands::shortcuts(ctx, &mut pending);
     }
 
     let full = ctx.content_rect();
@@ -430,15 +493,14 @@ pub fn draw(
     let background = root.painter().add(egui::Shape::Noop);
 
     let grid = body.shrink(ROOT_MARGIN);
-    let layout = split_layout(&mut root, grid, &mut ui_state, floating);
+    let layout = split_layout(&mut root, grid, ui_state, floating);
 
-    let (mut camera, strategy) = camera.into_inner();
     editor.camera = strategy.values();
     if strategy.panning() {
         ctx.set_cursor_icon(CursorIcon::Move);
     }
     let now = ctx.input(|state| state.time);
-    send_navigation(&editor, &mut ui_state, &mut link.navigation, now);
+    send_navigation(editor, ui_state, &mut link.navigation, now);
     let hint_text = viewport_area::navigation_hint_text(&link.navigation);
     let hint_shows = ui_state.navigation_hint_until.is_some_and(|until| now < until);
     let overlays = viewport_area::ViewOverlays {
@@ -450,28 +512,28 @@ pub fn draw(
         Rect::NOTHING
     } else {
         let viewport_rect = layout.viewport.shrink(AREA_MARGIN);
-        let interface = ui_state.as_mut();
-        viewport_area::show(&mut root, viewport_rect, &editor, &mut settings, &mut interface.sun_open, &mut interface.viewport_2d, &overlays, &mut pending)
+        let interface = &mut *ui_state;
+        viewport_area::show(&mut root, viewport_rect, editor, settings, &mut interface.sun_open, &mut interface.viewport_2d, &overlays, &mut pending)
     };
     root.painter().set(background, surround(body, host));
-    graph_area::show(&mut root, layout.graph, &mut editor, &mut ui_state, &mut pending);
+    graph_area::show(&mut root, layout.graph, editor, ui_state, &mut pending);
     editor.graph_region = physical_region(ui_state.graph.rect, ctx.pixels_per_point());
     let properties_rect = layout.properties.shrink(AREA_MARGIN);
-    property_area::show(&mut root, properties_rect, &mut editor, &mut pending);
-    tool_commands::forget_add_modifiers(&ctx);
+    property_area::show(&mut root, properties_rect, editor, &mut pending);
+    tool_commands::forget_add_modifiers(ctx);
     // The Constructor, whose previews need the maps feeding its node.
     let constructor_open = match ui_state.constructor.as_mut() {
-        Some(window) => constructor::show(&ctx, &mut editor, window),
+        Some(window) => constructor::show(ctx, editor, window),
         None => false,
     };
     if !constructor_open {
         ui_state.constructor = None;
     }
-    let constructor_sources = ui_state.constructor.as_ref().map(|window| window.sources(&editor)).unwrap_or_default();
-    viewport_2d::show_floating(&ctx, &mut editor, &mut ui_state.viewport_2d, &constructor_sources, &mut pending);
+    let constructor_sources = ui_state.constructor.as_ref().map(|window| window.sources(editor)).unwrap_or_default();
+    viewport_2d::show_floating(ctx, editor, &mut ui_state.viewport_2d, &constructor_sources, &mut pending);
     // `RendererQuality.FastAO` while a gizmo or Draw's painter is held.
     let constructor_held = ui_state.constructor.as_ref().is_some_and(constructor::ConstructorWindow::gizmo_held);
-    let held = ui_state.viewport_2d.gizmo_held() || painter::painting(&ctx) || constructor_held;
+    let held = ui_state.viewport_2d.gizmo_held() || painter::painting(ctx) || constructor_held;
     let quality = if held { RenderQuality::Fast } else { RenderQuality::Normal };
     editor.set_render_quality(quality);
     ui_state.graph.areas.graph = layout.graph;
@@ -479,59 +541,62 @@ pub fn draw(
     // Floating, the docked 2D view is in the viewport's own window.
     ui_state.graph.areas.viewport_2d = if floating { None } else { ui_state.viewport_2d.docked_rect() };
     if let Some(show) = ui_state.graph_at_launch.take() {
-        graph_commands::open_at_launch(&show, &mut editor, &mut ui_state);
+        graph_commands::open_at_launch(&show, editor, ui_state);
     }
-    move_lazy_cursor(&ctx, &mut ui_state.graph, &mut window);
+    move_lazy_cursor(ctx, &mut ui_state.graph, window);
     // Lazy Menu › Toggle Skybox (`sky.ShowSkybox`).
     if std::mem::take(&mut ui_state.graph.toggle_skybox) {
         settings.skybox = !settings.skybox;
     }
 
-    title_bar::show(&mut root, title_rect, &editor, &ui_state, &mut pending);
+    title_bar::show(&mut root, title_rect, editor, ui_state, &mut pending);
     // The process's footprint, else Bevy's sampled memory (GiB).
     let gibibyte = 1024.0 * 1024.0 * 1024.0;
     let sampled = diagnostics.get(&SystemInformationDiagnosticsPlugin::PROCESS_MEM_USAGE).and_then(|diagnostic| diagnostic.smoothed());
     let process_memory = crate::memory::process_bytes().map(|bytes| bytes as f64 / gibibyte).or(sampled);
-    status_bar::show(&mut root, status_rect, &editor, process_memory, &mut pending);
+    status_bar::show(&mut root, status_rect, editor, process_memory, &mut pending);
 
-    build_window::confirm(&ctx, &editor, &mut ui_state, &mut pending);
-    build_window::progress(&ctx, &editor, &mut pending);
-    build_settings::show(&ctx, &mut editor, &mut ui_state.build_settings, &mut pending);
-    batch_window(&ctx, &mut editor, &mut ui_state);
+    build_window::confirm(ctx, editor, ui_state, &mut pending);
+    build_window::progress(ctx, editor, &mut pending);
+    build_settings::show(ctx, editor, &mut ui_state.build_settings, &mut pending);
+    batch_window(ctx, editor, ui_state);
     ui_state.clock = now;
-    memory_dialogs::show_bake_progress(&ctx, &editor, &mut ui_state.bake_progress);
-    progress_window::show(&ctx, &mut editor);
-    if let Some(recovery) = memory_dialogs::show_optimize_memory(&ctx, &mut ui_state.optimize_memory) {
+    memory_dialogs::show_bake_progress(ctx, editor, &mut ui_state.bake_progress);
+    progress_window::show(ctx, editor);
+    if let Some(recovery) = memory_dialogs::show_optimize_memory(ctx, &mut ui_state.optimize_memory) {
         pending.extend(memory_dialogs::recovery_commands(recovery));
     }
-    memory_dialogs::report_freed(now, &mut ui_state.memory_report, &mut editor);
+    memory_dialogs::report_freed(now, &mut ui_state.memory_report, editor);
     if ui_state.memory_report.is_some() {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    file_windows::show(&ctx, &mut editor, &mut ui_state, &mut pending);
-    note_editor::show(&ctx, &mut editor, &mut ui_state.graph);
-    create_connection::show(&ctx, &editor, &mut ui_state.graph.create_connection, &mut pending);
-    variable_dialog::show(&ctx, &mut editor, &mut ui_state.variable_dialog, &mut pending);
-    expression_dialog::show(&ctx, &mut editor, &mut ui_state.expression_dialog);
-    command_line_window::show(&ctx, &mut ui_state.command_line);
-    statistics_window::show(&ctx, &mut ui_state.statistics, &mut pending);
-    turntable(&ctx, &mut editor, &mut ui_state, &mut link.turntable);
-    gizmos::place_3d_handle(&editor, &mut link.handle, &link.preview, &mut pending);
+    file_windows::show(ctx, editor, ui_state, &mut pending);
+    note_editor::show(ctx, editor, &mut ui_state.graph);
+    create_connection::show(ctx, editor, &mut ui_state.graph.create_connection, &mut pending);
+    variable_dialog::show(ctx, editor, &mut ui_state.variable_dialog, &mut pending);
+    expression_dialog::show(ctx, editor, &mut ui_state.expression_dialog);
+    command_line_window::show(ctx, &mut ui_state.command_line);
+    statistics_window::show(ctx, &mut ui_state.statistics, &mut pending);
+    turntable(ctx, editor, ui_state, &mut link.turntable);
+    gizmos::place_3d_handle(editor, &mut link.handle, &link.preview, &mut pending);
     // `alert` spans the graph row, under the properties too.
     let graph_row = Rect::from_min_max(layout.graph.min, Pos2::new(layout.properties.right(), layout.graph.bottom()));
     let animations = !editor.user.options.disable_animations();
-    alert::show(&ctx, graph_row, &mut ui_state.alert, animations);
-    prompt::show(&ctx, &mut ui_state, &mut pending);
-    let interface = ui_state.as_mut();
-    let options_outcome = options_window::show(&ctx, &mut editor, &mut interface.options, &mut interface.last_options_tab, &mut interface.file_dialogs);
+    alert::show(ctx, graph_row, &mut ui_state.alert, animations);
+    prompt::show(ctx, ui_state, &mut pending);
+    let interface = &mut *ui_state;
+    let options_outcome = options_window::show(ctx, editor, &mut interface.options, &mut interface.last_options_tab, &mut interface.file_dialogs);
     if options_outcome.run_diagnostics {
         pending.push(Command::Tools(tool_commands::ToolCommand::ShowDiagnostics));
     }
-    let settings_reset = tool_commands::show_windows(&ctx, &mut editor, &mut ui_state, &mut pending);
+    if let Some(target) = options_outcome.docs {
+        pending.push(Command::Tools(tool_commands::ToolCommand::ShowDocs(target.to_string())));
+    }
+    let settings_reset = tool_commands::show_windows(ctx, editor, ui_state, &mut pending);
     // Accepted options (or settings back to their defaults) reach the
     // interface and the view's mask gradient at once.
     if options_outcome.accepted || settings_reset {
-        ui_state.apply_options(&editor.user.options, &mut settings);
+        ui_state.apply_options(&editor.user.options, settings);
         let gradient = MaskGradient::from_index(editor.user.options.mask_gradient());
         editor.set_mask_gradient(gradient);
     }
@@ -552,7 +617,7 @@ pub fn draw(
         editor.show_preview();
     }
 
-    commands::run(pending, &mut editor, &mut ui_state, &mut window);
+    commands::run(pending, editor, ui_state, window);
     // What the editor shows goes with the project (`TerrainState`), and
     // the preview follows the project's lock through undo and redo.
     let selected = editor.active_node();
@@ -578,7 +643,7 @@ pub fn draw(
         settings.sun_elevation = lighting.sun_elevation;
         settings.fog_density = lighting.fog_density;
     }
-    ui_state.store_options(&mut editor.user.options, &settings);
+    ui_state.store_options(&mut editor.user.options, settings);
     editor.user.save_if_changed();
 
     if floating {
@@ -586,7 +651,7 @@ pub fn draw(
     }
     // Points to physical pixels: the window's scale and the interface's.
     let physical_size = UVec2::new(window.physical_width(), window.physical_height());
-    fit_camera(&mut camera, ctx.pixels_per_point(), physical_size, host);
+    fit_camera(camera, ctx.pixels_per_point(), physical_size, host);
     let pointer = ctx.input(|state| state.pointer.hover_pos());
     let over_view = pointer.is_some_and(|pointer| host.contains(pointer));
     // Windows (Build Settings, a build's progress) cover the view.
@@ -637,6 +702,36 @@ fn turntable(ctx: &egui::Context, editor: &mut Editor, interface: &mut UiState, 
             interface.alert = Some(alert::Alert::new("Error!", &problem, alert::AlertKind::Error).staying());
         }
         None => {}
+    }
+}
+
+/// The 3D view's frame rate while it has the focus but the Antialiasing
+/// choice says nothing, and while it does not have it (`lowFPS`).
+const UNFOCUSED_FRAME_RATE: u32 = 15;
+
+/// `Comms.SetQuality` and `OnApplicationFocus`: the 3D view draws at
+/// `rate` frames a second while it has the focus and at 15 while it has
+/// not. Nerthus draws the view with everything else, so the whole window
+/// waits that long between frames when nothing (input, an animation, a
+/// build) asks for one sooner.
+pub fn frame_pacing(rate: u32) -> bevy::winit::WinitSettings {
+    let focused = std::time::Duration::from_secs_f64(1.0 / rate.max(1) as f64);
+    let unfocused = std::time::Duration::from_secs_f64(1.0 / UNFOCUSED_FRAME_RATE as f64);
+    bevy::winit::WinitSettings {
+        focused_mode: bevy::winit::UpdateMode::reactive(focused),
+        unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(unfocused),
+    }
+}
+
+/// Keeps the frame rate to Antialiasing's (`ViewportQuality`: None 20,
+/// 2x 30, 4x and 8x 60) while the 3D view has the focus (clicked last, or
+/// under the pointer), 15 otherwise.
+pub fn pace_frames(editor: Res<Editor>, ui_state: Res<UiState>, input: Res<ViewportInput>, mut winit: ResMut<bevy::winit::WinitSettings>) {
+    let view_focused = ui_state.viewport_focused || input.enabled;
+    let rate = if view_focused { editor.user.options.viewport_frame_rate() } else { UNFOCUSED_FRAME_RATE };
+    let wanted = frame_pacing(rate);
+    if winit.focused_mode != wanted.focused_mode {
+        winit.focused_mode = wanted.focused_mode;
     }
 }
 
@@ -799,9 +894,48 @@ fn move_lazy_cursor(ctx: &egui::Context, graph: &mut GraphState, window: &mut Wi
     window.set_cursor_position(Some(logical));
 }
 
+/// Whether the pointer is over the graph itself (`graph.IsMouseOver`):
+/// inside its canvas as last laid out, not over the toolbox or a window.
+fn pointer_over_graph(ctx: &egui::Context, graph: &GraphState) -> bool {
+    let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) else {
+        return false;
+    };
+    if !graph.rect.contains(pointer) || graph.toolbox_rect.contains(pointer) {
+        return false;
+    }
+    let layer = ctx.layer_id_at(pointer);
+    layer.is_none_or(|layer| layer.order == egui::Order::Background)
+}
+
+/// The keys `Shell_KeyUp` handles after its `ConfineShortcuts` check: the
+/// node and graph editing ones.
+fn node_key(command: &Command) -> bool {
+    let graph_editing = match command {
+        Command::Graph(graph_command) => !matches!(graph_command, GraphCommand::FindNode | GraphCommand::LazyMenu | GraphCommand::NodeSearch | GraphCommand::QuickNavigation),
+        _ => false,
+    };
+    let node_editing = matches!(
+        command,
+        Command::Duplicate
+            | Command::SelectAll
+            | Command::ResetNode
+            | Command::ZoomExtents
+            | Command::ZoomReset
+            | Command::ZoomSelection
+            | Command::Delete
+            | Command::Rename
+            | Command::Refresh
+            | Command::MarkForExport
+            | Command::Bypass
+            | Command::ToggleUnderlay
+            | Command::ToggleExpansion
+    );
+    graph_editing || node_editing
+}
+
 /// The keyboard shortcuts. Graph keys only act when no text field has
-/// the keyboard.
-fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
+/// the keyboard, and the node keys only when `node_keys` allows them.
+fn shortcuts(ctx: &egui::Context, node_keys: bool, pending: &mut Vec<Command>) {
     let command = Modifiers::COMMAND;
     let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let command_alt = Modifiers::COMMAND | Modifiers::ALT;
@@ -836,6 +970,9 @@ fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
         if typing && text_editing {
             continue;
         }
+        if !node_keys && node_key(&action) {
+            continue;
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&shortcut)) {
             pending.push(action);
         }
@@ -865,8 +1002,12 @@ fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
         (KeyboardShortcut::new(Modifiers::NONE, Key::F), GraphCommand::LockSelection),
     ];
     for (shortcut, action) in graph_bindings {
+        let command = Command::Graph(action);
+        if !node_keys && node_key(&command) {
+            continue;
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&shortcut)) {
-            pending.push(Command::Graph(action));
+            pending.push(command);
         }
     }
     let plain = [
@@ -884,9 +1025,46 @@ fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
         (Key::V, Command::ToggleFlatView),
     ];
     for (key, action) in plain {
+        if !node_keys && node_key(&action) {
+            continue;
+        }
         let shortcut = KeyboardShortcut::new(Modifiers::NONE, key);
         if ctx.input_mut(|input| input.consume_shortcut(&shortcut)) {
             pending.push(action);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The commands the shortcuts give for `events`, the pointer over the
+    /// graph or not, with the node keys confined or not.
+    fn pressed(events: Vec<egui::Event>, node_keys: bool) -> Vec<Command> {
+        let context = egui::Context::default();
+        let input = egui::RawInput { events, ..Default::default() };
+        let mut pending = Vec::new();
+        let output = context.run_ui(input, |ui| shortcuts(ui.ctx(), node_keys, &mut pending));
+        output.drop_without_applying_deltas();
+        pending
+    }
+
+    fn key(key: Key, modifiers: Modifiers) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+    }
+
+    #[test]
+    fn confined_node_keys_need_the_graph() {
+        let delete = vec![key(Key::Delete, Modifiers::NONE)];
+        assert_eq!(pressed(delete.clone(), true), vec![Command::Delete]);
+        assert!(pressed(delete, false).is_empty());
+        // Keys handled before the check go anywhere.
+        let save = vec![key(Key::S, Modifiers::COMMAND)];
+        assert_eq!(pressed(save, false), vec![Command::Save]);
+        let search = vec![key(Key::Tab, Modifiers::NONE)];
+        assert_eq!(pressed(search, false), vec![Command::Graph(GraphCommand::NodeSearch)]);
+        let copy = vec![key(Key::C, Modifiers::COMMAND)];
+        assert!(pressed(copy, false).is_empty());
     }
 }

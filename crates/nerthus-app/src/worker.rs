@@ -15,7 +15,7 @@ use bevy::prelude::Resource;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use nerthus_engine::automation::Automation;
 use nerthus_engine::macros::MacroLibrary;
-use nerthus_engine::{BuildResult, Catalogue, Engine, Map, NodeState, PortIntents, Region, RenderIntent, Resolution, StateOverride, Terrain};
+use nerthus_engine::{BuildResult, Catalogue, Engine, EnginePreferences, Map, NodeState, PortIntents, Region, RenderIntent, Resolution, StateOverride, Terrain};
 use nerthus_export::bake::{self, BakeFit, BakeStore};
 use serde_json::Value;
 
@@ -74,6 +74,8 @@ pub struct BuildRequest {
     /// Save cached build: the maps the engine holds written out as a
     /// build would write them, once the request's build is over.
     pub cached_export: Option<crate::export_build::CachedExportJob>,
+    /// The preferences that change results (`AllowValuesBeyondRange`).
+    pub engine_preferences: EnginePreferences,
 }
 
 /// A node command the build thread runs: the node and the command
@@ -302,12 +304,15 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         // another region, what the bakes give.
         let underlay_changed = engine.underlay != request.underlay;
         let region_changed = region != request.region;
-        let cleared = request.clear || request.resolution != resolution || underlay_changed || region_changed;
+        // Results clamped or not differ throughout.
+        let range_changed = engine.preferences.allow_values_beyond_range != request.engine_preferences.allow_values_beyond_range;
+        let cleared = request.clear || request.resolution != resolution || underlay_changed || region_changed || range_changed;
         if cleared {
             engine.clear();
             disk.clear();
             resolution = request.resolution;
             engine.underlay = request.underlay;
+            engine.preferences = request.engine_preferences.clone();
             region = request.region.clone();
         }
         for node in request.forget.drain(..) {
@@ -477,6 +482,7 @@ fn run_bakes(engine: &mut Engine, terrain: &mut Arc<Terrain>, request: &mut Buil
         return changed;
     };
     let mut bake_engine = Engine::new(engine.registry());
+    bake_engine.preferences = engine.preferences.clone();
     bake_engine.automation = request.automation.clone();
     bake_engine.macros = engine.macros.clone();
     bake_engine.project_path = request.project_path.clone();

@@ -263,7 +263,7 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
             };
             ui_state.graph.tab = group.graph_index;
             ui_state.graph.clear_element_selection();
-            editor.select(None);
+            editor.select_group();
             ui_state.graph.selected_groups = vec![id];
             if go_to {
                 ui_state.graph.zoom_request = Some(ZoomRequest::CenterGroup(id));
@@ -328,7 +328,7 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
             let tab = editor.document.tab_to_group(from, target, &extent);
             ui_state.graph.tab = tab;
             ui_state.graph.clear_element_selection();
-            editor.select(None);
+            editor.select_group();
             editor.changed();
         }
         GraphCommand::InsertNodeSearch { to, to_port } => {
@@ -483,7 +483,8 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
             let extent = |id: i32| extent_of(&sizes, id);
             let selection = editor.selection.clone();
             let tab = ui_state.graph.tab;
-            let layout = Layout::new(&mut editor.document, tab, &extent);
+            let new_method = editor.user.options.new_autolayout();
+            let layout = Layout::new(&mut editor.document, tab, &extent).with_new_method(new_method);
             layout.run(&selection);
         }
         GraphCommand::CycleRenderIntent => {
@@ -694,7 +695,7 @@ fn group_selection(editor: &mut Editor, ui_state: &mut UiState) {
     };
     let group = editor.document.add_group(&children, position, size, tab);
     ui_state.graph.clear_element_selection();
-    editor.select(None);
+    editor.select_group();
     ui_state.graph.selected_groups = vec![group];
 }
 

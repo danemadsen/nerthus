@@ -1,7 +1,8 @@
 //! The property area (`PropertyArea`): the selected node's header and
 //! menu, its commands, its parameters in group panels (`EditorBase`
-//! expanders) and the modifier toolbar at the bottom, laid out at the
-//! default size (`Size.Default.xaml`).
+//! expanders) and the modifier toolbar at the bottom, laid out at the size
+//! theme's sizes (`Size.Default.xaml`, or `Size.Compact.xaml` with Compact
+//! Interface).
 
 use egui::{Align, Color32, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use nerthus_engine::json::f32_value;
@@ -16,18 +17,14 @@ use crate::ui::commands::Command;
 use crate::ui::editors::{self, palette_color, Edit, EditorContext};
 use crate::ui::graph_canvas::{node_color, node_icon};
 use crate::ui::node_states::{self, StateAction};
-use crate::ui::widgets::{check_item, icon_menu, icon_menu_sized, menu_caption, menu_item, menu_item_enabled, menu_separator, submenu, toolbar_background};
+use crate::ui::tool_commands::ToolCommand;
+use crate::ui::widgets::{check_item, icon_menu, icon_menu_sized, link_button, menu_caption, menu_item, menu_item_enabled, menu_separator, submenu, toolbar_background};
 use nerthus_engine::automation::VarType;
 
-/// `Toolbar.MinHeight`, `Toolbar.Margin` and `Toolbar.Padding`.
-const TOOLBAR_HEIGHT: f32 = 36.0;
-const TOOLBAR_MARGIN: f32 = 4.0;
-/// `Property.Border.Thickness`: the bottom margin under the command row.
-const COMMAND_ROW_GAP: f32 = 8.0;
-/// `Toolbar.ButtonSize`: the command buttons' height.
-const TOOLBAR_BUTTON: f32 = 32.0;
-/// `Expander.Toggle.MinHeight`: a group's header.
-const GROUP_HEADER_HEIGHT: f32 = 45.0;
+/// The modifier toolbar's `WrapPanel` margin.
+const MODIFIER_PANEL_MARGIN: f32 = 4.0;
+/// `ToggleButton-Expander-DownHeader`'s first column: the chevron's.
+const GROUP_CHEVRON_COLUMN: f32 = 26.0;
 /// `EditorBase.CONTROL_THICKNESS`: every editor row's margin.
 const ROW_MARGIN: i8 = 4;
 /// The parameter menu (`EditorMenu`): a 12px keyframe 4 from the editor.
@@ -77,7 +74,11 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, commands: &mut Vec<Com
     crate::ui::math_editor::show(ui.ctx(), editor);
     crate::ui::painter::show(ui.ctx(), editor);
     ui.painter().rect_filled(rect, 4.0, theme::PANEL_BACKGROUND);
-    let header = Rect::from_min_size(rect.min + Vec2::splat(TOOLBAR_MARGIN), Vec2::new(rect.width() - 2.0 * TOOLBAR_MARGIN, TOOLBAR_HEIGHT));
+    // `PropertyBorder`: a `Toolbar` (margin `Toolbar.Margin`, at least
+    // `Toolbar.MinHeight` high).
+    let sizes = theme::sizes(ui.ctx());
+    let header_margin = sizes.toolbar_margin;
+    let header = Rect::from_min_size(rect.min + Vec2::splat(header_margin), Vec2::new(rect.width() - 2.0 * header_margin, sizes.toolbar_min_height));
     let mut actions: Vec<StateAction> = Vec::new();
     header_toolbar(ui, header, editor, commands, &mut actions);
     if node_states::node_changed(ui, editor, editor.active_node()) {
@@ -92,20 +93,20 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, commands: &mut Vec<Com
     }
     node_states::note_shown_node(ui, editor, node_id);
 
-    let mut body_top = header.bottom() + TOOLBAR_MARGIN;
+    let mut body_top = header.bottom() + header_margin;
     if let Some(row) = command_row(ui, rect, body_top, editor, node_id, commands) {
-        body_top = row.bottom() + COMMAND_ROW_GAP;
+        body_top = row.bottom() + sizes.property_border[3];
     }
     let error = editor.status(node_id).error;
     if let Some(error) = error {
         body_top = warning_row(ui, rect, body_top, &error);
     }
 
-    let modifiers_width = rect.width() - 2.0 * TOOLBAR_MARGIN;
+    let modifiers_width = rect.width() - 2.0 * MODIFIER_PANEL_MARGIN;
     let measure = Rect::from_min_size(Pos2::ZERO, Vec2::new(modifiers_width, 0.0));
     let (_, modifiers_height) = layout_modifier_groups(measure);
-    let modifiers_top = rect.bottom() - TOOLBAR_MARGIN - modifiers_height;
-    let modifiers_rect = Rect::from_min_max(Pos2::new(rect.left() + TOOLBAR_MARGIN, modifiers_top), rect.max - Vec2::splat(TOOLBAR_MARGIN));
+    let modifiers_top = rect.bottom() - MODIFIER_PANEL_MARGIN - modifiers_height;
+    let modifiers_rect = Rect::from_min_max(Pos2::new(rect.left() + MODIFIER_PANEL_MARGIN, modifiers_top), rect.max - Vec2::splat(MODIFIER_PANEL_MARGIN));
     let mut body = Rect::from_min_max(Pos2::new(rect.left(), body_top), Pos2::new(rect.right(), modifiers_rect.top()));
     if let Some(alert) = descendant_alert(editor, node_id) {
         let alert_rect = Rect::from_min_size(body.min + Vec2::new(16.0, 4.0), Vec2::new(body.width() - 32.0, 40.0));
@@ -117,9 +118,14 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, commands: &mut Vec<Com
     let port_note_dismissed: bool = ui.data(|data| data.get_temp(port_note_id)).unwrap_or(false);
     if can_add_ports && !port_note_dismissed {
         let note_rect = Rect::from_min_max(Pos2::new(body.left() + 16.0, body.bottom() - 4.0 - 30.0), Pos2::new(body.right() - 16.0, body.bottom() - 4.0));
-        let dismissed = port_note(ui, note_rect);
-        if dismissed {
-            ui.data_mut(|data| data.insert_temp(port_note_id, true));
+        match port_note(ui, note_rect) {
+            Some(PortNoteClick::Dismiss) => {
+                ui.data_mut(|data| data.insert_temp(port_note_id, true));
+            }
+            Some(PortNoteClick::MoreInfo) => {
+                commands.push(Command::Tools(ToolCommand::ShowDocs(crate::docs::ADD_PORTS.to_string())));
+            }
+            None => {}
         }
         body.max.y = note_rect.top() - 4.0;
     }
@@ -151,9 +157,10 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, commands: &mut Vec<Com
     }
 }
 
-/// The command row (`CommandBorder`, a toolbar with margins 4, 0, 4, 8): a
-/// button per command parameter the node shows (`ToolbarButton-IconXText`,
-/// icons in `ParamsA-Color1..4`), then "Toggle Gizmo" for nodes with a
+/// The command row (`CommandBorder`, a toolbar with the margins
+/// `Property.Border.Thickness`, `top` being under the header's): a button
+/// per command parameter the node shows (`ToolbarButton-IconXText`, icons
+/// in `ParamsA-Color1..4`), then "Toggle Gizmo" for nodes with a
 /// `[Gizmo]`.
 fn command_row(ui: &mut Ui, area: Rect, top: f32, editor: &mut Editor, node_id: i32, commands: &mut Vec<Command>) -> Option<Rect> {
     let node = editor.document.node(node_id)?;
@@ -165,10 +172,13 @@ fn command_row(ui: &mut Ui, area: Rect, top: f32, editor: &mut Editor, node_id: 
     if entries.is_empty() && !has_gizmo {
         return None;
     }
-    let row = Rect::from_min_size(Pos2::new(area.left() + TOOLBAR_MARGIN, top), Vec2::new(area.width() - 2.0 * TOOLBAR_MARGIN, TOOLBAR_HEIGHT));
+    let sizes = theme::sizes(ui.ctx());
+    let [left, above, right, _] = sizes.property_border;
+    let row = Rect::from_min_size(Pos2::new(area.left() + left, top + above), Vec2::new(area.width() - left - right, sizes.toolbar_min_height));
     toolbar_background(ui, row, theme::PANEL_BORDER, 1.0);
-    // `Toolbar.Padding` 4, 2 inside the 1px border.
-    let inner = row.shrink(1.0).shrink2(Vec2::new(4.0, 2.0));
+    // `Toolbar.Padding` inside the 1px border.
+    let [padding_across, padding_down] = sizes.toolbar_padding;
+    let inner = row.shrink(1.0).shrink2(Vec2::new(padding_across, padding_down));
     let builder = UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center));
     let mut bar = ui.new_child(builder);
     bar.spacing_mut().item_spacing.x = 0.0;
@@ -208,11 +218,12 @@ fn open_command_window(ui: &Ui, editor: &Editor, node_id: i32, name: &str, comma
 }
 
 /// `ToolbarButton-IconXText` (and `ToggleButton-IconXText` when `checked`
-/// is given): 32 high, the icon 8 in, the text 30 in.
+/// is given): `Toolbar.ButtonSize` high, the icon 8 in, the text 30 in.
 fn icon_text_button(ui: &mut Ui, icon: &str, text: &str, accent: Color32, checked: Option<bool>) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(text.to_string(), theme::interface(12.0), theme::LABEL_DEFAULT);
     let width = 30.0 + galley.size().x + 8.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, TOOLBAR_BUTTON), Sense::click());
+    let height = theme::sizes(ui.ctx()).toolbar_button;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     let hovered = response.hovered();
     let pressed = response.is_pointer_button_down_on();
     let on = checked == Some(true);
@@ -236,16 +247,21 @@ fn icon_text_button(ui: &mut Ui, icon: &str, text: &str, accent: Color32, checke
     response
 }
 
-/// `WarningBorder`: the node's error in red (text margin 8, 4).
+/// `WarningBorder`: the node's error in red, a toolbar (margins
+/// `Property.Border.Thickness`, padding `Toolbar.Padding`) with the text
+/// `Property.Border.Padding` in.
 fn warning_row(ui: &mut Ui, area: Rect, top: f32, error: &str) -> f32 {
-    let width = area.width() - 2.0 * TOOLBAR_MARGIN;
-    let galley = ui.painter().layout(error.to_string(), theme::interface(12.0), theme::ACCENT_RED, width - 2.0 - 16.0);
-    let height = (galley.size().y + 2.0 + 8.0 + 4.0).max(TOOLBAR_HEIGHT);
-    let row = Rect::from_min_size(Pos2::new(area.left() + TOOLBAR_MARGIN, top), Vec2::new(width, height));
+    let sizes = theme::sizes(ui.ctx());
+    let [left, above, right, below] = sizes.property_border;
+    let width = area.width() - left - right;
+    let text_inset = sizes.toolbar_padding[0] + sizes.property_padding[0];
+    let galley = ui.painter().layout(error.to_string(), theme::interface(12.0), theme::ACCENT_RED, width - 2.0 - 2.0 * text_inset);
+    let height = (galley.size().y + 2.0 + 2.0 * sizes.property_padding[1] + 2.0 * sizes.toolbar_padding[1]).max(sizes.toolbar_min_height);
+    let row = Rect::from_min_size(Pos2::new(area.left() + left, top + above), Vec2::new(width, height));
     toolbar_background(ui, row, theme::PANEL_BORDER, 1.0);
     let text_top = row.center().y - galley.size().y / 2.0;
-    ui.painter().galley(Pos2::new(row.left() + 1.0 + 8.0, text_top), galley, theme::ACCENT_RED);
-    row.bottom() + COMMAND_ROW_GAP
+    ui.painter().galley(Pos2::new(row.left() + 1.0 + text_inset, text_top), galley, theme::ACCENT_RED);
+    row.bottom() + below
 }
 
 /// `DescendantAlert`: the preview is locked to a node this one does not
@@ -273,24 +289,36 @@ fn notice(ui: &mut Ui, rect: Rect, text: &str, fill: egui::Color32, border: egui
     ui.painter().galley(position, galley, theme::LABEL_EMPHASIS);
 }
 
-/// `InfoPortAdd`: the node can add inputs; dismissed with its close button.
-fn port_note(ui: &mut Ui, rect: Rect) -> bool {
+/// What was clicked on the note that a node can add inputs.
+enum PortNoteClick {
+    Dismiss,
+    MoreInfo,
+}
+
+/// `InfoPortAdd`: the node can add inputs; its close button dismisses
+/// it, "More Info" opens the documentation about adding ports.
+fn port_note(ui: &mut Ui, rect: Rect) -> Option<PortNoteClick> {
     ui.painter().rect_filled(rect, 4.0, theme::ACCENT_TRANSPARENT_BLUE);
     ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.5, theme::ACCENT_STRONG_BLUE), egui::StrokeKind::Inside);
     let builder = UiBuilder::new().max_rect(rect.shrink2(Vec2::new(6.0, 2.0))).layout(Layout::left_to_right(Align::Center));
     let mut row = ui.new_child(builder);
     let text = RichText::new("This node can add additional input ports.").font(theme::interface(10.0)).color(theme::LABEL_EMPHASIS);
     row.label(text);
-    let mut dismissed = false;
+    let mut clicked = None;
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
         let (close_rect, close) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::click());
         let color = if close.hovered() { theme::LABEL_EMPHASIS } else { theme::BUTTON_BACKGROUND };
         icons::paint(ui, close_rect.shrink(2.0), "x", color);
         if close.clicked() {
-            dismissed = true;
+            clicked = Some(PortNoteClick::Dismiss);
+        }
+        // `Button-Link`, padding 2, 4 before the close button.
+        ui.add_space(4.0);
+        if link_button(ui, "More Info", theme::interface(12.0), Vec2::splat(2.0)).clicked() {
+            clicked = Some(PortNoteClick::MoreInfo);
         }
     });
-    dismissed
+    clicked
 }
 
 /// `InfoHeightRef`: a green note that a Height connection is needed, with
@@ -322,7 +350,9 @@ fn height_note(ui: &mut Ui, rect: Rect) -> bool {
 /// menus on the right.
 fn header_toolbar(ui: &mut Ui, rect: Rect, editor: &Editor, commands: &mut Vec<Command>, actions: &mut Vec<StateAction>) {
     toolbar_background(ui, rect, theme::PANEL_BORDER, 1.0);
-    let inner = rect.shrink(1.0).shrink2(Vec2::new(4.0, 2.0));
+    let sizes = theme::sizes(ui.ctx());
+    let [padding_across, padding_down] = sizes.toolbar_padding;
+    let inner = rect.shrink(1.0).shrink2(Vec2::new(padding_across, padding_down));
     let node = editor.active_node().and_then(|id| editor.document.node(id));
 
     // `mnuIcon` (margin 8, 0, 4, 0), `mnuText` (margin 4, 3, 4, 4) and the
@@ -352,9 +382,12 @@ fn header_toolbar(ui: &mut Ui, rect: Rect, editor: &Editor, commands: &mut Vec<C
 
     let has_node = node.is_some();
     let intent = node.and_then(|node| node.base.get("RenderIntentOverride")).and_then(Value::as_str).unwrap_or("Default").to_string();
-    // Two icon menus docked right, each 32 wide with -5 margins.
-    let menu_rect = Rect::from_center_size(Pos2::new(inner.right() - 11.0, inner.center().y), Vec2::splat(32.0));
-    let presets_rect = menu_rect.translate(Vec2::new(-22.0, 0.0));
+    // Two icon menus docked right, each `Toolbar.ButtonSize` wide with
+    // `Toolbar.MenuMargin` either side.
+    let button = sizes.toolbar_button;
+    let menu_margin = sizes.toolbar_menu_margin;
+    let menu_rect = Rect::from_center_size(Pos2::new(inner.right() - (button / 2.0 + menu_margin), inner.center().y), Vec2::splat(button));
+    let presets_rect = menu_rect.translate(Vec2::new(-(button + 2.0 * menu_margin), 0.0));
     let saved_state = node_states::has_saved_state(ui);
     let mut menu_ui = ui.new_child(UiBuilder::new().max_rect(menu_rect));
     icon_menu(&mut menu_ui, "menu", "Node", None, |ui| {
@@ -375,6 +408,10 @@ fn header_toolbar(ui: &mut Ui, rect: Rect, editor: &Editor, commands: &mut Vec<C
                 };
                 commands.push(Command::SetRenderIntent(static_choice));
             }
+        }
+        menu_separator(ui);
+        if menu_item(ui, None, None, "Show Help for this Node", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::ShowNodeHelp));
         }
     });
     let mut presets_ui = ui.new_child(UiBuilder::new().max_rect(presets_rect));
@@ -522,7 +559,7 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
         };
         if let Some(value) = value {
             editor.document.set_modifier_value(node_id, index, &name, value);
-            editor.changed();
+            editor.modifier_changed();
         }
     }
 
@@ -531,18 +568,18 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
             Edit::None => {}
             Edit::Set(value) => {
                 editor.document.set_value(node_id, &name, value);
-                editor.changed();
+                editor.parameter_changed(node_id);
             }
             Edit::Reset => {
                 // `EditorMenu.ResetProperty`: the type's default value.
                 let default = spec.defaults.get(&name).cloned();
                 if let Some(default) = default {
                     editor.document.set_value(node_id, &name, default);
-                    editor.changed();
+                    editor.parameter_changed(node_id);
                 }
             }
             Edit::Command => commands.push(Command::NodeAction(name)),
-            Edit::Unavailable(what) => editor.report(format!("{what} is not available in Nerthus yet")),
+            Edit::ShowDocs(target) => commands.push(Command::Tools(ToolCommand::ShowDocs(target.to_string()))),
             Edit::AddInput => {
                 if editor.document.add_input(node_id) {
                     editor.changed();
@@ -564,7 +601,7 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 // `XorShift64Star.Next(0, 65536)`.
                 let seed = editor.document.random_seed_below(65536);
                 editor.document.set_value(node_id, &name, Value::from(seed));
-                editor.changed();
+                editor.parameter_changed(node_id);
                 if let Some(id) = seed_boxes.get(&name) {
                     editors::remember_drawn_seed(ui.ctx(), *id, seed as i64);
                 }
@@ -580,7 +617,7 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 let typed = editor.document.automation().calculate_number(&text, &context);
                 if let Some(seed) = typed.and_then(convert_to_int32) {
                     editor.document.set_value(node_id, &name, Value::from(seed));
-                    editor.changed();
+                    editor.parameter_changed(node_id);
                 }
             }
             Edit::Browse => {
@@ -712,9 +749,9 @@ fn modifier_list(ui: &mut Ui, node: &nerthus_engine::NodeData, node_id: i32, col
 fn modifier_slider(ui: &mut Ui, id: egui::Id, parameter: &ParameterSpec, value: &Value, context: &EditorContext, first: bool) -> Edit {
     let integer = parameter.value_type == nerthus_engine::ValueType::Int;
     let mut spec = editors::SliderSpec::of(parameter, context.default, integer);
-    spec.inset = 0.0;
+    spec.inset = Some(0.0);
     if !first {
-        spec.height = 20.0;
+        spec.height = Some(20.0);
     }
     let current = value.as_f64().unwrap_or(0.0);
     let label = parameter.display_name();
@@ -874,7 +911,7 @@ fn parameter_menu(ui: &mut Ui, rect: Rect, enabled: bool, bind_type: BindType, a
         }
         menu_separator(ui);
         if menu_item(ui, None, None, "Help with Automation", "").clicked() {
-            edit = Some(Edit::Unavailable("Automation help"));
+            edit = Some(Edit::ShowDocs(crate::docs::PROPERTY_AUTOMATION));
         }
     });
     edit
@@ -926,41 +963,53 @@ fn parameter_dialogs(ui: &mut Ui, editor: &mut Editor) {
     ui.data_mut(|data| data.insert_temp(dialogs_id(), dialogs));
 }
 
-/// `Separator` (`Separator.Margin` 16, 8, 16, 8).
+/// `Separator` (`Separator.Margin`: 16 across, 8 or 2 down).
 fn separator(ui: &mut Ui) {
-    ui.add_space(8.0);
+    let gap = theme::sizes(ui.ctx()).separator_margin;
+    ui.add_space(gap);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
     let line = [Pos2::new(rect.left() + 16.0, rect.center().y), Pos2::new(rect.right() - 16.0, rect.center().y)];
     ui.painter().line_segment(line, Stroke::new(1.0, theme::MENU_SEPARATOR));
-    ui.add_space(8.0);
+    ui.add_space(gap);
 }
 
-/// A group panel (`Expander`: `#303030`, margin 10, 5, 0, 5): a 45-high
-/// header (`ToggleButton-Expander-DownHeader`: the chevron 17 in, the
-/// title in 12px semibold 42 in), then the editors (margin 0, 0, 4, 16)
-/// while open.
+/// A group panel (`Expander`: `#303030`, margin `Expander.Margin`, padding
+/// `Expander.Padding`): a header `Expander.Toggle.MinHeight` high
+/// (`ToggleButton-Expander-DownHeader`: the chevron in a 26 column at
+/// `Expander.Toggle.IconMargin`, the title in 12px semibold 42 in), then
+/// the editors (margin 0, 0, 4, `Editor.BottomMargin`) while open.
 pub(crate) fn group_panel(ui: &mut Ui, key: (i32, usize), title: &str, expanded: bool, contents: impl FnOnce(&mut Ui)) {
     let id = ui.id().with(("group", key));
     let open: bool = ui.data(|data| data.get_temp(id)).unwrap_or(expanded);
+    let sizes = theme::sizes(ui.ctx());
+    let [margin_left, margin_top, margin_right, margin_bottom] = sizes.expander_margin;
     let mut frame = egui::Frame::new();
     frame.fill = theme::EXPANDER_BACKGROUND;
-    frame.outer_margin = egui::Margin { left: 10, right: 0, top: 5, bottom: 5 };
+    frame.outer_margin = egui::Margin { left: margin_left as i8, right: margin_right as i8, top: margin_top as i8, bottom: margin_bottom as i8 };
+    frame.inner_margin = egui::Margin::same(sizes.expander_padding as i8);
     frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing = Vec2::ZERO;
-        let (header, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), GROUP_HEADER_HEIGHT), Sense::click());
+        let header_height = sizes.expander_header;
+        let (header, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), header_height), Sense::click());
         let chevron = if open { "chevron-down" } else { "chevron-right" };
-        let chevron_rect = Rect::from_min_size(Pos2::new(header.left() + 17.0, header.top() + 2.0 + (GROUP_HEADER_HEIGHT - 2.0 - 16.0) / 2.0), Vec2::splat(16.0));
+        // Centred in what its margin leaves of the column, or against the
+        // margin where it does not fit.
+        let [icon_left, icon_top] = sizes.expander_icon_margin;
+        let room = GROUP_CHEVRON_COLUMN - icon_left;
+        let chevron_left = header.left() + icon_left + ((room - 16.0) / 2.0).max(0.0);
+        let chevron_top = header.top() + icon_top + (header_height - icon_top - 16.0) / 2.0;
+        let chevron_rect = Rect::from_min_size(Pos2::new(chevron_left, chevron_top), Vec2::splat(16.0));
         icons::paint(ui, chevron_rect, chevron, theme::EXPANDER_HEADER);
         let galley = ui.painter().layout_no_wrap(title.to_string(), theme::semibold(12.0), theme::EXPANDER_HEADER);
-        let title_position = Pos2::new(header.left() + 26.0 + 16.0, header.center().y - galley.size().y / 2.0);
+        let title_position = Pos2::new(header.left() + GROUP_CHEVRON_COLUMN + 16.0, header.center().y - galley.size().y / 2.0);
         ui.painter().galley(title_position, galley, theme::EXPANDER_HEADER);
         if response.clicked() {
             ui.data_mut(|data| data.insert_temp(id, !open));
         }
         if open {
             let mut content = egui::Frame::new();
-            content.inner_margin = egui::Margin { left: 0, right: 4, top: 0, bottom: 16 };
+            content.inner_margin = egui::Margin { left: 0, right: 4, top: 0, bottom: sizes.editor_bottom as i8 };
             content.show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing = Vec2::ZERO;

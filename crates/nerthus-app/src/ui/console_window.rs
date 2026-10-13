@@ -1,6 +1,9 @@
-//! The Console (Tools › Console, F12; `DebugConsole`): a window of text
-//! with a prompt (`» `) that runs a few commands, chiefly `printlog`, the
-//! session's log so far, and a few jokes.
+//! The Console (Tools › Console, F12; `DebugConsole` on a `wpfConsole`):
+//! a window of text with a prompt (`» `) that runs a few commands.
+//! `help` (or `list`) lists `clear`, `cls`, `list` and `help`; the others
+//! are hidden: `printlog` (the session's log so far), `copy`, a few jokes,
+//! and `error` and `crash`, which crash Nerthus on purpose so that its
+//! crash handling can be tried.
 
 use egui::{Id, Key, RichText, ScrollArea, TextEdit, Vec2};
 
@@ -13,12 +16,43 @@ const PROMPT: &str = "» ";
 /// `wpfConsole.ReturnPrefix`: how replies are indented.
 const REPLY_INDENT: &str = "    ";
 
-/// A command the console knows, and what `help` says of it.
-const COMMANDS: [(&str, &str); 4] = [
-    ("printlog", "Shows the current log"),
-    ("copy", "Copies everything in the console"),
-    ("clear", "Clears the console"),
-    ("help", "Lists the commands"),
+/// `wpfConsole.InvalidCommand`.
+const INVALID_COMMAND: &str = "is not a valid command. Enter 'list' to see applicable commands.";
+
+/// Where the crocodile's prize is.
+const CROCODILE_PRIZE: &str = "https://www.youtube.com/watch?v=tup0vsNo2wc";
+
+/// A command the console knows, what `help` says of it, and whether `help`
+/// leaves it out (`IsPrivate`).
+struct ConsoleCommand {
+    name: &'static str,
+    description: &'static str,
+    private: bool,
+}
+
+const fn hidden(name: &'static str, description: &'static str) -> ConsoleCommand {
+    ConsoleCommand { name, description, private: true }
+}
+
+const fn listed(name: &'static str, description: &'static str) -> ConsoleCommand {
+    ConsoleCommand { name, description, private: false }
+}
+
+/// The commands in the order `help` lists them.
+const COMMANDS: [ConsoleCommand; 13] = [
+    hidden("printlog", "Shows the current log"),
+    hidden("copy", ""),
+    hidden("iddqd", ""),
+    hidden("idclip", ""),
+    hidden("crocodile", ""),
+    hidden("idkfa", ""),
+    hidden("error", ""),
+    hidden("openpodbaydoors", ""),
+    hidden("crash", "Internal use only"),
+    listed("clear", "Clears the console."),
+    listed("cls", "Clears the console."),
+    listed("list", "Lists all commands"),
+    listed("help", "Lists all commands"),
 ];
 
 /// The window while it is open.
@@ -30,57 +64,106 @@ pub struct ConsoleWindow {
     history: Vec<String>,
     history_position: Option<usize>,
     scroll_to_end: bool,
+    /// How many characters fit on a line of the output, as last drawn.
+    line_characters: usize,
 }
 
 impl ConsoleWindow {
-    /// `SplashText`: the name and version, and how to get help.
     pub fn open() -> ConsoleWindow {
-        let output = format!("Nerthus {}\nType `help` to get a list of available commands.\n\n", env!("CARGO_PKG_VERSION"));
-        ConsoleWindow { output, input: String::new(), history: Vec::new(), history_position: None, scroll_to_end: true }
+        let mut console = ConsoleWindow {
+            output: String::new(),
+            input: String::new(),
+            history: Vec::new(),
+            history_position: None,
+            scroll_to_end: true,
+            line_characters: 80,
+        };
+        console.append_splash();
+        console
     }
 
-    fn reply(&mut self, text: &str) {
-        for line in text.lines() {
-            self.output.push_str(REPLY_INDENT);
-            self.output.push_str(line);
-            self.output.push('\n');
-        }
+    /// `SplashText`: the name and version, and how to get help.
+    fn append_splash(&mut self) {
+        let splash = format!("Nerthus {}\nType `help` to get a list of available commands.", env!("CARGO_PKG_VERSION"));
+        self.append_line(&format!("{splash}\n\n"));
     }
 
-    /// `Con_CommandExecuted`: the command echoed (`ShowExecutedCommand`),
-    /// then run.
-    fn run(&mut self, ctx: &egui::Context, typed: &str) {
-        let command = typed.trim().to_string();
-        self.output.push_str(PROMPT);
-        self.output.push_str(&command);
+    fn append(&mut self, text: &str) {
+        self.output.push_str(text);
+    }
+
+    fn append_line(&mut self, text: &str) {
+        self.output.push_str(text);
         self.output.push('\n');
-        if command.is_empty() {
-            return;
-        }
-        self.history.push(command.clone());
+    }
+
+    /// `AppendSeparator`: a line of dashes five short of the output's
+    /// width.
+    fn append_separator(&mut self) {
+        let count = self.line_characters.saturating_sub(5);
+        self.append_line(&"-".repeat(count));
+    }
+
+    /// `ExecuteCommand`: the line (lower-cased) is echoed and run when its
+    /// first word is a command; anything else is said not to be one.
+    fn run(&mut self, ctx: &egui::Context, typed: &str) {
+        let command_line = typed.to_lowercase();
+        self.history.push(typed.to_string());
         self.history_position = None;
-        match command.to_ascii_lowercase().as_str() {
-            "help" => {
-                let mut text = String::new();
-                for (name, description) in COMMANDS {
-                    text.push_str(&format!("{name:<12}{description}\n"));
+        let first_word = command_line.split(' ').next().unwrap_or_default().trim().to_string();
+        let Some(command) = COMMANDS.iter().find(|command| command.name == first_word) else {
+            self.append_line(&format!("{REPLY_INDENT}\"{typed}\" {INVALID_COMMAND}"));
+            return;
+        };
+        self.append_line(&command_line);
+        if command_line.contains(" /?") {
+            self.append_line(&format!("{REPLY_INDENT}{}", command.description));
+        } else {
+            match command.name {
+                "help" | "list" => self.list_commands(),
+                "cls" | "clear" => {
+                    self.output.clear();
+                    self.append_splash();
                 }
-                self.reply(&text);
+                _ => {}
             }
+        }
+        self.command_executed(ctx, command.name);
+        if command_line == "crash" {
+            panic!("Test crash");
+        }
+    }
+
+    /// The commands `help` lists, then a separator.
+    fn list_commands(&mut self) {
+        let mut text = String::new();
+        for command in COMMANDS.iter().filter(|command| !command.private) {
+            text.push_str(&format!("{REPLY_INDENT}{}: {}\n", command.name, command.description));
+        }
+        self.append(&text);
+        self.append_separator();
+    }
+
+    /// `Con_CommandExecuted`: what the console's own commands do.
+    fn command_executed(&mut self, ctx: &egui::Context, name: &str) {
+        match name {
             "printlog" => {
                 let log = crate::logging::session_text();
-                self.output.push_str(&log);
+                self.append(&log);
             }
             "copy" => ctx.copy_text(self.output.clone()),
-            "clear" | "cls" => self.output.clear(),
-            "iddqd" => self.reply("God Mode enabled.\n\n\n\n\n\n\n\nOf course not! What do you think this is? DOOM?"),
-            "idkfa" => self.reply("Pew! Pew! Pew!"),
-            "idclip" => self.reply("You can run through nodes now."),
-            "openpodbaydoors" => self.reply("\n...\n...\n...\nI cannot do that, Dave."),
-            "crocodile" => self.output.push_str(CROCODILE),
-            other => self.reply(&format!("Unknown command: {other}. Type `help` to get a list of available commands.")),
+            "iddqd" => self.append_line("God Mode enabled.\n\n\n\n\n\n\n\nOf course not! What do you think this is? DOOM?"),
+            "idkfa" => self.append_line("Pew! Pew! Pew!"),
+            "idclip" => self.append_line("You can run through nodes now."),
+            "openpodbaydoors" => self.append_line("\n...\n...\n...\nI cannot do that, Dave."),
+            "crocodile" => {
+                self.append_line(CROCODILE);
+                self.append_line(&format!("Easter egg unlocked. Go to {CROCODILE_PRIZE} to claim your prize."));
+                self.append_separator();
+            }
+            "error" => panic!("Simulated uncaught error!"),
+            _ => {}
         }
-        self.output.push('\n');
     }
 
     /// The arrow keys walk through the commands run.
@@ -120,6 +203,11 @@ pub fn show(ctx: &egui::Context, console: &mut ConsoleWindow) -> bool {
         let font = theme::monospace(13.0);
         let prompt_height = 26.0;
         let output_height = (ui.available_height() - prompt_height - 8.0).max(80.0);
+        // `CalculateMaxCharsPerLine`: the output's width in W's.
+        let glyph_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap("W".to_string(), font.clone(), theme::LABEL_DEFAULT).size().x);
+        if glyph_width > 0.0 {
+            console.line_characters = (ui.available_width() / glyph_width) as usize;
+        }
         let mut scroll = ScrollArea::vertical();
         scroll = scroll.id_salt("console-output");
         scroll = scroll.max_height(output_height);
@@ -148,11 +236,15 @@ pub fn show(ctx: &egui::Context, console: &mut ConsoleWindow) -> bool {
             if !response.has_focus() && !response.lost_focus() {
                 response.request_focus();
             }
+            // `txtCommand_KeyUp`: Enter runs what was typed, unless it is
+            // blank.
             if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                 let typed = std::mem::take(&mut console.input);
-                console.run(ui.ctx(), &typed);
-                console.scroll_to_end = true;
                 response.request_focus();
+                if !typed.trim().is_empty() {
+                    console.scroll_to_end = true;
+                    console.run(ui.ctx(), &typed);
+                }
             }
             if response.has_focus() {
                 if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
@@ -165,4 +257,63 @@ pub fn show(ctx: &egui::Context, console: &mut ConsoleWindow) -> bool {
         });
     });
     open
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(console: &mut ConsoleWindow, typed: &str) {
+        let ctx = egui::Context::default();
+        console.run(&ctx, typed);
+    }
+
+    #[test]
+    fn help_lists_only_the_public_commands() {
+        let mut console = ConsoleWindow::open();
+        console.output.clear();
+        run(&mut console, "HELP");
+        let expected = "help\n    clear: Clears the console.\n    cls: Clears the console.\n    list: Lists all commands\n    help: Lists all commands\n";
+        assert!(console.output.starts_with(expected), "{}", console.output);
+        assert!(!console.output.contains("printlog"));
+    }
+
+    #[test]
+    fn unknown_commands_are_not_echoed() {
+        let mut console = ConsoleWindow::open();
+        console.output.clear();
+        run(&mut console, "Foo bar");
+        assert_eq!(console.output, "    \"Foo bar\" is not a valid command. Enter 'list' to see applicable commands.\n");
+    }
+
+    #[test]
+    fn the_crocodile_points_to_its_prize() {
+        let mut console = ConsoleWindow::open();
+        console.line_characters = 12;
+        run(&mut console, "crocodile");
+        assert!(console.output.contains("Easter egg unlocked. Go to https://www.youtube.com/watch?v=tup0vsNo2wc to claim your prize.\n-------\n"));
+    }
+
+    #[test]
+    fn clearing_shows_the_splash_again() {
+        let mut console = ConsoleWindow::open();
+        run(&mut console, "iddqd");
+        run(&mut console, "cls");
+        assert!(console.output.starts_with("Nerthus "));
+        assert!(!console.output.contains("DOOM"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Simulated uncaught error!")]
+    fn error_crashes_on_purpose() {
+        let mut console = ConsoleWindow::open();
+        run(&mut console, "error");
+    }
+
+    #[test]
+    #[should_panic(expected = "Test crash")]
+    fn crash_crashes_after_running() {
+        let mut console = ConsoleWindow::open();
+        run(&mut console, "crash");
+    }
 }

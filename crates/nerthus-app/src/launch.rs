@@ -1,7 +1,7 @@
 //! Command-line options: `nerthus [project] [--preview <node>] [--show <panel>]
 //! [--size <width>x<height>] [--monitor <index>] [--position <x>,<y>]
 //! [--screenshot <png>] [--cpu-only] [--verbose] [--onboard] [--skip-onboard]
-//! [--mcp] [--mcp-port <port>]`.
+//! [--mcp] [--mcp-port <port>] [--diagnostics]`.
 //!
 //! `--screenshot` waits for the preview to build, saves an image of the
 //! Nerthus window (and nothing else on screen) and quits; it exists for
@@ -16,7 +16,8 @@
 //! `--onboard` and `--skip-onboard` show the first-run setup, or mark it
 //! done without showing it. `--mcp` starts the MCP server for this
 //! session (as `mcp.dat` in the data folder does for every session);
-//! `--mcp-port` starts it on that port.
+//! `--mcp-port` starts it on that port. `--diagnostics` opens Diagnostics
+//! at once (as a crash that is not continued does).
 
 use std::path::PathBuf;
 
@@ -76,10 +77,19 @@ impl LaunchOptions {
                     options.mcp = true;
                     options.mcp_port = arguments.next().and_then(|text| text.parse().ok());
                 }
+                "--diagnostics" => options.show_also("diagnostics"),
                 _ => options.project = Some(PathBuf::from(argument)),
             }
         }
         options
+    }
+
+    /// Adds a window to open at start to those `--show` names.
+    fn show_also(&mut self, panel: &str) {
+        self.show = match self.show.take() {
+            Some(shown) => Some(format!("{shown},{panel}")),
+            None => Some(panel.to_string()),
+        };
     }
 }
 

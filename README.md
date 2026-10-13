@@ -70,60 +70,13 @@ use it.
 ## Not done yet
 
 These parts of Gaea 2.0 are not in Nerthus yet. Left out on purpose:
-licensing, the Houdini, Unity and Unreal bridges (and Tools › Install
-Plugins), and features Gaea ships disabled or unfinished, such as Network
-Build.
 
-### Files
-
-- Dropping a file onto a file parameter, or at a chosen spot on the graph.
-  The windowing library Nerthus uses does not report where a dropped file
-  lands, so files dropped on the graph go to its middle. A file parameter
-  takes a path typed into it or picked with Browse.
+- Licensing.
+- The Houdini, Unity and Unreal bridges (and Tools › Install Plugins).
+- Features Gaea ships disabled or unfinished, such as Network Build.
 - Drawing Windows metafiles (`.emf`) exactly as Windows does. Nerthus draws
   them itself, so edges and text differ slightly, and fonts that aren't
   installed are replaced by similar ones.
-
-### Options with no effect yet
-
-Nerthus shows these in Options but does not act on them:
-
-- Toolbox: Show Satellite Maps List as a Single Stack.
-- Graph: Allow node shortcuts only when cursor is inside the graph; Hide
-  Graph Tabs (when there is only one); Record Graph Movements and Zoom in
-  Undos (on by default: panning the graph adds an undo step).
-- Node: Node Style (Muted or Vibrant); Show shine effect on Node when build
-  completes; Show values with high precision; Accept values when clicking
-  outside of editable field; Use slider for Seed instead of new Seed control.
-- Viewport: Antialiasing; Do not clear viewport when unselecting a node
-  (Nerthus never clears it, Gaea does unless this is on); Conserve memory
-  when displaying 4K terrains.
-- Build: Purge unnecessary cache during build to conserve memory.
-- Experimental: Compact Interface; Use new Auto Layout method; Use Adaptive
-  Debounce for Smoother Node Updates.
-- Two settings Gaea reads from its settings files without showing them:
-  `ShowTicks` (slider ticks) and `AllowValuesBeyondRange` (node results not
-  clamped to 0–1).
-
-### Compute
-
-- The NVIDIA profile that Options › Compute and the first-run GPU setup
-  create on Windows (prefer the NVIDIA GPU; CUDA without system-memory
-  fallback).
-
-### Help and Tools
-
-- Project › Statistics, which says it isn't available (the Data View opens
-  the same window).
-- Documentation. Help › Node Reference, the property panel's Show Help for
-  this Node, a parameter's Help with Automation and the "More Info" and
-  "Learn more" links open Gaea's online documentation; Nerthus has none, and
-  Help › User Guide opens this README.
-- Installing updates. Gaea downloads the new installer and runs it; Nerthus
-  opens the release page.
-- The console's hidden commands: `error` (a simulated crash, for testing
-  crash reporting) and the joke ones (`iddqd`, `idkfa`, `idclip`,
-  `crocodile`, `openpodbaydoors`).
 
 ## License
 
@@ -132,3 +85,7 @@ MIT (see [LICENSE](LICENSE)). The Roboto and Roboto Mono fonts in
 licence texts beside them. The palettes in `crates/nerthus-nodes/data/color`
 are Gaea's colour library, included so that SatelliteMap and the texture nodes
 match Gaea.
+
+The documentation in `crates/nerthus-app/assets/docs` (Help › User Guide) is
+adapted from Gaea 2's documentation, which is published under the MIT licence;
+its licence text is in `crates/nerthus-app/assets/docs/LICENSE.txt`.

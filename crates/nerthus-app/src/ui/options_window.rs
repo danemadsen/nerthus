@@ -12,7 +12,7 @@
 
 use crossbeam_channel::{Receiver, TryRecvError};
 use egui::{Align, Color32, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2};
-use nerthus_compute::{DeviceInfo, DeviceType, Scores};
+use nerthus_compute::{DeviceInfo, DeviceType, ProfileError, Scores};
 
 use crate::editor::Editor;
 use crate::icons;
@@ -94,6 +94,10 @@ struct ComputePage {
     /// `consoleXPU`.
     console: String,
     benchmark: Option<Receiver<BenchmarkReport>>,
+    /// A documentation page asked for.
+    docs: Option<&'static str>,
+    /// "Enforce Optimal Settings" making the NVIDIA profile.
+    enforcing: Option<Receiver<Result<Vec<String>, ProfileError>>>,
 }
 
 impl ComputePage {
@@ -104,6 +108,8 @@ impl ComputePage {
             scores: Scores::new(),
             console: String::new(),
             benchmark: None,
+            docs: None,
+            enforcing: None,
         };
         page.load();
         page
@@ -161,6 +167,40 @@ impl ComputePage {
         }
     }
 
+    /// `BtnEnforce_OnClick`: the NVIDIA profile made on a worker.
+    fn start_enforcing(&mut self) {
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        let spawned = std::thread::Builder::new().name("nvidia profile".to_string()).spawn(move || {
+            let _ = sender.send(nerthus_compute::enforce_optimal_settings());
+        });
+        match spawned {
+            Ok(_) => self.enforcing = Some(receiver),
+            Err(error) => log::error!("Cannot make the NVIDIA profile: {error}"),
+        }
+    }
+
+    /// What making the NVIDIA profile came to, once it has.
+    fn poll_enforcing(&mut self) -> Option<Notice> {
+        let receiver = self.enforcing.as_ref()?;
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => Err(ProfileError::NoDriver),
+        };
+        self.enforcing = None;
+        let notice = match result {
+            Ok(_) => {
+                let text = "An optimal settings profile has been created for Nerthus and NVidia devices. You may need to restart Nerthus for it to take effect.";
+                Notice { title: "Optimal Settings Enforced", text: text.to_string() }
+            }
+            Err(_) => {
+                let text = "Optimal settings could not set. Please try again later, or contact Tech Support.";
+                Notice { title: "Nerthus", text: text.to_string() }
+            }
+        };
+        Some(notice)
+    }
+
     /// `BtnBenchmark_OnClick`: scores every device on a worker and saves
     /// them.
     fn start_benchmark(&mut self) {
@@ -216,6 +256,8 @@ pub struct OptionsOutcome {
     pub accepted: bool,
     /// General's Run Diagnostics or Factory Reset.
     pub run_diagnostics: bool,
+    /// A documentation page to open.
+    pub docs: Option<&'static str>,
 }
 
 /// The page list: headers right-aligned, the selected one on its group's
@@ -389,8 +431,9 @@ fn device_group(ui: &mut Ui, group: &[&DeviceInfo], page: &mut ComputePage, edit
         if device.requires_driver_update {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
+                // `B_Click`: the documentation on GPU drivers.
                 if alert_button(ui, "Requires driver update").clicked() {
-                    page.console = format!("{} ({}) cannot run Nerthus's compute kernels; a newer driver may help.", device.device_name, device.backend_name);
+                    page.docs = Some(crate::docs::DRIVER_UPDATE);
                 }
             });
         }
@@ -472,8 +515,15 @@ fn compute_buttons(ui: &mut Ui, editor: &Editor, page: &mut ComputePage, notice:
             page.start_benchmark();
         }
     }
-    let enforce = button(ui, "Enforce Optimal Settings", false, false);
-    enforce.on_disabled_hover_text("Not available: Nerthus makes no NVIDIA settings profile.");
+    // `btnEnforce`: the NVIDIA profile, which only Windows has.
+    let can_enforce = cfg!(windows) && page.enforcing.is_none();
+    let enforce = button(ui, "Enforce Optimal Settings", false, can_enforce);
+    if enforce.clicked() {
+        page.start_enforcing();
+    }
+    if !cfg!(windows) {
+        enforce.on_disabled_hover_text("NVIDIA settings profiles are made on Windows.");
+    }
     if !editor.compute.cpu_only && button(ui, "Use CPU-only Mode", false, true).clicked() {
         let written = user::data_folder().map(|folder| std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(folder.join(nerthus_compute::CPU_ONLY_FILE), "!")));
         let text = match written {
@@ -564,7 +614,11 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, state: &mut Option<Options
         options.copy = Some(OptionsCopy::load(&editor.user.options, &editor.user.preferences));
     }
     options.compute.poll();
-    if options.compute.benchmark.is_some() || options.compute.finding.is_some() {
+    if let Some(notice) = options.compute.poll_enforcing() {
+        options.notice = Some(notice);
+    }
+    let working = options.compute.benchmark.is_some() || options.compute.finding.is_some() || options.compute.enforcing.is_some();
+    if working {
         ctx.request_repaint();
     }
     let mut open = true;
@@ -593,7 +647,10 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, state: &mut Option<Options
                     ui.set_min_size(inside);
                     ui.set_max_size(inside);
                     match options.tab {
-                        OptionsTab::Compute => compute_page(ui, editor, &mut options.compute, &mut options.notice),
+                        OptionsTab::Compute => {
+                            compute_page(ui, editor, &mut options.compute, &mut options.notice);
+                            outcome.docs = options.compute.docs.take();
+                        }
                         tab => {
                             if let Some(copy) = options.copy.as_mut()
                                 && options_pages::page(ui, tab, copy, dialogs) == Some(PageRequest::RunDiagnostics)

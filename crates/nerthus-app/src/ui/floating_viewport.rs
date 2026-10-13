@@ -142,6 +142,7 @@ pub fn draw(
         return;
     }
     ctx.set_zoom_factor(editor.user.options.ui_scale());
+    crate::theme::set_settings(&ctx, editor.user.options.interface_settings());
     let full = ctx.content_rect();
     let builder = UiBuilder::new().layer_id(LayerId::background()).max_rect(full);
     let mut root = Ui::new(ctx.clone(), "nerthus-floating-viewport".into(), builder);

@@ -343,12 +343,17 @@ fn row_label(ui: &mut Ui, text: &str, width: f32) {
     });
 }
 
-/// `ListBox-OptionsX`: one segment per choice; the one clicked.
+/// `ListBox-OptionsX`: one segment per choice (`OptionsX.Item.Padding`
+/// round its text, `OptionsX.Item.Margin` apart); the one clicked.
 fn options_x(ui: &mut Ui, choices: &[&str], current: Option<usize>, width: Option<f32>) -> Option<usize> {
     let mut chosen = None;
+    let sizes = theme::sizes(ui.ctx());
+    let gap = sizes.option_margin;
+    let height = 16.0 + 2.0 * sizes.option_padding[1];
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
-        let segment_width = width.map(|width| (width - 2.0 * (choices.len() as f32 - 1.0)) / choices.len() as f32);
+        ui.spacing_mut().item_spacing = Vec2::new(gap, gap);
+        ui.spacing_mut().button_padding.x = sizes.option_padding[0];
+        let segment_width = width.map(|width| (width - gap * (choices.len() as f32 - 1.0)) / choices.len() as f32);
         for (index, name) in choices.iter().enumerate() {
             let selected = current == Some(index);
             let text_color = if selected { theme::LABEL_EMPHASIS } else { theme::LABEL_DEFAULT };
@@ -356,7 +361,7 @@ fn options_x(ui: &mut Ui, choices: &[&str], current: Option<usize>, width: Optio
             let mut button = egui::Button::new(text);
             button = button.fill(if selected { theme::OPTIONS_SELECTION } else { theme::BUTTON_BACKGROUND });
             button = button.stroke(Stroke::new(1.0, theme::BUTTON_BORDER));
-            button = button.min_size(Vec2::new(segment_width.unwrap_or(0.0), 24.0));
+            button = button.min_size(Vec2::new(segment_width.unwrap_or(0.0), height));
             if ui.add(button).clicked() && !selected {
                 chosen = Some(index);
             }

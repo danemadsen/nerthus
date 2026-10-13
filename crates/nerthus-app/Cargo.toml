@@ -27,20 +27,29 @@ chrono.workspace = true
 crossbeam-channel.workspace = true
 image.workspace = true
 indexmap.workspace = true
+pulldown-cmark.workspace = true
 rfd.workspace = true
 log.workspace = true
+raw-window-handle.workspace = true
 resvg.workspace = true
+serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
 toml.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-app-kit = { workspace = true, features = ["std", "NSApplication", "NSEvent", "NSImage", "NSResponder", "NSView", "NSWindow"] }
 objc2-foundation = { workspace = true, features = ["std", "NSData"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 winit.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl.workspace = true
 
 # build.rs embeds the icon in the executable when building on Windows.
 [target.'cfg(windows)'.build-dependencies]

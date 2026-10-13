@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::{App, DetectChanges, Plugin, Res, ResMut, Resource, Single, Update, Window, With};
@@ -154,6 +154,17 @@ pub struct Editor {
     /// The property area's "Toggle Gizmo" (`tglGizmo`): off again whenever
     /// the selection changes.
     pub gizmo_active: bool,
+    /// Nodes to shine since the graph last looked (`NodeElement.Shine`):
+    /// each node built well with the renderer at `Normal`, and a bookmark
+    /// gone to.
+    pub shines: Vec<i32>,
+    /// The viewport was cleared (`B.ClearViewport`) and nothing has been
+    /// previewed since; the cleared view is still to be shown, in the
+    /// light it was cleared in, while `pending_clear` holds it.
+    viewport_cleared: bool,
+    pending_clear: Option<ViewportLighting>,
+    /// When a debounced parameter edit's build is due.
+    build_due: Option<Instant>,
     /// V: the preview laid flat, its colours kept (`Shell.isFlat`), until
     /// the next build finishes.
     pub flat_preview: bool,
@@ -278,6 +289,10 @@ impl Editor {
             graph_region: None,
             engine_active: true,
             gizmo_active: false,
+            shines: Vec::new(),
+            viewport_cleared: false,
+            pending_clear: None,
+            build_due: None,
             flat_preview: false,
             tiled_preview: false,
             statuses: HashMap::new(),
@@ -325,6 +340,8 @@ impl Editor {
             exit_after_freeze: false,
         };
         editor.load_viewport_state();
+        // `SetupNewFile` starts with the viewport cleared.
+        editor.clear_viewport();
         editor.select_initial_node();
         editor
     }
@@ -343,6 +360,9 @@ impl Editor {
     /// Replaces the document (File > New, Open).
     pub fn set_document(&mut self, document: Document) {
         self.freeze_on_close();
+        // `CloseFile` clears the viewport whatever the options say, in the
+        // closing project's light.
+        self.clear_viewport();
         self.preview_resolution = preview_resolution_of(&document);
         self.document = document;
         self.document_serial += 1;
@@ -363,6 +383,10 @@ impl Editor {
         self.document.apply_node_display(&ids, &self.user.options);
         self.load_viewport_state();
         self.load_macros();
+        if self.document.path.is_none() {
+            // `SetupNewFile` clears it again, in the new project's light.
+            self.pending_clear = Some(self.lighting);
+        }
         self.select_initial_node();
         self.thaw_on_open();
         // The disk cache's tasks go with the next request, preview or not.
@@ -611,38 +635,95 @@ impl Editor {
             self.gizmo_active = false;
         }
         self.selection.clear();
-        if let Some(id) = node {
-            self.selection.push(id);
-            if !self.preview_locked {
-                self.preview(Some(id));
+        match node {
+            Some(id) => {
+                self.selection.push(id);
+                if !self.preview_locked {
+                    self.preview(Some(id));
+                }
             }
+            None => self.selection_without_one_node(),
         }
+    }
+
+    /// A group chosen in place of the nodes: the nodes are let go but the
+    /// preview stays (`Graph_SelectionChanged` hands a group on as a group,
+    /// so `PropertyArea.ChangeNode` never runs).
+    pub fn select_group(&mut self) {
+        if !self.selection.is_empty() {
+            self.gizmo_active = false;
+        }
+        self.selection.clear();
     }
 
     /// Adds a node to or removes it from the selection (Ctrl-click).
     pub fn toggle_selected(&mut self, node: i32) {
-        if let Some(position) = self.selection.iter().position(|id| *id == node) {
-            self.selection.remove(position);
-            return;
+        match self.selection.iter().position(|id| *id == node) {
+            Some(position) => {
+                self.selection.remove(position);
+            }
+            None => self.selection.push(node),
         }
-        self.selection.push(node);
-        if !self.preview_locked {
-            self.preview(Some(node));
-        }
+        self.follow_selection();
     }
 
     pub fn set_selection(&mut self, nodes: Vec<i32>) {
         self.selection = nodes;
-        let active = self.active_node();
-        if !self.preview_locked && active.is_some() {
-            self.preview(active);
+        self.follow_selection();
+    }
+
+    /// `PropertyArea.ChangeNode`: a single node selected is previewed;
+    /// none, or several, leave the preview.
+    fn follow_selection(&mut self) {
+        match self.selection.as_slice() {
+            [only] => {
+                let only = *only;
+                if !self.preview_locked {
+                    self.preview(Some(only));
+                }
+            }
+            _ => self.selection_without_one_node(),
         }
+    }
+
+    /// No node, or several, selected: the viewport is cleared
+    /// (`B.ClearViewport`) unless a preview is locked or Do not clear
+    /// viewport when unselecting a node is on.
+    fn selection_without_one_node(&mut self) {
+        if self.preview_locked || self.user.options.dont_clear_viewport() {
+            return;
+        }
+        self.clear_viewport();
+    }
+
+    /// `B.ClearViewport`: nothing previewed; the 3D and 2D views show a
+    /// flat terrain lit by the clearing renderer, once `process_builds`
+    /// gets to it.
+    pub fn clear_viewport(&mut self) {
+        if self.viewport_cleared {
+            return;
+        }
+        self.preview(None);
+        self.outputs.clear();
+        self.underlay = None;
+        self.custom_underlay = None;
+        self.custom_colours = None;
+        self.port_intents.clear();
+        self.preview_error = None;
+        // A render on its way is of the preview gone.
+        self.needs_render = false;
+        self.shown_render = self.render_generation;
+        self.viewport_cleared = true;
+        self.pending_clear = Some(self.lighting);
     }
 
     /// Shows a node in the viewport.
     pub fn preview(&mut self, node: Option<i32>) {
         if self.preview_node == node {
             return;
+        }
+        if node.is_some() {
+            self.viewport_cleared = false;
         }
         self.preview_node = node;
         self.preview_port = "Out".to_string();
@@ -693,6 +774,34 @@ impl Editor {
         }
         self.preview_resolution = resolution;
         self.needs_build = self.preview_node.is_some();
+    }
+
+    /// A parameter edited in the property area (`EditorBase.Control_Changed`):
+    /// the node builds once its edits pause for the debounce
+    /// (`UpdateEventFired`), 100 ms; with Use Adaptive Debounce for
+    /// Smoother Node Updates, by how long the node last took
+    /// (`GetDebounceLimit`).
+    pub fn parameter_changed(&mut self, node: i32) {
+        let wait = if self.user.options.adaptive_debounce() { adaptive_debounce(self.status(node).milliseconds) } else { DEBOUNCE };
+        self.build_after(wait);
+    }
+
+    /// A modifier's parameter edited (`ModifierUpdateEventFired`): 100 ms.
+    pub fn modifier_changed(&mut self) {
+        self.build_after(DEBOUNCE);
+    }
+
+    /// Builds `wait` after the last call (now, for no wait).
+    fn build_after(&mut self, wait: Duration) {
+        if self.preview_node.is_none() {
+            return;
+        }
+        if wait.is_zero() {
+            self.build_due = None;
+            self.needs_build = true;
+            return;
+        }
+        self.build_due = Some(Instant::now() + wait);
     }
 
     /// Call after editing the document: rebuilds what the edit touched.
@@ -1010,6 +1119,8 @@ impl Editor {
     }
 
     pub(crate) fn request_build(&mut self, worker: &BuildWorker) {
+        // The build takes every edit made so far, debounced ones too.
+        self.build_due = None;
         let bake_work = self.pending_bake.is_some() || !self.pending_unbake.is_empty() || self.pending_load_all_bakes || !self.pending_node_commands.is_empty();
         let bake_work = bake_work || !self.disk_cache.tasks.is_empty();
         let bake_work = bake_work || self.watched_refresh || self.pending_preparation;
@@ -1074,6 +1185,7 @@ impl Editor {
             disk_cache: self.disk_cache_settings(),
             disk_cache_tasks: std::mem::take(&mut self.disk_cache.tasks),
             cached_export: self.pending_cached_export.take(),
+            engine_preferences: self.user.preferences.engine_preferences(),
         };
         let order = nerthus_engine::Engine::build_order(&asset.terrain, target);
         self.build_total = order.iter().filter(|id| self.status(**id).state != NodeState::Built).count();
@@ -1091,6 +1203,11 @@ impl Editor {
                 status.building = true;
             }
             BuildEvent::NodeFinished { node, milliseconds, state, error, range } => {
+                // `Build_BuildFinished`: a node that built (`Succeeded`)
+                // shines unless the renderer is drawing quickly.
+                if state == NodeState::Built && error.is_none() && self.render_quality == RenderQuality::Normal {
+                    self.shines.push(node);
+                }
                 let status = NodeStatus {
                     state,
                     building: false,
@@ -1370,6 +1487,20 @@ impl Editor {
         preview.revision += 1;
     }
 
+    /// The cleared viewport (`B.ClearViewport`): a flat map at the preview
+    /// resolution, in the colour the clearing renderer lights it.
+    fn show_cleared(&mut self, preview: &mut TerrainPreview) {
+        let Some(lighting) = self.pending_clear.take() else {
+            return;
+        };
+        let resolution = self.preview_resolution;
+        let colours = Arc::new(crate::viewport_render::cleared_colours(&lighting, resolution));
+        preview.heights = Some(Arc::new(Map::new(Resolution::square(resolution), 1)));
+        self.render_colours = Some(colours.clone());
+        preview.colours = Some(colours);
+        preview.revision += 1;
+    }
+
     /// The renderer and lighting the project was saved with
     /// (`TerrainState.Viewport`); a project's renderer starts without mask
     /// enhancement, as `SetRender…` makes a new one.
@@ -1571,6 +1702,24 @@ impl RenderSource<'_> {
     }
 }
 
+/// `debounceInterval`: how long a parameter edit waits for the next.
+const DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// `GetDebounceLimit`: no wait for a node that took under 100 ms, 100 ms up
+/// to a second, 500 up to five and 1000 past that.
+fn adaptive_debounce(build_milliseconds: f32) -> Duration {
+    let wait = if build_milliseconds < 100.0 {
+        0
+    } else if build_milliseconds > 5000.0 {
+        1000
+    } else if build_milliseconds > 1000.0 {
+        500
+    } else {
+        100
+    };
+    Duration::from_millis(wait)
+}
+
 /// The project's preview resolution (`State.PreviewResolution`), 1024 if
 /// it has none.
 fn preview_resolution_of(document: &Document) -> usize {
@@ -1627,7 +1776,13 @@ impl Plugin for EditorPlugin {
     }
 }
 
-fn process_builds(mut editor: ResMut<Editor>, worker: Res<BuildWorker>, renderer: Res<ViewportRenderer>, mut preview: ResMut<TerrainPreview>) {
+fn process_builds(
+    mut editor: ResMut<Editor>,
+    worker: Res<BuildWorker>,
+    renderer: Res<ViewportRenderer>,
+    mut preview: ResMut<TerrainPreview>,
+    mut redraw: bevy::ecs::message::MessageWriter<bevy::window::RequestRedraw>,
+) {
     let editing = editor.as_mut();
     editing.compute.poll(&mut editing.user);
     for event in worker.poll() {
@@ -1636,6 +1791,14 @@ fn process_builds(mut editor: ResMut<Editor>, worker: Res<BuildWorker>, renderer
     editor.poll_export_build();
     if std::mem::take(&mut editor.cancel_build) {
         worker.cancel();
+    }
+    if editor.build_due.is_some_and(|due| Instant::now() >= due) {
+        editor.build_due = None;
+        editor.needs_build = editor.preview_node.is_some();
+    }
+    // Frames keep coming while a debounced build waits, so it goes when due.
+    if editor.build_due.is_some() {
+        redraw.write(bevy::window::RequestRedraw);
     }
     if editor.needs_build {
         editor.needs_build = false;
@@ -1648,6 +1811,7 @@ fn process_builds(mut editor: ResMut<Editor>, worker: Res<BuildWorker>, renderer
         }
     }
     editor.show_render(&renderer, &mut preview);
+    editor.show_cleared(&mut preview);
     // The Region Manager's "Loading preview" lasts until the render is in
     // (or a build means there is none to wait for).
     if editor.render_settled() || editor.building {
@@ -1656,6 +1820,11 @@ fn process_builds(mut editor: ResMut<Editor>, worker: Res<BuildWorker>, renderer
     if preview.tiled != editor.tiled_preview {
         preview.tiled = editor.tiled_preview;
         preview.revision += 1;
+    }
+    // Conserve memory when displaying 4K terrains (`SendViewportPreferences`).
+    let conserve_memory = editor.user.options.prevent_hi_res();
+    if preview.conserve_memory != conserve_memory {
+        preview.conserve_memory = conserve_memory;
     }
 }
 
@@ -1874,6 +2043,53 @@ fn copy_folder(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adaptive_debounce_follows_the_build_time() {
+        assert_eq!(adaptive_debounce(40.0), Duration::ZERO);
+        assert_eq!(adaptive_debounce(100.0), Duration::from_millis(100));
+        assert_eq!(adaptive_debounce(1000.0), Duration::from_millis(100));
+        assert_eq!(adaptive_debounce(1000.5), Duration::from_millis(500));
+        assert_eq!(adaptive_debounce(5000.0), Duration::from_millis(500));
+        assert_eq!(adaptive_debounce(9000.0), Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn deselecting_clears_the_viewport_unless_asked_not_to() {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let perlin = document.add_node("Perlin", [26300.0, 26000.0]).unwrap();
+        let mut editor = Editor::new(document);
+        // A project starts cleared.
+        assert!(editor.pending_clear.take().is_some());
+        editor.select(Some(mountain));
+        assert_eq!(editor.preview_node, Some(mountain));
+        editor.select(None);
+        assert_eq!(editor.preview_node, None);
+        assert!(editor.pending_clear.take().is_some());
+        // Several selected leave the preview too.
+        editor.select(Some(perlin));
+        assert!(!editor.viewport_cleared);
+        editor.set_selection(vec![mountain, perlin]);
+        assert_eq!(editor.preview_node, None);
+        // A group chosen lets the nodes go but keeps the preview.
+        editor.select(Some(perlin));
+        editor.pending_clear = None;
+        editor.select_group();
+        assert!(editor.selection.is_empty());
+        assert_eq!(editor.preview_node, Some(perlin));
+        assert!(editor.pending_clear.is_none());
+        // `DontClearViewport`: the last preview stays.
+        editor.user.options.set_value("DontClearViewport", serde_json::json!(true));
+        editor.select(Some(perlin));
+        editor.select(None);
+        assert_eq!(editor.preview_node, Some(perlin));
+        assert!(editor.pending_clear.is_none());
+        // A new project clears it whatever the options say.
+        editor.set_document(Document::new());
+        assert_eq!(editor.preview_node, None);
+        assert!(editor.pending_clear.is_some());
+    }
 
     /// A Mixer previewed, its Terrain fed by a Perlin, as a build of it
     /// would leave the editor (`underlay` the general one).

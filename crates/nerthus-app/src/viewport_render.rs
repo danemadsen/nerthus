@@ -10,7 +10,7 @@ use std::thread;
 use bevy::prelude::Resource;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use nerthus_engine::json::f32_value;
-use nerthus_engine::{Map, RenderIntent};
+use nerthus_engine::{Map, RenderIntent, Resolution};
 use nerthus_nodes::shade::{AmbientOcclusionModel, LightRig};
 use nerthus_nodes::{colour, histogram, maths};
 use nerthus_render::TerrainColours;
@@ -502,6 +502,48 @@ pub fn constructor_render(heightfield: &Map, colorfield: Option<&Map>, lighting:
     pack_bytes(&maps.color)
 }
 
+/// `B.ClearViewport`'s colours: a flat map lit by the clearing renderer
+/// (hybrid occlusion, soft shadows, ground brightness 0.8, the project's
+/// sun), `resolution` square. Flat, every texel lights the same, so a small
+/// map is lit and its middle colour fills the rest.
+pub fn cleared_colours(lighting: &ViewportLighting, resolution: usize) -> TerrainColours {
+    let rig = LightRig {
+        ao_model: AmbientOcclusionModel::Hybrid,
+        shadow_quality: -4,
+        hybrid_ao_octaves: 4,
+        hybrid_ao_quality: 4,
+        automatic_colors: true,
+        sun_angular_diameter: 0.0,
+        default_color: 0.8,
+        shadows: true,
+        ambient_lighting: true,
+        ambient_occlusion: true,
+        sun_intensity: 1.0,
+        ambient_intensity: 1.0,
+        ..LightRig::default()
+    };
+    // `CreateRenderer`: no azimuth is -33; no altitude puts 25 in the
+    // azimuth instead.
+    let mut azimuth = lighting.sun_azimuth;
+    let altitude = lighting.sun_elevation;
+    if azimuth == 0.0 {
+        azimuth = -33.0;
+    }
+    if altitude == 0.0 {
+        azimuth = 25.0;
+    }
+    let sky = rig.sky(azimuth, altitude);
+    let lit_side = 32;
+    let flat = Map::new(Resolution::square(lit_side), 1);
+    let maps = rig.shade(&sky, &flat, None, (5000.0, 2500.0));
+    let lit = pack_bytes(&maps.color);
+    let middle = (lit_side / 2 * lit_side + lit_side / 2) * 3;
+    let colour = [lit.rgb[middle], lit.rgb[middle + 1], lit.rgb[middle + 2]];
+    let side = resolution.max(1);
+    let rgb = colour.repeat(side * side);
+    TerrainColours { width: side, height: side, rgb }
+}
+
 /// `RefreshLighting`, then the quality's switches: soft shadows and hybrid
 /// occlusion at `Normal`, quick shadows and local occlusion at `Fast`,
 /// neither at `Fastest`.
@@ -626,7 +668,6 @@ fn run(jobs: Receiver<RenderJob>, views: Sender<RenderedView>) {
 
 #[cfg(test)]
 mod tests {
-    use nerthus_engine::Resolution;
     use serde_json::json;
 
     use super::*;
@@ -759,5 +800,26 @@ mod tests {
         write_render_mode(&mut written, RenderMode::Data);
         let keys: Vec<&str> = written.keys().map(String::as_str).collect();
         assert_eq!(keys, ["$id", "Camera", "AmbientOcclusion", "Shadows"]);
+    }
+
+    #[test]
+    fn a_cleared_viewport_is_one_lit_colour() {
+        let lighting = ViewportLighting::default();
+        let cleared = cleared_colours(&lighting, 8);
+        assert_eq!((cleared.width, cleared.height), (8, 8));
+        assert_eq!(cleared.rgb.len(), 8 * 8 * 3);
+        let first = &cleared.rgb[..3];
+        assert!(cleared.rgb.chunks(3).all(|pixel| pixel == first));
+        // Lit, not black: ground brightness 0.8 under the sun and sky.
+        assert!(first.iter().any(|channel| *channel > 64), "{first:?}");
+        // Flat ground lights the same whatever the size it is lit at.
+        let small = Map::new(Resolution::square(32), 1);
+        let large = Map::new(Resolution::square(64), 1);
+        let rig = LightRig { ao_model: AmbientOcclusionModel::Hybrid, default_color: 0.8, ..LightRig::default() };
+        let sky = rig.sky(-33.0, 25.0);
+        let small_lit = pack_bytes(&rig.shade(&sky, &small, None, (5000.0, 2500.0)).color);
+        let large_lit = pack_bytes(&rig.shade(&sky, &large, None, (5000.0, 2500.0)).color);
+        assert_eq!(small_lit.rgb[..3], large_lit.rgb[..3]);
+        assert!(large_lit.rgb.chunks(3).all(|pixel| pixel == &large_lit.rgb[..3]));
     }
 }

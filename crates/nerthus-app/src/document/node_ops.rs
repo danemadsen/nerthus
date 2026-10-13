@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 
+use indexmap::IndexMap;
 use nerthus_engine::{Catalogue, NodeData};
 use serde_json::{json, Value};
 
@@ -369,17 +370,28 @@ pub struct Layout<'a> {
     extent: &'a dyn Fn(i32) -> [f32; 2],
     /// `verticalHeight`: how far down the layout has reached.
     vertical_height: f32,
+    /// Use new Auto Layout method (`Options.NewAutolayout`): one node, or
+    /// the whole tab, laid out on the block grid ([`MetaGrid`]).
+    new_method: bool,
 }
 
 impl<'a> Layout<'a> {
     pub fn new(document: &'a mut Document, tab: usize, extent: &'a dyn Fn(i32) -> [f32; 2]) -> Self {
-        Self { document, tab, extent, vertical_height: 0.0 }
+        Self { document, tab, extent, vertical_height: 0.0, new_method: false }
+    }
+
+    /// The layout with Use new Auto Layout method on or off.
+    pub fn with_new_method(mut self, on: bool) -> Self {
+        self.new_method = on;
+        self
     }
 
     /// `LayoutGraph`: one node selected, what follows it laid out ("Layout
     /// node applied on Name"); more than two, what follows each of them
     /// within the selection; else the whole tab ("Layout node applied on
-    /// all nodes").
+    /// all nodes"). The new method lays out the one node, or the whole tab
+    /// from its leftmost node, on the block grid; more than two still go
+    /// the old way.
     pub fn run(mut self, selection: &[i32]) {
         match selection.len() {
             1 => {
@@ -387,7 +399,11 @@ impl<'a> Layout<'a> {
                     return;
                 };
                 self.document.checkpoint(format!("Layout node applied on {name}"));
-                self.layout_node(selection[0], None);
+                if self.new_method {
+                    self.meta_grid(selection[0]);
+                } else {
+                    self.layout_node(selection[0], None);
+                }
             }
             count if count > 2 => {
                 self.document.checkpoint("Layout node applied on multiple selected nodes");
@@ -395,8 +411,41 @@ impl<'a> Layout<'a> {
                     self.layout_node(*id, Some(selection));
                 }
             }
+            _ if self.new_method => {
+                // The leftmost node of the tab starts it (`MinBy` X: the
+                // first of equals).
+                let leftmost = {
+                    let nodes = self.document.terrain().nodes.values();
+                    let on_tab = nodes.filter(|node| node_tab(node) == self.tab);
+                    on_tab.min_by(|left, right| left.position[0].total_cmp(&right.position[0])).map(|node| node.id)
+                };
+                let Some(start) = leftmost else {
+                    return;
+                };
+                self.document.checkpoint("Layout node applied on all nodes");
+                self.meta_grid(start);
+            }
             _ => self.layout_all(),
         }
+    }
+
+    /// `MetaGrid.StartLayout`: works out the blocks, then moves the nodes.
+    fn meta_grid(&mut self, start: i32) {
+        let nodes: Vec<&NodeData> = self.document.terrain().nodes.values().filter(|node| node_tab(node) == self.tab).collect();
+        let Some(start_node) = nodes.iter().find(|node| node.id == start) else {
+            return;
+        };
+        let mut grid = MetaGrid::default();
+        grid.lay_out(start_node, &nodes);
+        let corner = [start_node.position[0] - BLOCK_WIDTH, start_node.position[1] - BLOCK_WIDTH];
+        let mut moves = Vec::new();
+        for (id, (column, row)) in &grid.organized {
+            let width = (self.extent)(*id)[0];
+            let x = *column as f32 * BLOCK_WIDTH + (BLOCK_WIDTH * 0.5 - width / 2.0);
+            let y = *row as f32 * BLOCK_HEIGHT;
+            moves.push((*id, [x + corner[0], y + corner[1]]));
+        }
+        self.document.move_nodes(&moves, false);
     }
 
     /// The nodes of the tab reading from `node`, in the terrain's order.
@@ -486,6 +535,102 @@ impl<'a> Layout<'a> {
             // Each root is laid out twice.
             self.layout_node(root, None);
             self.layout_node(root, None);
+        }
+    }
+}
+
+/// `MetaGrid`'s blocks: 288 wide and 196 high (`BlockWidth`,
+/// `BlockHeight`).
+const BLOCK_WIDTH: f32 = 288.0;
+const BLOCK_HEIGHT: f32 = 196.0;
+
+/// `MetaGrid`: the block each node laid out takes (column, row), in the
+/// order they were placed, and the blocks taken.
+#[derive(Default)]
+struct MetaGrid {
+    organized: IndexMap<i32, (i32, i32)>,
+    blocks: HashSet<(i32, i32)>,
+}
+
+impl MetaGrid {
+    /// The start node in block (1, 1), what follows it a column to the
+    /// right each step (`LayoutChildren`), then the nodes with no input
+    /// connected put left of the first node they feed (`ReorientPrimes`).
+    /// `nodes` are the tab's, in the project's order.
+    fn lay_out(&mut self, start: &NodeData, nodes: &[&NodeData]) {
+        self.assign(start.id, (1, 1));
+        self.lay_out_children(start, (1, 1), nodes);
+        self.reorient_primes(start, nodes);
+    }
+
+    fn assign(&mut self, id: i32, block: (i32, i32)) {
+        self.organized.insert(id, block);
+        self.blocks.insert(block);
+    }
+
+    /// `GetNextSlot`: the first free block down from `block`.
+    fn next_free_below(&self, block: (i32, i32)) -> (i32, i32) {
+        let mut slot = block;
+        while self.blocks.contains(&slot) {
+            slot.1 += 1;
+        }
+        slot
+    }
+
+    /// `LayoutChildren`: the nodes whose primary input (`Ports[0]`) reads
+    /// one of `node`'s outputs go one under another in the next column
+    /// (or the furthest column `node`'s own sources have reached), from
+    /// the first free block at or below `node`'s row; then theirs, each in
+    /// turn.
+    fn lay_out_children(&mut self, node: &NodeData, block: (i32, i32), nodes: &[&NodeData]) {
+        let first = self.next_free_below((block.0 + 1, block.1));
+        let mut column = first.0;
+        for port in node.ports.iter().filter(|port| port.is_input()) {
+            let source = port.record.as_ref().and_then(|record| self.organized.get(&record.from));
+            if let Some(source_block) = source {
+                column = column.max(source_block.0);
+            }
+        }
+        let mut row = 0;
+        let mut children: Vec<&NodeData> = Vec::new();
+        for output in node.ports.iter().filter(|port| port.is_output()) {
+            for reader in nodes.iter().copied() {
+                let primary = reader.ports.first().and_then(|port| port.record.as_ref());
+                let reads = primary.is_some_and(|record| record.from == node.id && record.from_port == output.name);
+                if !reads {
+                    continue;
+                }
+                self.assign(reader.id, (column, first.1 + row));
+                row += 1;
+                children.push(reader);
+            }
+        }
+        for child in children {
+            let child_block = self.organized.get(&child.id).copied().unwrap_or(block);
+            self.lay_out_children(child, child_block, nodes);
+        }
+    }
+
+    /// `ReorientPrimes`: each other node with no input connected goes in
+    /// the first free block down from the one left of the highest node its
+    /// main output (`Ports[1]`) feeds, when that node was laid out.
+    fn reorient_primes(&mut self, start: &NodeData, nodes: &[&NodeData]) {
+        for prime in nodes.iter().copied() {
+            let connected = prime.ports.iter().any(|port| port.is_input() && port.record.is_some());
+            if connected || prime.id == start.id {
+                continue;
+            }
+            let Some(main_output) = prime.ports.get(1) else {
+                continue;
+            };
+            let feeds = |reader: &&NodeData| reader.ports.iter().any(|port| port.is_input() && port.record.as_ref().is_some_and(|record| record.from == prime.id && record.from_port == main_output.name));
+            let readers = nodes.iter().copied().filter(feeds);
+            let fed = readers.min_by(|left, right| left.position[1].total_cmp(&right.position[1]));
+            let Some(fed_block) = fed.and_then(|reader| self.organized.get(&reader.id)).copied() else {
+                continue;
+            };
+            let slot = self.next_free_below((fed_block.0 - 1, fed_block.1));
+            self.assign(prime.id, slot);
         }
     }
 }
@@ -593,5 +738,32 @@ mod tests {
         Layout::new(&mut document, 0, &size).run(&[mountain]);
         assert_eq!(document.node(erosion).unwrap().position, [300.0, 0.0]);
         assert_eq!(document.node(blur).unwrap().position, [300.0, 220.0]);
+    }
+
+    #[test]
+    fn the_new_layout_puts_nodes_on_blocks() {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [1000.0, 1000.0]).unwrap();
+        let perlin = document.add_node("Perlin", [900.0, 1400.0]).unwrap();
+        let erosion = document.add_node("ErosionPro", [50.0, 500.0]).unwrap();
+        let blur = document.add_node("Blur", [10.0, 900.0]).unwrap();
+        let combine = document.add_node("Combine", [70.0, 90.0]).unwrap();
+        document.connect(mountain, "Out", erosion, "In");
+        document.connect(mountain, "Out", blur, "In");
+        document.connect(erosion, "Out", combine, "In");
+        document.connect(perlin, "Out", combine, "Input2");
+        Layout::new(&mut document, 0, &size).with_new_method(true).run(&[mountain]);
+        // The corner is a block's width up and left of where the start
+        // node stood; each node is centred across its block (230 wide).
+        let corner = [1000.0 - 288.0, 1000.0 - 288.0];
+        let at = |column: f32, row: f32| [corner[0] + column * 288.0 + (144.0 - 115.0), corner[1] + row * 196.0];
+        assert_eq!(document.node(mountain).unwrap().position, at(1.0, 1.0));
+        assert_eq!(document.node(erosion).unwrap().position, at(2.0, 1.0));
+        assert_eq!(document.node(blur).unwrap().position, at(2.0, 2.0));
+        assert_eq!(document.node(combine).unwrap().position, at(3.0, 1.0));
+        // Perlin feeds the combine but not its primary input: it goes left
+        // of the combine, in the first free block down from there.
+        assert_eq!(document.node(perlin).unwrap().position, at(2.0, 3.0));
+        assert_eq!(document.undo_labels()[0], "Layout node applied on Mountain");
     }
 }

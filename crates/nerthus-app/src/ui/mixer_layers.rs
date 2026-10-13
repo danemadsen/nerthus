@@ -292,10 +292,10 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
         let ranged = matches!(source.as_str(), "Height" | "Slope" | "Both");
         let mixed = source == "Both";
         let (range_name, falloff_name) = if mixed { ("Height Range", "Height Falloff") } else { ("Range", "Falloff") };
-        let range_spec = RangeSpec { min: 0.0, max: 1.0, integer: false, inset: 0.0 };
+        let range_spec = RangeSpec { min: 0.0, max: 1.0, integer: false, inset: Some(0.0) };
         let mut falloff_spec = SliderSpec::linear(0.0001, 1.0);
-        falloff_spec.inset = 0.0;
-        falloff_spec.height = 22.0;
+        falloff_spec.inset = Some(0.0);
+        falloff_spec.height = Some(22.0);
         let mut ranges = vec![];
         if ranged {
             ranges.push(("Range", "Falloff", range_name, falloff_name));
@@ -325,11 +325,12 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
         ui.painter().line_segment([rule.left_center(), rule.right_center()], Stroke::new(1.0, theme::MENU_SEPARATOR));
         ui.add_space(8.0);
         let mut plain = SliderSpec::linear(0.0, 1.0);
-        plain.inset = 0.0;
+        plain.inset = Some(0.0);
+        let plain_height = plain.height.unwrap_or(crate::theme::sizes(ui.ctx()).slider_height);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let half = (ui.available_width() / 2.0).floor();
-            ui.allocate_ui(Vec2::new(half - 4.0, plain.height), |ui| {
+            ui.allocate_ui(Vec2::new(half - 4.0, plain_height), |ui| {
                 if ranged
                     && let Some(value) = slider(ui, id.with("warp"), "Warp", float(layer, "Warp", 0.0), &plain, color) {
                         changed["Warp"] = f32_value(value as f32);
@@ -337,7 +338,7 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
                     }
             });
             ui.add_space(8.0);
-            ui.allocate_ui(Vec2::new(ui.available_width(), plain.height), |ui| {
+            ui.allocate_ui(Vec2::new(ui.available_width(), plain_height), |ui| {
                 if let Some(value) = slider(ui, id.with("size"), "Size", float(layer, "Size", 0.25), &plain, color) {
                     changed["Size"] = f32_value(value as f32);
                     any = true;
@@ -350,7 +351,7 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let blend_width = (ui.available_width() - 8.0 - 100.0).max(60.0);
-            ui.allocate_ui(Vec2::new(blend_width, plain.height), |ui| {
+            ui.allocate_ui(Vec2::new(blend_width, plain_height), |ui| {
                 if let Some(value) = slider(ui, id.with("blend"), "Blending", float(layer, "Blending", 1.0), &plain, color) {
                     changed["Blending"] = f32_value(value as f32);
                     any = true;
@@ -359,7 +360,7 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
             ui.add_space(8.0);
             let mode = layer.get("BlendMode").and_then(Value::as_str).unwrap_or("Blend").to_string();
             let entries: Vec<(String, String)> = BLEND_MODES.iter().map(|member| (member.to_string(), humanize_title(member))).collect();
-            ui.allocate_ui(Vec2::new(ui.available_width(), plain.height), |ui| {
+            ui.allocate_ui(Vec2::new(ui.available_width(), plain_height), |ui| {
                 let picked = dropdown_box(ui, id.with("blend-mode"), None, 0.0, 20.0, &humanize_title(&mode), &entries, &mode, theme::interface(12.0));
                 if let Some(member) = picked.filter(|member| member != &mode) {
                     changed["BlendMode"] = json!(member);

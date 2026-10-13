@@ -3,7 +3,7 @@
 //! clicked to collapse it to a 60 square), its icon, name and menu, the
 //! lock, and the invisible resize thumbs in the bottom corners.
 
-use egui::{CornerRadius, CursorIcon, Id, Key, PointerButton, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
+use egui::{CornerRadius, CursorIcon, Id, PointerButton, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::document::{GroupData, GROUP_ICONS, GROUP_MIN_SIZE};
 use crate::editor::Editor;
@@ -156,7 +156,7 @@ fn select_group(editor: &mut Editor, state: &mut GraphState, id: i32, additive: 
         return;
     }
     state.clear_element_selection();
-    editor.select(None);
+    editor.select_group();
     state.selected_groups = vec![id];
 }
 
@@ -298,8 +298,9 @@ fn group_menu_popup(button: &Response, group: &GroupData, commands: &mut Vec<Com
     });
 }
 
-/// `RenameGroup`: the name edited in place over the title; Enter or
-/// leaving keeps it, Escape drops it.
+/// `RenameGroup`: the name edited in place over the title (an
+/// `EditablePopup`, closing as [`crate::ui::widgets::popup_outcome`]
+/// says); a blank name is no name.
 pub fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, groups: &[GroupData], origin: Pos2) {
     let Some((id, mut text)) = state.renaming_group.take() else {
         return;
@@ -316,12 +317,11 @@ pub fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, 
     if !response.has_focus() && !response.lost_focus() {
         response.request_focus();
     }
-    if ui.input(|input| input.key_pressed(Key::Escape)) {
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &response) else {
+        state.renaming_group = Some((id, text));
         return;
-    }
-    if response.lost_focus() {
+    };
+    if accepted && !text.trim().is_empty() {
         editor.document.rename_group(id, &text);
-        return;
     }
-    state.renaming_group = Some((id, text));
 }

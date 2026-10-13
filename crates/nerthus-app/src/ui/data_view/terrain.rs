@@ -26,10 +26,10 @@ const MUTED_TEXT: Color32 = Color32::from_rgb(0xa0, 0xa0, 0xa0);
 const MUTED_ICON: Color32 = Color32::from_rgb(0x50, 0x50, 0x50);
 const BRIGHT_TEXT: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
 /// `TreeViewItemX`: the expander 8 in and 16 wide, `TreeView.DockPadding`
-/// (8, 4), a 14 icon with 8 after it, the header's margin 0, 2.
+/// round the icon and name, a 14 icon with 8 after it, the header's
+/// margin 0, 2.
 const EXPANDER_LEFT: f32 = 8.0;
 const EXPANDER_SIZE: f32 = 16.0;
-const DOCK_PADDING: Vec2 = Vec2::new(8.0, 4.0);
 const ROW_ICON: f32 = 14.0;
 const ICON_GAP: f32 = 8.0;
 const HEADER_MARGIN: f32 = 2.0;
@@ -400,7 +400,11 @@ fn tree(ui: &mut Ui, editor: &Editor, state: &mut TerrainState, graph: &mut Grap
     let mut clicked: Option<(RowTarget, bool)> = None;
     let mut context: Option<i32> = None;
 
-    for tab in editor.document.graph_tabs() {
+    let tabs = editor.document.graph_tabs();
+    // Hide Graph Tabs with a single tab leaves its row out (`Tag` "hidden":
+    // the header row 0 high), its contents still in place.
+    let graph_rows_hidden = editor.user.options.hide_tabs() && tabs.len() == 1;
+    for tab in tabs {
         let mut placed: HashSet<i32> = HashSet::new();
         let tab_nodes: Vec<&NodeData> = editor.document.terrain().nodes.values().filter(|node| node_tab(node) == tab.index).collect();
         let tab_groups: Vec<&GroupInfo> = all_groups.iter().filter(|group| group.graph_index == tab.index).collect();
@@ -421,12 +425,14 @@ fn tree(ui: &mut Ui, editor: &Editor, state: &mut TerrainState, graph: &mut Grap
             expander: has_children.then_some(open),
             marks: Marks::default(),
         };
-        let response = row(ui, &graph_row, icon_state);
-        if response.toggled {
-            toggle(&mut state.folded_graphs, tab.index);
-        }
-        if response.clicked {
-            clicked = Some((RowTarget::Graph(tab.index), false));
+        if !graph_rows_hidden {
+            let response = row(ui, &graph_row, icon_state);
+            if response.toggled {
+                toggle(&mut state.folded_graphs, tab.index);
+            }
+            if response.clicked {
+                clicked = Some((RowTarget::Graph(tab.index), false));
+            }
         }
         if !open {
             continue;
@@ -617,7 +623,8 @@ struct RowResponse {
 fn row(ui: &mut Ui, row: &Row, icon_state: IconState) -> RowResponse {
     let line_height = ui.painter().layout_no_wrap("Ag".to_string(), theme::interface(12.0), row.text_color).size().y;
     let content_height = (line_height + 2.0 * HEADER_MARGIN).max(ROW_ICON);
-    let height = content_height + 2.0 * DOCK_PADDING.y;
+    let [dock_across, dock_down] = theme::sizes(ui.ctx()).tree_padding;
+    let height = content_height + 2.0 * dock_down;
     let width = ui.available_width();
     let (full, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     let rect = Rect::from_min_max(Pos2::new(full.left() + row.indent, full.top()), full.max);
@@ -644,7 +651,7 @@ fn row(ui: &mut Ui, row: &Row, icon_state: IconState) -> RowResponse {
 
     // `IconState`: the icon in its colour, in `DataView-Icon`, or left
     // out (its place kept).
-    let mut x = rect.left() + EXPANDER_LEFT + EXPANDER_SIZE + DOCK_PADDING.x;
+    let mut x = rect.left() + EXPANDER_LEFT + EXPANDER_SIZE + dock_across;
     if let Some((icon, color)) = &row.icon {
         let shown_color = match icon_state {
             IconState::Color => Some(*color),
@@ -659,7 +666,7 @@ fn row(ui: &mut Ui, row: &Row, icon_state: IconState) -> RowResponse {
     }
     let marks_width = paint_marks(ui, rect, row.marks);
     let text_color = if row.selected { theme::LABEL_EMPHASIS } else { row.text_color };
-    let available = (rect.right() - DOCK_PADDING.x - marks_width - x).max(0.0);
+    let available = (rect.right() - dock_across - marks_width - x).max(0.0);
     let galley = trimmed_galley(ui, &row.text, text_color, available);
     let text_position = Pos2::new(x, rect.center().y - galley.size().y / 2.0);
     ui.painter().galley(text_position, galley, text_color);

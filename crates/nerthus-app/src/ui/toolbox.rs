@@ -251,7 +251,8 @@ pub fn add_node_menus(ui: &mut Ui, editor: &Editor, state: &mut GraphState, comm
     }
 }
 
-/// The toolbox at the top-left of `area` (the graph area below its tabs).
+/// The toolbox at the top-left of `area` (`Toolbox`'s place in the graph
+/// area, its margin taken off).
 pub fn show(ui: &mut Ui, area: Rect, editor: &mut Editor, state: &mut GraphState, commands: &mut Vec<Command>) {
     match editor.user.options.toolbox_style() {
         ToolboxStyle::Menus => show_menus(ui, area, editor, state, commands),
@@ -259,9 +260,8 @@ pub fn show(ui: &mut Ui, area: Rect, editor: &mut Editor, state: &mut GraphState
     }
 }
 
-/// The menus style (`ScrollViewer`, margin 10, `Margin="0,35,0,0"` in the
-/// area): Long is one column of icons, Compact two, Expanded one of icons
-/// with names.
+/// The menus style (`ScrollViewer`, margin 10): Long is one column of
+/// icons, Compact two, Expanded one of icons with names.
 fn show_menus(ui: &mut Ui, area: Rect, editor: &mut Editor, state: &mut GraphState, commands: &mut Vec<Command>) {
     let mode = editor.user.options.toolbox_mode();
     let font = theme::semibold(10.0);
@@ -362,14 +362,14 @@ fn category_button(ui: &mut Ui, rect: Rect, category: &str, mode: ToolboxMode, l
     popup.show(|ui| category_menu(ui, category, look, Origin::Toolbox, state, commands));
 }
 
-/// The panel style (`GeneratePanelStyleToolbox`, `Margin="0,16,0,24"` in
-/// the area, on `Panel-Background`): node buttons in columns, under each
-/// category's expander when categorized.
+/// The panel style (`GeneratePanelStyleToolbox`, on `Panel-Background`,
+/// the area's height): node buttons in columns, under each category's
+/// expander when categorized.
 fn show_panel(ui: &mut Ui, area: Rect, editor: &mut Editor, state: &mut GraphState, commands: &mut Vec<Command>) {
     let options = &editor.user.options;
     let columns = options.toolbox_columns();
     let width = columns as f32 * PANEL_COLUMN;
-    let panel = Rect::from_min_max(Pos2::new(area.left(), area.top() - 19.0), Pos2::new(area.left() + width + 10.0, area.bottom() - 24.0));
+    let panel = Rect::from_min_max(area.min, Pos2::new(area.left() + width + 10.0, area.bottom()));
     ui.painter().rect_filled(panel, 0.0, theme::PANEL_BACKGROUND);
     let look = EntryLook { editor, average: average_usage(editor) };
     let mut settings: Vec<SettingsChange> = Vec::new();

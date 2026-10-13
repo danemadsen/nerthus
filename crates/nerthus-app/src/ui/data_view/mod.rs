@@ -36,9 +36,6 @@ const BORDER_COLOR: Color32 = Color32::from_rgb(0x4b, 0x42, 0x55);
 const TAB_MIN_WIDTH: f32 = 64.0;
 const TAB_HEIGHT: f32 = 25.0;
 const TAB_OVERLAP: f32 = 9.0;
-/// `Toolbar`: margin 4, at least 36 high, padding 4, 2 inside a border of 1.
-const TOOLBAR_MARGIN: f32 = 4.0;
-const TOOLBAR_HEIGHT: f32 = 36.0;
 
 /// The Data View's tabs (`Tabs`); Dev stays hidden.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,14 +218,17 @@ fn tab_path(rect: Rect, first: bool) -> Vec<Pos2> {
     points
 }
 
-/// A tab's toolbar (`Toolbar` docked at the top): returns its inner
-/// rectangle (inside the border of 1 and the padding of 4, 2) and where
-/// the page under it starts.
+/// A tab's toolbar (`Toolbar` docked at the top: margin `Toolbar.Margin`,
+/// `Toolbar.MinHeight` high): returns its inner rectangle (inside the
+/// border of 1 and `Toolbar.Padding`) and where the page under it starts.
 fn toolbar(ui: &Ui, area: Rect) -> (Rect, f32) {
-    let bar = Rect::from_min_size(area.min + Vec2::splat(TOOLBAR_MARGIN), Vec2::new(area.width() - 2.0 * TOOLBAR_MARGIN, TOOLBAR_HEIGHT));
+    let sizes = theme::sizes(ui.ctx());
+    let margin = sizes.toolbar_margin;
+    let bar = Rect::from_min_size(area.min + Vec2::splat(margin), Vec2::new(area.width() - 2.0 * margin, sizes.toolbar_min_height));
     toolbar_background(ui, bar, theme::PANEL_BORDER, 1.0);
-    let inner = bar.shrink(1.0).shrink2(Vec2::new(4.0, 2.0));
-    (inner, bar.bottom() + TOOLBAR_MARGIN)
+    let [padding_across, padding_down] = sizes.toolbar_padding;
+    let inner = bar.shrink(1.0).shrink2(Vec2::new(padding_across, padding_down));
+    (inner, bar.bottom() + margin)
 }
 
 /// A child ui laying a toolbar out from its left (or, `from_right`, its

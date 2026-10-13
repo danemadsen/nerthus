@@ -17,12 +17,14 @@ use crate::ui::commands::Command;
 use crate::ui::editors::{self, SliderSpec};
 use crate::ui::property_area::group_panel;
 use crate::ui::viewport_2d::Viewport2DState;
-use crate::ui::widgets::{check_item, checked_icon_item, icon_button, icon_menu, icon_toggle, menu_caption, menu_item, menu_separator, toolbar_background, toolbar_separator, TOOLBAR_BUTTON};
+use crate::ui::widgets::{check_item, checked_icon_item, icon_button, icon_menu, icon_toggle, menu_caption, menu_item, menu_separator, toolbar_background, toolbar_button, toolbar_separator};
 use crate::viewport_render::{MaskGradient, MASK_GRADIENTS};
 
-/// The toolbar column: a 32 button, the toolbar's padding 4 and border
-/// 1.5, and its margin 2 each side.
-const TOOLBAR_WIDTH: f32 = TOOLBAR_BUTTON + 2.0 * (4.0 + 1.5 + 2.0);
+/// The toolbar column: a `Toolbar.ButtonSize` button, the toolbar's
+/// `Toolbar.Padding` and border 1.5, and its margin 2 each side.
+fn toolbar_width(sizes: &theme::Sizes) -> f32 {
+    sizes.toolbar_button + 2.0 * (sizes.toolbar_padding[0] + 1.5 + 2.0)
+}
 
 /// `ToggleSkyEditor`: the popup is 400 wide, its panel inset 24 (the
 /// border's margin), placed left of the sun button.
@@ -66,12 +68,14 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &Editor, settings: &mut ViewportSet
     let frame_stroke = Stroke::new(2.0, egui::Color32::from_rgb(0x21, 0x21, 0x21));
     ui.painter().rect_stroke(rect, 6.0, frame_stroke, StrokeKind::Inside);
 
-    let toolbar_column = Rect::from_min_max(Pos2::new(rect.right() - TOOLBAR_WIDTH, rect.top()), rect.max);
+    let sizes = theme::sizes(ui.ctx());
+    let toolbar_column = Rect::from_min_max(Pos2::new(rect.right() - toolbar_width(sizes), rect.top()), rect.max);
     // The column has the frame's own dark fill behind the toolbar.
     ui.painter().rect_filled(toolbar_column.shrink(2.0), 4.0, egui::Color32::from_rgb(0x05, 0x05, 0x05));
     let toolbar_rect = toolbar_column.shrink(2.0);
     toolbar_background(ui, toolbar_rect, theme::MENU_BORDER, 1.5);
-    let inner = toolbar_rect.shrink(1.5).shrink2(Vec2::new(4.0, 2.0));
+    let [padding_across, padding_down] = sizes.toolbar_padding;
+    let inner = toolbar_rect.shrink(1.5).shrink2(Vec2::new(padding_across, padding_down));
 
     let top_builder = UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Center));
     let mut top = ui.new_child(top_builder);
@@ -388,7 +392,7 @@ fn lighting_panel(ui: &Ui, sun_button: Rect, editor: &Editor, settings: &mut Vie
 
 /// The panel's toolbar: Reset Sky (`restore`).
 fn lighting_toolbar(ui: &mut Ui, settings: &mut ViewportSettings, commands: &mut Vec<Command>) {
-    let height = TOOLBAR_BUTTON + 2.0 * (4.0 + 1.5);
+    let height = toolbar_button(ui) + 2.0 * (4.0 + 1.5);
     let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     toolbar_background(ui, row, theme::MENU_BORDER, 1.5);
     let inner = row.shrink(1.5 + 4.0);

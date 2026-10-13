@@ -76,6 +76,8 @@ pub const BUTTON_PRESSED: Color32 = rgb(0x111111);
 
 pub const TEXTBOX_BACKGROUND: Color32 = rgb(0x101010);
 pub const TEXTBOX_FOCUSED_BORDER: Color32 = rgb(0x1492e6);
+/// `TextBox-Border`.
+pub const TEXTBOX_BORDER: Color32 = rgb(0x363636);
 pub const TEXTBOX_FILE_BORDER: Color32 = rgb(0x424242);
 pub const LISTBOX_BACKGROUND: Color32 = rgb(0x161616);
 pub const LISTBOX_BORDER: Color32 = rgb(0x181818);
@@ -143,6 +145,8 @@ pub const GRID_MEGA: Color32 = rgb(0x444444);
 pub const NODE_BACKGROUND: Color32 = rgb(0x1a1b1d);
 pub const NODE_BACKGROUND_BUILDING: Color32 = rgb(0x010101);
 pub const NODE_BACKGROUND_SELECTED: Color32 = rgb(0x0f1011);
+/// A chosen node's fill in the Vibrant node style (`EffectiveSelectedBackground`).
+pub const NODE_BACKGROUND_SELECTED_VIBRANT: Color32 = rgb(0x050505);
 pub const NODE_BORDER_SELECTED: Color32 = rgb(0x797979);
 
 /// The dragged connection's gradient ends (`ConnectionLine`).
@@ -368,4 +372,156 @@ pub fn apply(context: &egui::Context) {
         style.spacing.menu_margin = egui::Margin::same(1);
         style.spacing.interact_size.y = 20.0;
     });
+}
+
+/// The interface options the controls read as they draw (`Options`): set
+/// at the start of each frame, kept in egui's memory for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InterfaceSettings {
+    /// `CompactUI`: the compact sizes (`Size.Compact`).
+    pub compact: bool,
+    /// `PreciseValue`: sliders show four decimals rather than two.
+    pub precise_values: bool,
+    /// `ShowTicks`: integer sliders under 100 mark each step.
+    pub show_ticks: bool,
+    /// `AcceptOnLostFocus`: a popup's text is kept when a click elsewhere
+    /// closes it.
+    pub accept_on_lost_focus: bool,
+    /// `SliderSeed`: seeds get a slider instead of the seed box.
+    pub seed_sliders: bool,
+    /// `StackedSatelliteMaps`: palette lists show one strip a row.
+    pub stacked_palettes: bool,
+}
+
+impl Default for InterfaceSettings {
+    fn default() -> Self {
+        Self {
+            compact: false,
+            precise_values: false,
+            show_ticks: true,
+            accept_on_lost_focus: false,
+            seed_sliders: false,
+            stacked_palettes: false,
+        }
+    }
+}
+
+fn settings_id() -> egui::Id {
+    egui::Id::new("nerthus-interface-settings")
+}
+
+/// Makes `settings` what the controls drawn from now on read.
+pub fn set_settings(context: &egui::Context, settings: InterfaceSettings) {
+    context.data_mut(|data| data.insert_temp(settings_id(), settings));
+}
+
+/// The interface options as set for this frame (the defaults until set).
+pub fn settings(context: &egui::Context) -> InterfaceSettings {
+    context.data(|data| data.get_temp(settings_id())).unwrap_or_default()
+}
+
+/// The size theme (`Size.Default`, or `Size.Compact` with Compact
+/// Interface): the sizes the shell's styles take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sizes {
+    /// `Expander.Toggle.MinHeight`: a group panel's header.
+    pub expander_header: f32,
+    /// `Expander.Toggle.IconMargin`'s left and top: the chevron's.
+    pub expander_icon_margin: [f32; 2],
+    /// `Expander.Margin` (left, top, right, bottom) and `Expander.Padding`.
+    pub expander_margin: [f32; 4],
+    pub expander_padding: f32,
+    /// `OptionsX.Item.Padding` (across, down), `OptionsX.Item.Margin` and
+    /// `OptionsX.Item.MinHeight`.
+    pub option_padding: [f32; 2],
+    pub option_margin: f32,
+    pub options_min_height: f32,
+    /// `Slider.MinHeight` and `Slider.Margin`'s left: a slider's height and
+    /// how far into its row its bar starts.
+    pub slider_height: f32,
+    pub slider_inset: f32,
+    /// `Slider.BorderStroke.Thickness`: the bar's outline.
+    pub slider_border: f32,
+    /// `Slider.InnerMargin` (left, top, right, bottom): the shading's.
+    pub slider_shading_margin: [f32; 4],
+    /// `Editor.BottomMargin`: under a group panel's editors.
+    pub editor_bottom: f32,
+    /// `Separator.Margin`'s top and bottom (16 each side across).
+    pub separator_margin: f32,
+    /// `Column.Size`: the header column of toggles and dropdowns.
+    pub header_column: f32,
+    /// `Property.Border.Thickness` (left, top, right, bottom): the
+    /// property area's command and warning rows' margins, and
+    /// `Property.Border.Padding` (across, down) round the warning.
+    pub property_border: [f32; 4],
+    pub property_padding: [f32; 2],
+    /// `Toolbar.Padding` (across, down), `Toolbar.Margin` and
+    /// `Toolbar.MinHeight`: a `Toolbar` border's.
+    pub toolbar_padding: [f32; 2],
+    pub toolbar_margin: f32,
+    pub toolbar_min_height: f32,
+    /// `Toolbar.MenuMargin` (across): a toolbar menu's.
+    pub toolbar_menu_margin: f32,
+    /// `Toolbar.ButtonSize`.
+    pub toolbar_button: f32,
+    /// `TreeView.DockPadding` (across, down): round a tree row's icon and
+    /// name.
+    pub tree_padding: [f32; 2],
+}
+
+/// `Size.Default.xaml`.
+pub const DEFAULT_SIZES: Sizes = Sizes {
+    expander_header: 45.0,
+    expander_icon_margin: [17.0, 2.0],
+    expander_margin: [10.0, 5.0, 0.0, 5.0],
+    expander_padding: 0.0,
+    option_padding: [8.0, 4.0],
+    option_margin: 2.0,
+    options_min_height: 32.0,
+    slider_height: 26.0,
+    slider_inset: 20.0,
+    slider_border: 1.0,
+    slider_shading_margin: [1.0, 2.0, 0.0, 2.0],
+    editor_bottom: 16.0,
+    separator_margin: 8.0,
+    header_column: 160.0,
+    property_border: [4.0, 0.0, 4.0, 8.0],
+    property_padding: [8.0, 4.0],
+    toolbar_padding: [4.0, 2.0],
+    toolbar_margin: 4.0,
+    toolbar_min_height: 36.0,
+    toolbar_menu_margin: -5.0,
+    toolbar_button: 32.0,
+    tree_padding: [8.0, 4.0],
+};
+
+/// `Size.Compact.xaml`.
+pub const COMPACT_SIZES: Sizes = Sizes {
+    expander_header: 28.0,
+    expander_icon_margin: [4.0, 2.0],
+    expander_margin: [2.0, 2.0, 2.0, 2.0],
+    expander_padding: 1.0,
+    option_padding: [2.0, 2.0],
+    option_margin: 1.0,
+    options_min_height: 22.0,
+    slider_height: 22.0,
+    slider_inset: 10.0,
+    slider_border: 0.0,
+    slider_shading_margin: [-1.0, 0.0, 0.0, 0.0],
+    editor_bottom: 4.0,
+    separator_margin: 2.0,
+    header_column: 120.0,
+    property_border: [4.0, 4.0, 4.0, 4.0],
+    property_padding: [2.0, 2.0],
+    toolbar_padding: [1.0, 1.0],
+    toolbar_margin: 2.0,
+    toolbar_min_height: 26.0,
+    toolbar_menu_margin: 0.0,
+    toolbar_button: 28.0,
+    tree_padding: [2.0, 1.0],
+};
+
+/// The size theme as set for this frame.
+pub fn sizes(context: &egui::Context) -> &'static Sizes {
+    if settings(context).compact { &COMPACT_SIZES } else { &DEFAULT_SIZES }
 }

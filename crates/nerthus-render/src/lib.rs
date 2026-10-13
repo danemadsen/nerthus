@@ -20,7 +20,7 @@ pub use screenshot::{CapturedPixels, ScreenshotRequest, Screenshots};
 pub use terrain::{TerrainColours, TerrainPreview, TerrainSurface, ViewportSettings};
 pub use turntable::{Turntable, TurntableOutcome, TurntableRequest};
 
-use terrain::{rebuild_terrain, spawn_terrain, BuiltTerrain};
+use terrain::{rebuild_terrain, spawn_terrain, BuiltTerrain, TerrainMaterial};
 
 /// `Options.ViewportBackground`'s default (5/255 grey).
 const NO_SKY: Color = Color::srgb(0.01960784, 0.01960784, 0.01960784);
@@ -34,6 +34,8 @@ pub struct TerrainRenderPlugin;
 
 impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
+        bevy::asset::embedded_asset!(app, "terrain.wesl");
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
         app.insert_resource(ClearColor(NO_SKY));
         app.init_resource::<TerrainPreview>();
         app.init_resource::<ViewportSettings>();
@@ -59,7 +61,13 @@ impl Plugin for TerrainRenderPlugin {
 #[derive(Component)]
 pub struct ViewportCamera;
 
-fn setup_scene(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
+fn setup_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
     let strategy = StrategyCamera::default();
     let transform = strategy.transform();
     let perspective = PerspectiveProjection {
@@ -70,7 +78,7 @@ fn setup_scene(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
     // The colours are final: no tone mapping or dithering on top.
     let camera = (ViewportCamera, Camera3d::default(), Projection::Perspective(perspective), Tonemapping::None, DebandDither::Disabled, strategy, transform);
     commands.spawn(camera);
-    spawn_terrain(&mut commands, &mut meshes, &mut materials);
+    spawn_terrain(&mut commands, &mut meshes, &mut terrain_materials, &mut images);
     helpers::spawn_helpers(&mut commands, &mut meshes, &mut materials, &mut images);
     sky::spawn_sky(&mut commands, &mut meshes, &mut materials);
     gizmo3d::spawn_handle(&mut commands, &mut meshes, &mut materials);

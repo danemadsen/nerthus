@@ -244,6 +244,11 @@ pub struct GraphState {
     pub lazy_cursor: Option<LazyTarget>,
     /// Lazy Menu › Toggle Skybox, for the viewport's settings.
     pub toggle_skybox: bool,
+    /// Nodes shining (`NodeElement.Shine`) and when each started (egui's
+    /// clock).
+    pub shines: HashMap<i32, f64>,
+    /// The document's view generation the views were last taken at.
+    view_generation: u64,
 }
 
 impl Default for GraphState {
@@ -285,6 +290,8 @@ impl Default for GraphState {
             areas: GraphAreas::default(),
             lazy_cursor: None,
             toggle_skybox: false,
+            shines: HashMap::new(),
+            view_generation: 0,
         }
     }
 }
@@ -334,6 +341,27 @@ impl GraphState {
         let view = self.view();
         let center = view.location + self.rect.size() / (2.0 * view.zoom);
         [center.x - STANDARD_WIDTH / 2.0, center.y - STANDARD_MIN_HEIGHT / 2.0]
+    }
+
+    /// An undo or redo that reopened the project brings its tabs' views
+    /// back with it (`GraphTabSelectionChanged(IsLoading: true)` after the
+    /// terrain is read again).
+    fn follow_restored_views(&mut self, editor: &Editor) {
+        let generation = editor.document.view_generation();
+        if self.view_generation == generation {
+            return;
+        }
+        self.view_generation = generation;
+        for tab in editor.document.graph_tabs() {
+            let Some(location) = tab.location else {
+                continue;
+            };
+            let view = GraphView {
+                location: Vec2::new(location[0], location[1]),
+                zoom: tab.zoom.clamp(MIN_ZOOM, MAX_ZOOM),
+            };
+            self.views.insert(tab.index, view);
+        }
     }
 
     fn load_views(&mut self, editor: &Editor) {
@@ -726,7 +754,9 @@ fn group_frame(editor: &Editor, tab: usize) -> GroupFrame {
 
 pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState, commands: &mut Vec<Command>) {
     state.load_views(editor);
+    state.follow_restored_views(editor);
     state.rect = rect;
+    take_shines(ui, editor, state);
     let hover = ui.input(|input| input.pointer.hover_pos());
     state.pointer = hover.filter(|point| rect.contains(*point));
     state.shift_held = ui.input(|input| input.modifiers.shift);
@@ -749,7 +779,12 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
     // The background takes clicks, drags and the context menu.
     let background_id = ui.id().with("graph-background");
     let background = ui.interact(rect, background_id, Sense::click_and_drag());
-    handle_pan_and_zoom(ui, &background, state, rect);
+    let pan_started = handle_pan_and_zoom(ui, &background, state, rect);
+    // Record Graph Movements and Zoom in Undos: a pan begins an undo step,
+    // the view as it was (`GraphModified("Graph panned")`).
+    if pan_started && editor.user.options.record_graph_movements() {
+        editor.document.checkpoint("Graph panned");
+    }
 
     let view = state.view();
     let zoom = view.zoom;
@@ -823,6 +858,7 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
         }
     }
     draw_ports(&painter, &layouts, &view, origin, state, pointer);
+    draw_shines(ui, &painter, state, &layouts, &view, origin);
 
     handle_port_drags(ui, editor, state, &layouts, &frame.groups, &port_responses, origin, commands);
     handle_node_interaction(ui, editor, state, &layouts, &frame.groups, &node_responses, origin, commands);
@@ -951,9 +987,17 @@ fn apply_zoom_request(state: &mut GraphState, layouts: &[NodeLayout], groups: &[
     view.location = bounds.center().to_vec2() - visible / 2.0;
 }
 
-fn handle_pan_and_zoom(ui: &Ui, background: &Response, state: &mut GraphState, rect: Rect) {
+/// Pans with the middle button (anywhere on the graph) or a right drag on
+/// its background, and zooms with the wheel. Returns whether a pan began
+/// (the middle button pressed on the graph, as `PanButton` goes down, or
+/// a right drag started).
+fn handle_pan_and_zoom(ui: &Ui, background: &Response, state: &mut GraphState, rect: Rect) -> bool {
     let pointer = ui.input(|input| input.pointer.hover_pos());
     let over = pointer.is_some_and(|point| rect.contains(point));
+    let over_toolbox = pointer.is_some_and(|point| state.toolbox_rect.contains(point));
+    let on_graph_layer = pointer.and_then(|point| ui.ctx().layer_id_at(point)).is_none_or(|layer| layer.order == egui::Order::Background);
+    let middle_pressed = ui.input(|input| input.pointer.button_pressed(PointerButton::Middle));
+    let pan_started = (middle_pressed && over && !over_toolbox && on_graph_layer) || background.drag_started_by(PointerButton::Secondary);
     let panning = background.dragged_by(PointerButton::Middle) || background.dragged_by(PointerButton::Secondary);
     if panning {
         let delta = background.drag_delta();
@@ -968,23 +1012,23 @@ fn handle_pan_and_zoom(ui: &Ui, background: &Response, state: &mut GraphState, r
         let view = state.view_mut();
         view.location -= delta / view.zoom;
     }
-    let over_toolbox = pointer.is_some_and(|point| state.toolbox_rect.contains(point));
     if !over || over_toolbox || ui.ctx().any_popup_open() {
-        return;
+        return pan_started;
     }
     let (scroll, pinch) = ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
     let factor = (scroll * 0.0025).exp() * pinch;
     if (factor - 1.0).abs() < 1e-4 {
-        return;
+        return pan_started;
     }
     let Some(point) = pointer else {
-        return;
+        return pan_started;
     };
     let view = state.view_mut();
     let before = view.to_canvas(rect.min, point);
     view.zoom = (view.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
     let after_offset = (point - rect.min) / view.zoom;
     view.location = before.to_vec2() - after_offset;
+    pan_started
 }
 
 /// `SnapElementToGrid`: to the nearer multiple of the unit, halves down
@@ -1029,16 +1073,19 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, view: &GraphView) {
 
 /// How the node's build state shows on its main border: colour, dashes
 /// (in stroke widths) and the title colour it forces.
-fn state_border(state: NodeState, building: bool) -> (Color32, Option<(f32, f32)>, Option<Color32>) {
+/// The outline a node's state gives it (the `NodeState` triggers on
+/// `MainBorder`), its dashes and the colour its name and icon take. Built
+/// and building nodes keep the node style's own outline (`None`).
+fn state_border(state: NodeState, building: bool) -> (Option<Color32>, Option<(f32, f32)>, Option<Color32>) {
     if building {
-        return (theme::MENU_BORDER, None, None);
+        return (None, None, None);
     }
     match state {
-        NodeState::Built => (theme::MENU_BORDER, None, None),
-        NodeState::Unbuilt => (theme::NODE_BORDER_SELECTED, Some((1.0, 2.0)), None),
-        NodeState::Error => (theme::ACCENT_RED, Some((1.0, 2.0)), Some(theme::ACCENT_STRONG_RED)),
-        NodeState::Bypassed => (theme::ACCENT_PURPLE, Some((2.0, 4.0)), Some(theme::ACCENT_MUTED_PURPLE)),
-        NodeState::Baked => (theme::ACCENT_MUTED_GRAY, Some((1.0, 2.0)), None),
+        NodeState::Built => (None, None, None),
+        NodeState::Unbuilt => (Some(theme::NODE_BORDER_SELECTED), Some((1.0, 2.0)), None),
+        NodeState::Error => (Some(theme::ACCENT_RED), Some((1.0, 2.0)), Some(theme::ACCENT_STRONG_RED)),
+        NodeState::Bypassed => (Some(theme::ACCENT_PURPLE), Some((2.0, 4.0)), Some(theme::ACCENT_MUTED_PURPLE)),
+        NodeState::Baked => (Some(theme::ACCENT_MUTED_GRAY), Some((1.0, 2.0)), None),
     }
 }
 
@@ -1050,25 +1097,33 @@ fn draw_node(ui: &Ui, painter: &egui::Painter, editor: &Editor, layout: &NodeLay
     let bypassed = node.base.get("StateOverride").and_then(Value::as_str) == Some("Bypassed");
     let state = if bypassed { NodeState::Bypassed } else { status.state };
     let selected = editor.selection.contains(&layout.id);
-    let (border_color, dashes, forced_title) = state_border(state, status.building);
+    let (state_color, dashes, forced_title) = state_border(state, status.building);
     let mut title_color = forced_title.unwrap_or(layout.color);
     if state == NodeState::Bypassed {
         title_color = title_color.gamma_multiply(0.8);
     }
+    // The node style (`UseModernTemplate`): Muted outlines nodes in
+    // `Menu-Border` and a chosen one in its colour on #0F1011; Vibrant
+    // outlines them in their colour and a chosen one in the primary accent
+    // on #050505.
+    let vibrant = editor.user.options.vibrant_nodes();
+    let style_border = if vibrant { layout.color } else { theme::MENU_BORDER };
+    let selection_border = if vibrant { theme::ACCENT_PRIMARY } else { layout.color };
+    let selected_fill = if vibrant { theme::NODE_BACKGROUND_SELECTED_VIBRANT } else { theme::NODE_BACKGROUND_SELECTED };
     let radius = 4.0 * zoom;
     let fill = if status.building {
         theme::NODE_BACKGROUND_BUILDING
     } else if selected {
-        theme::NODE_BACKGROUND_SELECTED
+        selected_fill
     } else {
         theme::NODE_BACKGROUND
     };
     painter.rect_filled(screen, radius, fill);
     let stroke_width = (2.0 * zoom).max(1.0);
-    let main_color = if selected { theme::NODE_BORDER_SELECTED } else { border_color };
+    let main_color = if selected { theme::NODE_BORDER_SELECTED } else { state_color.unwrap_or(style_border) };
     border(painter, screen, radius, Stroke::new(stroke_width, main_color), dashes);
     if selected {
-        let selection_stroke = Stroke::new(stroke_width, layout.color);
+        let selection_stroke = Stroke::new(stroke_width, selection_border);
         painter.rect_stroke(screen, radius, selection_stroke, StrokeKind::Inside);
     }
 
@@ -1144,6 +1199,108 @@ fn draw_node(ui: &Ui, painter: &egui::Painter, editor: &Editor, layout: &NodeLay
 
 /// `ParamsN-Color6`: a node's build time.
 const BUILD_TIME_COLOR: Color32 = Color32::from_rgb(0x49, 0x50, 0x57);
+
+/// How long a shine lasts (`ShineBoard`'s longest animation).
+const SHINE_SECONDS: f64 = 0.5;
+/// The band's opacity at its peak (`#60FFE01E`).
+const SHINE_PEAK: f32 = 0x60 as f32 / 255.0;
+
+/// `NodeElement.Shine`: the nodes the editor asks to shine start now,
+/// unless Show shine effect on Node when build completes is off, a gizmo
+/// is on (`O.IsShineDisabled`) or the interface's animations are off.
+fn take_shines(ui: &Ui, editor: &mut Editor, state: &mut GraphState) {
+    let asked = std::mem::take(&mut editor.shines);
+    let options = &editor.user.options;
+    if asked.is_empty() || !options.build_shine() || options.disable_animations() || editor.gizmo_active {
+        return;
+    }
+    let now = ui.input(|input| input.time);
+    for id in asked {
+        state.shines.insert(id, now);
+    }
+}
+
+/// `BuildShine` (`ShineRect`: margin 1, corners 4, over everything the
+/// node shows): the node's colour seen through a band (`OpacityMask`:
+/// transparent, #60, transparent) that sweeps across it left to right.
+fn draw_shines(ui: &Ui, painter: &egui::Painter, state: &mut GraphState, layouts: &[NodeLayout], view: &GraphView, origin: Pos2) {
+    if state.shines.is_empty() {
+        return;
+    }
+    let now = ui.input(|input| input.time);
+    state.shines.retain(|_, started| now - *started < SHINE_SECONDS);
+    for layout in layouts {
+        let Some(started) = state.shines.get(&layout.id) else {
+            continue;
+        };
+        let stops = shine_stops((now - started) as f32);
+        let screen = view.rect_to_screen(origin, layout.rect).shrink(view.zoom);
+        let mesh = shine_mesh(screen, 4.0 * view.zoom, layout.color, stops);
+        painter.add(Shape::mesh(mesh));
+    }
+    ui.ctx().request_repaint();
+}
+
+/// The band's stops `seconds` in, across the node (`ShineBoard`): from
+/// -0.65, -0.5 and -0.49 to 1.25 (over 0.5 s), 1.3 and 1.31 (0.45 s).
+fn shine_stops(seconds: f32) -> [f32; 3] {
+    let along = |from: f32, to: f32, duration: f32| from + (to - from) * (seconds / duration).min(1.0);
+    [along(-0.65, 1.25, 0.5), along(-0.5, 1.3, 0.45), along(-0.49, 1.31, 0.45)]
+}
+
+/// The band's opacity at `x` across the node: rising from the first stop
+/// to its peak at the second, falling to nothing at the third.
+fn shine_opacity(x: f32, stops: [f32; 3]) -> f32 {
+    let [rise, peak, fall] = stops;
+    if x <= rise || x >= fall {
+        return 0.0;
+    }
+    if x < peak {
+        return SHINE_PEAK * (x - rise) / (peak - rise);
+    }
+    SHINE_PEAK * (fall - x) / (fall - peak)
+}
+
+/// The band over a rounded rectangle: vertical strips meeting at the
+/// stops (so the opacity is exact between them) and stepping round the
+/// corners.
+fn shine_mesh(rect: Rect, radius: f32, color: Color32, stops: [f32; 3]) -> egui::Mesh {
+    let width = rect.width().max(1.0);
+    let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    let corner = radius / width;
+    let mut columns: Vec<f32> = vec![0.0, 1.0];
+    columns.extend(stops.iter().copied().filter(|stop| *stop > 0.0 && *stop < 1.0));
+    for step in 1..6 {
+        let along = corner * step as f32 / 6.0;
+        columns.push(along);
+        columns.push(1.0 - along);
+    }
+    columns.sort_by(f32::total_cmp);
+    columns.dedup();
+    // How far a corner's curve keeps the band from the top and bottom.
+    let inset = |x: f32| {
+        let from_edge = (x * width).min((1.0 - x) * width);
+        if from_edge >= radius {
+            return 0.0;
+        }
+        let across = radius - from_edge;
+        radius - (radius * radius - across * across).max(0.0).sqrt()
+    };
+    let mut mesh = egui::Mesh::default();
+    for (index, x) in columns.iter().enumerate() {
+        let screen_x = rect.left() + x * width;
+        let shade = color.gamma_multiply(shine_opacity(*x, stops));
+        let edge = inset(*x);
+        mesh.colored_vertex(Pos2::new(screen_x, rect.top() + edge), shade);
+        mesh.colored_vertex(Pos2::new(screen_x, rect.bottom() - edge), shade);
+        if index > 0 {
+            let top = (index * 2) as u32;
+            mesh.add_triangle(top - 2, top - 1, top);
+            mesh.add_triangle(top - 1, top + 1, top);
+        }
+    }
+    mesh
+}
 
 /// The thin animated line across a building node's top.
 fn building_bar(ui: &Ui, painter: &egui::Painter, screen: Rect, zoom: f32, margin: f32, height: f32, color: Color32) {
@@ -2022,15 +2179,21 @@ fn canvas_context_menu(ui: &mut Ui, editor: &Editor, state: &mut GraphState, com
     }
 }
 
-/// Files dropped on the graph (`DropFiles`) and a toolbox entry let go
-/// over it (`canvas_Drop`, onto a node to follow it).
+/// Files dropped on the graph (`DropFiles`), where they land, and a
+/// toolbox entry let go over it (`canvas_Drop`, onto a node to follow it).
 fn handle_drops(ui: &Ui, editor: &Editor, state: &mut GraphState, layouts: &[NodeLayout], commands: &mut Vec<Command>) {
     let view = state.view();
     let origin = state.rect.min;
     let latest = ui.input(|input| input.pointer.latest_pos());
     let dropped: Vec<PathBuf> = ui.input(|input| input.raw.dropped_files.iter().map(|file| file.path().to_path_buf()).collect());
-    if !dropped.is_empty() {
-        let point = latest.filter(|point| state.rect.contains(*point)).unwrap_or(state.rect.center());
+    // Files dropped elsewhere (a file field, say) are not the graph's; where
+    // the system can't say where they landed, they go to its middle.
+    let landing = match latest {
+        Some(point) if ui.rect_contains_pointer(state.rect) => Some(point),
+        Some(_) => None,
+        None => Some(state.rect.center()),
+    };
+    if let (false, Some(point)) = (dropped.is_empty(), landing) {
         let canvas = view.to_canvas(origin, point);
         commands.push(Command::Graph(GraphCommand::DropFiles { files: dropped, at: [canvas.x, canvas.y] }));
     }
@@ -2095,7 +2258,8 @@ fn draw_drag_overlay(ui: &Ui, painter: &egui::Painter, state: &GraphState, layou
     }
 }
 
-/// The inline name editor (F2 or double-click).
+/// The inline name editor (F2): an `EditablePopup`, closing as
+/// [`crate::ui::widgets::popup_outcome`] says; a blank name is no name.
 fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, layouts: &[NodeLayout], origin: Pos2) {
     let Some(id) = state.renaming else {
         return;
@@ -2116,24 +2280,39 @@ fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, layo
     let edit = egui::TextEdit::singleline(&mut state.rename_text).font(theme::semibold(13.0));
     let response = ui.put(rect, edit);
     response.request_focus();
-    let accepted = response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-    let cancelled = ui.input(|input| input.key_pressed(Key::Escape));
-    if accepted {
-        let name = state.rename_text.trim().to_string();
-        if !name.is_empty() {
-            editor.document.rename(id, &name);
-        }
-        state.renaming = None;
-        state.rename_text.clear();
-    } else if cancelled || (response.lost_focus() && !accepted) {
-        state.renaming = None;
-        state.rename_text.clear();
+    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &response) else {
+        return;
+    };
+    let name = state.rename_text.trim().to_string();
+    if accepted && !name.is_empty() {
+        editor.document.rename(id, &name);
     }
+    state.renaming = None;
+    state.rename_text.clear();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shine_sweeps_left_to_right() {
+        // Before it starts the band is off the left edge; half way it is
+        // across the node; at the end off the right.
+        let start = shine_stops(0.0);
+        assert_eq!(start, [-0.65, -0.5, -0.49]);
+        assert_eq!(shine_opacity(0.0, start), 0.0);
+        let middle = shine_stops(0.25);
+        assert!(shine_opacity(middle[1], middle) == SHINE_PEAK);
+        assert!(shine_opacity(0.0, middle) == 0.0);
+        let rising = (middle[0] + middle[1]) / 2.0;
+        assert!((shine_opacity(rising, middle) - SHINE_PEAK / 2.0).abs() < 1e-5);
+        let end = shine_stops(0.5);
+        assert!((end[0] - 1.25).abs() < 1e-6 && (end[1] - 1.3).abs() < 1e-6 && (end[2] - 1.31).abs() < 1e-6);
+        assert_eq!(shine_opacity(1.0, end), 0.0);
+        let mesh = shine_mesh(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 80.0)), 4.0, Color32::WHITE, middle);
+        assert!(mesh.vertices.len() >= 4 && mesh.indices.len().is_multiple_of(3));
+    }
 
     #[test]
     fn snapping_follows_snap_element_to_grid() {
@@ -2190,6 +2369,58 @@ mod tests {
         commands
     }
 
+    /// A file dropped on the window.
+    #[derive(Debug)]
+    struct Dropped(PathBuf);
+
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// One frame of the graph in which `file` drops, the pointer moving to
+    /// `at` first when the system says where it is.
+    fn drop_frame(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, file: &str, at: Option<Pos2>) -> Vec<Command> {
+        let events = at.map(egui::Event::PointerMoved).into_iter().collect();
+        let dropped: egui::DroppedFileHandle = std::sync::Arc::new(Dropped(PathBuf::from(file)));
+        let input = egui::RawInput { screen_rect: Some(SCREEN), events, dropped_files: vec![dropped], ..Default::default() };
+        let mut commands = Vec::new();
+        let output = context.run_ui(input, |ui| show(ui, SCREEN, editor, state, &mut commands));
+        output.drop_without_applying_deltas();
+        commands
+    }
+
+    #[test]
+    fn dropped_files_land_where_they_drop_on_the_graph() {
+        let file = "/maps/height.png";
+        let dropped_at = |state: &GraphState, point: Pos2| {
+            let canvas = state.view().to_canvas(state.rect.min, point);
+            let drop = GraphCommand::DropFiles { files: vec![PathBuf::from(file)], at: [canvas.x, canvas.y] };
+            vec![Command::Graph(drop)]
+        };
+        let mut editor = Editor::new(Document::new());
+        let mut state = GraphState::default();
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        // On the graph: where the pointer is.
+        let point = Pos2::new(300.0, 200.0);
+        let commands = drop_frame(&context, &mut editor, &mut state, file, Some(point));
+        assert_eq!(commands, dropped_at(&state, point));
+        // Somewhere else: not the graph's.
+        let elsewhere = Pos2::new(SCREEN.right() + 50.0, 100.0);
+        assert!(drop_frame(&context, &mut editor, &mut state, file, Some(elsewhere)).is_empty());
+        // Where the system can't say: the middle.
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        let commands = drop_frame(&context, &mut editor, &mut state, file, None);
+        assert_eq!(commands, dropped_at(&state, state.rect.center()));
+    }
+
     /// A context with the editor's fonts, which take effect a frame after
     /// they are set.
     fn themed_context() -> egui::Context {
@@ -2218,6 +2449,38 @@ mod tests {
         let layout = layout_node(data, editor.user.options.default_node_size());
         let dot = layout.port(port, is_input).unwrap().dot.center();
         state.view().to_screen(state.rect.min, dot)
+    }
+
+    #[test]
+    fn panning_is_an_undo_step_that_brings_the_view_back() {
+        let mut document = Document::new();
+        document.add_node("Mountain", [26100.0, 26100.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut state = GraphState::default();
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        let before = state.view();
+        let middle = |pos: Pos2, pressed: bool| egui::Event::PointerButton { pos, button: PointerButton::Middle, pressed, modifiers: egui::Modifiers::NONE };
+        let from = Pos2::new(600.0, 600.0);
+        let to = Pos2::new(500.0, 450.0);
+        graph_frame(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(from)], egui::Modifiers::NONE);
+        graph_frame(&context, &mut editor, &mut state, vec![middle(from, true)], egui::Modifiers::NONE);
+        graph_frame(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(from + Vec2::new(-12.0, 0.0))], egui::Modifiers::NONE);
+        graph_frame(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(to)], egui::Modifiers::NONE);
+        graph_frame(&context, &mut editor, &mut state, vec![middle(to, false)], egui::Modifiers::NONE);
+        assert_ne!(state.view().location, before.location);
+        assert_eq!(editor.document.undo_labels()[0], "Graph panned");
+        // Undone, the view goes back to where the pan began.
+        assert!(editor.document.undo());
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        assert_eq!(state.view().location, before.location);
+
+        // Off, panning is no edit.
+        editor.user.options.set_value("RecordGraphMovementUndos", serde_json::json!(false));
+        let labels = editor.document.undo_labels().len();
+        graph_frame(&context, &mut editor, &mut state, vec![middle(from, true)], egui::Modifiers::NONE);
+        graph_frame(&context, &mut editor, &mut state, vec![middle(from, false)], egui::Modifiers::NONE);
+        assert_eq!(editor.document.undo_labels().len(), labels);
     }
 
     #[test]
