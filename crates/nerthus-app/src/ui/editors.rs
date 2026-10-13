@@ -78,6 +78,9 @@ pub struct EditorContext<'a> {
     pub color: Color32,
     /// The type's default; a slider holding it is shaded lighter.
     pub default: Option<&'a Value>,
+    /// The node's values, for editors that show other properties (the
+    /// palette behind SatMap's Range).
+    pub values: Option<&'a indexmap::IndexMap<String, Value>>,
     /// `O.PropertyArea.ActualWidth`: enums get option bars only when the
     /// property area is wider than 300.
     pub area_width: f32,
@@ -97,11 +100,11 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
                 None => Edit::None,
             }
         }
-        // A byte property is an information line: its description
+        // A byte property is an information line: its `[Description]`
         // (`EditorLabel`, margins 22, 8, 8, 8).
         ValueType::Byte => {
-            let description = spec.description.as_deref().unwrap_or_default();
-            information(ui, description, egui::Margin { left: 22, right: 8, top: 8, bottom: 8 }, None);
+            let text = spec.information.as_deref().unwrap_or_default();
+            information(ui, text, egui::Margin { left: 22, right: 8, top: 8, bottom: 8 }, None);
             Edit::None
         }
         ValueType::Int => {
@@ -141,7 +144,13 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
             let (min, max) = range_of(spec, 0.0, 1.0);
             let integer = spec.value_type == ValueType::Int2;
             let range = RangeSpec { min, max, integer, inset: SLIDER_INSET };
-            match range_slider(ui, id, label, low, high, &range, context.color) {
+            // `Parameters.RangeClipper` gets a `SatMapRangerSlider`.
+            let look = if spec.kind == "RangeClipper" {
+                RangeLook::Palette(range_palette(ui.ctx(), context.values))
+            } else {
+                RangeLook::Accent { label, color: context.color }
+            };
+            match styled_range_slider(ui, id, low, high, &range, &look) {
                 Some((low, high)) if integer => Edit::Set(json!({"X": low.round_ties_even() as i64, "Y": high.round_ties_even() as i64})),
                 Some((low, high)) => Edit::Set(json!({"X": f32_value(low as f32), "Y": f32_value(high as f32)})),
                 None => Edit::None,
@@ -631,53 +640,142 @@ pub struct RangeSpec {
     pub inset: f32,
 }
 
+/// How a `SliderY` is drawn.
+pub enum RangeLook<'a> {
+    /// The `SliderY` style: a dark bar with the thumbs, the values and the
+    /// name in the accent, and the range shaded in it.
+    Accent { label: &'a str, color: Color32 },
+    /// The `RangeSlider` style of a `SatMapRangerSlider` (SatMap's and
+    /// SuperColor's Range): 46 high over the node's palette, the thumbs and
+    /// values in white smoke, the range outlined in black and no name.
+    /// Without a palette it keeps the style's fill, the primary accent.
+    Palette(Option<PaletteFill>),
+}
+
+/// A palette stretched across a `SatMapRangerSlider`.
+pub struct PaletteFill {
+    texture: egui::TextureId,
+    /// `Reverse`: high to low.
+    reversed: bool,
+}
+
+/// `Height` of a `SatMapRangerSlider`.
+const PALETTE_SLIDER_HEIGHT: f32 = 46.0;
+/// The `BorderBrush` a `SatMapRangerSlider` is given: `Brushes.WhiteSmoke`.
+const PALETTE_SLIDER_FOREGROUND: Color32 = Color32::from_rgb(0xf5, 0xf5, 0xf5);
+
+/// `SatMapRangerSlider.UpdateSatMap`: palette `LibraryItem` of the node's
+/// `Library`, reversed when `Reverse` is on. None while the item is not in
+/// the library (an unset item is -1).
+fn range_palette(context: &egui::Context, values: Option<&indexmap::IndexMap<String, Value>>) -> Option<PaletteFill> {
+    let values = values?;
+    let library = values.get("Library").and_then(Value::as_str)?;
+    let item = values.get("LibraryItem").and_then(Value::as_i64)?;
+    let index = usize::try_from(item).ok()?;
+    let palettes = nerthus_nodes::colour_library::category(library)?;
+    let palette = palettes.get(index)?;
+    let texture = palette_texture(context, library, index, palette);
+    let reversed = values.get("Reverse").and_then(Value::as_bool).unwrap_or(false);
+    Some(PaletteFill { texture: texture.id(), reversed })
+}
+
 /// `SliderY`: a range with two thumbs; the low value on the left, the
 /// name in the middle and the high value on the right, all in the accent.
 pub fn range_slider(ui: &mut Ui, id: Id, label: &str, low: f64, high: f64, spec: &RangeSpec, color: Color32) -> Option<(f64, f64)> {
+    let look = RangeLook::Accent { label, color };
+    styled_range_slider(ui, id, low, high, spec, &look)
+}
+
+/// A `SliderY` in either look.
+pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &RangeSpec, look: &RangeLook) -> Option<(f64, f64)> {
     let width = ui.available_width();
-    let (row, _) = ui.allocate_exact_size(Vec2::new(width, SLIDER_HEIGHT), Sense::hover());
+    let height = match look {
+        RangeLook::Accent { .. } => SLIDER_HEIGHT,
+        RangeLook::Palette(_) => PALETTE_SLIDER_HEIGHT,
+    };
+    let (row, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let content = Rect::from_min_max(Pos2::new(row.left() + spec.inset, row.top()), row.max);
     let response = ui.interact(content, id.with("range"), Sense::click_and_drag());
     let opacity = if ui.is_enabled() { 1.0 } else { 0.5 };
+    let accent = match look {
+        RangeLook::Accent { color, .. } => *color,
+        RangeLook::Palette(_) => PALETTE_SLIDER_FOREGROUND,
+    };
 
     // `border` reaches two pixels past the right edge.
     let border = Rect::from_min_max(content.min, content.max + Vec2::new(2.0, 0.0));
     let painter = ui.painter();
-    painter.rect_filled(border, 4.0, theme::SLIDER_BACKGROUND.gamma_multiply(opacity));
-    painter.rect_stroke(border, 4.0, Stroke::new(1.0, theme::SLIDER_BORDER.gamma_multiply(opacity)), StrokeKind::Inside);
-
-    // The two `SliderBase`s (margin 2): their thumbs, and the shaded range
-    // between them (`PART_RangeTrack`, margin 2, 6).
-    let track = content.shrink(2.0);
-    let span = (spec.max - spec.min).max(f64::EPSILON);
-    let travel = (track.width() - THUMB_WIDTH).max(0.0);
-    let thumb_left = |value: f64| track.left() + (((value - spec.min) / span).clamp(0.0, 1.0) as f32) * travel;
-    let low_left = thumb_left(low);
-    let high_left = thumb_left(high);
-    let band = Rect::from_min_max(Pos2::new(low_left + THUMB_WIDTH / 2.0, content.top() + 6.0), Pos2::new(high_left + THUMB_WIDTH / 2.0, content.bottom() - 6.0));
-    if band.width() > 0.0 {
-        painter.rect_filled(band, 0.0, color.gamma_multiply(0.2 * opacity));
+    let border_stroke = Stroke::new(1.0, theme::SLIDER_BORDER.gamma_multiply(opacity));
+    match look {
+        RangeLook::Accent { .. } => {
+            painter.rect_filled(border, 4.0, theme::SLIDER_BACKGROUND.gamma_multiply(opacity));
+        }
+        // The palette fills the bar from end to end (an `ImageBrush`).
+        RangeLook::Palette(Some(fill)) => {
+            let uv = if fill.reversed {
+                Rect::from_min_max(Pos2::new(1.0, 0.0), Pos2::new(0.0, 1.0))
+            } else {
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
+            };
+            let tint = Color32::WHITE.gamma_multiply(opacity);
+            let shape = egui::epaint::RectShape::filled(border, 4.0, tint).with_texture(fill.texture, uv);
+            painter.add(shape);
+        }
+        RangeLook::Palette(None) => {
+            painter.rect_filled(border, 4.0, theme::ACCENT_PRIMARY.gamma_multiply(opacity));
+        }
     }
-    for left in [low_left, high_left] {
-        let thumb = Rect::from_min_max(Pos2::new(left + 2.0, track.top() + 2.0), Pos2::new(left + 4.0, track.bottom() - 2.0));
-        painter.rect_filled(thumb, 0.0, color.gamma_multiply(opacity));
-    }
+    painter.rect_stroke(border, 4.0, border_stroke, StrokeKind::Inside);
 
     // The two values keep their room; the name sits between them,
-    // trimmed, and nothing leaves the bar.
+    // trimmed, and nothing leaves the bar. The range (`Panel.ZIndex` 50)
+    // and the thumbs (100) lie over them.
     let text_painter = painter.with_clip_rect(content);
-    let text_color = color.gamma_multiply(opacity);
+    let text_color = accent.gamma_multiply(opacity);
     let format = |value: f64| if spec.integer { format!("{}", value.round_ties_even() as i64) } else { format!("{value:.2}") };
     let low_galley = painter.layout_no_wrap(format(low), theme::monospace(13.0), text_color);
     let high_galley = painter.layout_no_wrap(format(high), theme::monospace(13.0), text_color);
     let low_top = content.top() + 2.0 + (content.height() - 3.0 - 15.0) / 2.0;
-    let low_right = content.left() + 8.0 + low_galley.size().x;
-    let high_left = content.right() - 8.0 - high_galley.size().x;
+    let low_text_right = content.left() + 8.0 + low_galley.size().x;
+    let high_text_left = content.right() - 8.0 - high_galley.size().x;
     text_painter.galley(Pos2::new(content.left() + 8.0, low_top), low_galley, text_color);
-    text_painter.galley(Pos2::new(high_left, low_top), high_galley, text_color);
-    let name_room = (high_left - low_right - 16.0).min(content.width());
-    let name_galley = fitted_line(ui, label, theme::interface(12.0), text_color, name_room);
-    text_painter.galley(content.center() - name_galley.size() / 2.0, name_galley, text_color);
+    text_painter.galley(Pos2::new(high_text_left, low_top), high_galley, text_color);
+    if let RangeLook::Accent { label, .. } = look {
+        let name_room = (high_text_left - low_text_right - 16.0).min(content.width());
+        let name_galley = fitted_line(ui, label, theme::interface(12.0), text_color, name_room);
+        text_painter.galley(content.center() - name_galley.size() / 2.0, name_galley, text_color);
+    }
+
+    // The two `SliderBase`s (margin 2) and their thumbs.
+    let track = content.shrink(2.0);
+    let span = (spec.max - spec.min).max(f64::EPSILON);
+    let share = |value: f64| ((value - spec.min) / span).clamp(0.0, 1.0) as f32;
+    let travel = (track.width() - THUMB_WIDTH).max(0.0);
+    let thumb_left = |value: f64| track.left() + share(value) * travel;
+    let low_left = thumb_left(low);
+    let high_left = thumb_left(high);
+    // `PART_RangeTrack` as `UpdateUIElements` places it: from 8 in plus the
+    // low value's share of the width less 8, to the high value's share,
+    // 4 from the top and the bottom.
+    let usable = content.width() - 8.0;
+    let band_left = content.left() + 8.0 + share(low) * usable;
+    let band_width = ((share(high) - share(low)) * usable - 8.0).max(0.0);
+    let band = Rect::from_min_size(Pos2::new(band_left, content.top() + 4.0), Vec2::new(band_width, content.height() - 8.0));
+    if band.width() > 0.0 {
+        match look {
+            RangeLook::Accent { .. } => {
+                painter.rect_filled(band, 0.0, accent.gamma_multiply(0.2 * opacity));
+            }
+            RangeLook::Palette(_) => {
+                let outline = Stroke::new(1.5, Color32::BLACK.gamma_multiply(opacity));
+                painter.rect_stroke(band, 0.0, outline, StrokeKind::Inside);
+            }
+        }
+    }
+    for left in [low_left, high_left] {
+        let thumb = Rect::from_min_max(Pos2::new(left + 2.0, track.top() + 2.0), Pos2::new(left + 4.0, track.bottom() - 2.0));
+        painter.rect_filled(thumb, 0.0, accent.gamma_multiply(opacity));
+    }
 
     let active_id = id.with("thumb");
     if response.drag_started() || response.clicked() {

@@ -105,9 +105,16 @@ pub struct NodeCache {
     pub ports: Vec<CachedPort>,
     /// The bytes its maps hold, each map once.
     pub bytes: usize,
+    /// The intents its outputs were left with (`Port.RenderIntent`).
+    pub port_intents: PortIntents,
+}
+
+impl NodeCache {
     /// The intent its main output was left with (`Port.RenderIntent` of
     /// `Out`), which `Node.IsHeightfield` reads.
-    pub out_intent: Option<RenderIntent>,
+    pub fn out_intent(&self) -> Option<RenderIntent> {
+        self.port_intents.get("Out").copied()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -608,8 +615,8 @@ fn run_node_command(engine: &mut Engine, terrain: &Terrain, command: &NodeComman
 fn node_caches(engine: &Engine) -> HashMap<i32, NodeCache> {
     let mut caches = HashMap::new();
     for node in engine.cache.nodes() {
-        let out_intent = engine.port_intents(node).and_then(|intents| intents.get("Out")).copied();
-        let mut cache = NodeCache { out_intent, ..NodeCache::default() };
+        let port_intents = engine.port_intents(node).cloned().unwrap_or_default();
+        let mut cache = NodeCache { port_intents, ..NodeCache::default() };
         let mut seen = std::collections::HashSet::new();
         for (name, map) in engine.cache.ports(node) {
             let port = CachedPort {

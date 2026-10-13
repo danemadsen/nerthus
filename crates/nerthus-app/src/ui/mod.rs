@@ -13,9 +13,11 @@ mod command_line_window;
 mod commands;
 mod console_window;
 mod constructor;
+mod create_connection;
 mod data_view;
 pub mod diagnostics_window;
 pub(crate) mod editors;
+mod expression_dialog;
 mod file_commands;
 pub mod file_dialogs;
 mod file_windows;
@@ -48,6 +50,7 @@ mod property_area;
 mod regions;
 mod statistics_window;
 mod status_bar;
+mod syntax_box;
 mod title_bar;
 mod tool_commands;
 pub(crate) mod toolbox;
@@ -113,6 +116,8 @@ pub struct UiState {
     pub alert: Option<alert::Alert>,
     /// Edit Variable, while open.
     pub variable_dialog: Option<variable_dialog::EditVariable>,
+    /// Edit Expression (a parameter's Expression…), while open.
+    pub expression_dialog: Option<expression_dialog::ExpressionDialog>,
     /// Record Turntable Animation, while open, and what it remembers for
     /// the project.
     pub turntable: Option<turntable_window::TurntableWindow>,
@@ -185,6 +190,7 @@ impl Default for UiState {
             prompt: None,
             alert: None,
             variable_dialog: None,
+            expression_dialog: None,
             turntable: None,
             turntable_memory: turntable_window::TurntableMemory::default(),
             constructor: None,
@@ -307,6 +313,13 @@ impl UiState {
             "skybox" => self.graph.toggle_skybox = true,
             "viewport-2d" | "gizmo" | "pick" | "measure" => self.viewport_2d.open_at_launch(panel),
             "edit-variable" => self.commands_at_launch.push(Command::EditVariable(detail.to_string())),
+            // `edit-expression:<node id>.<property>`.
+            "edit-expression" => {
+                let (node, property) = detail.split_once('.').unwrap_or((detail, ""));
+                if let Ok(node) = node.parse() {
+                    self.commands_at_launch.push(Command::EditExpression { node, property: property.to_string() });
+                }
+            }
             "command-line" => self.commands_at_launch.push(Command::ShowBuildCommandLine),
             "statistics" => self.commands_at_launch.push(Command::ShowBuildStatistics),
             "flat" => self.commands_at_launch.push(Command::ToggleFlatView),
@@ -484,7 +497,9 @@ pub fn draw(
     }
     file_windows::show(&ctx, &mut editor, &mut ui_state, &mut pending);
     note_editor::show(&ctx, &mut editor, &mut ui_state.graph);
+    create_connection::show(&ctx, &editor, &mut ui_state.graph.create_connection, &mut pending);
     variable_dialog::show(&ctx, &mut editor, &mut ui_state.variable_dialog, &mut pending);
+    expression_dialog::show(&ctx, &mut editor, &mut ui_state.expression_dialog);
     command_line_window::show(&ctx, &mut ui_state.command_line);
     statistics_window::show(&ctx, &mut ui_state.statistics, &mut pending);
     turntable(&ctx, &mut editor, &mut ui_state, &mut link.turntable);

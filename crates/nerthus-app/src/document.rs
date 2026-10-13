@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use nerthus_engine::region::{self, Region};
-use nerthus_engine::{to_terrain_json, Catalogue, ConnectionRecord, NodeData, Project, Terrain};
+use nerthus_engine::{to_terrain_json, Catalogue, ConnectionRecord, NodeData, PortIntents, Project, Terrain};
 use nerthus_export::build::BuildDefinition;
 use nerthus_export::FileFormat;
 use serde_json::{json, Value};
@@ -63,6 +63,9 @@ pub struct Document {
     stale: HashSet<i32>,
     /// Every result is stale (a different project).
     stale_all: bool,
+    /// The intents built nodes' outputs were left with (`Port.RenderIntent`)
+    /// as the engine last reported them, which new connections pass on.
+    built_intents: HashMap<i32, PortIntents>,
     random: SmallRandom,
 }
 
@@ -84,6 +87,7 @@ impl Document {
             redo: Vec::new(),
             stale: HashSet::new(),
             stale_all: true,
+            built_intents: HashMap::new(),
             random,
         }
     }
@@ -142,6 +146,12 @@ impl Document {
     /// Rebuilds everything on the next build.
     pub fn mark_all_stale(&mut self) {
         self.stale_all = true;
+    }
+
+    /// What the engine reports of the intents its builds left on each
+    /// node's outputs (`Port.RenderIntent`).
+    pub fn set_built_intents(&mut self, intents: HashMap<i32, PortIntents>) {
+        self.built_intents = intents;
     }
 
     /// Remembers the current state before an edit named `label`.
@@ -284,6 +294,7 @@ impl Document {
             nerthus_engine::editing::grow_inputs(target);
         }
         self.mark_stale(to);
+        self.convey_render_intent(from, from_port, to, to_port);
     }
 
     /// `AddNewPort` (the Add Input command).

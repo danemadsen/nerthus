@@ -185,7 +185,7 @@ fn nearest_heightfield(editor: &Editor, node: i32) -> Option<i32> {
 fn is_heightfield(editor: &Editor, node: &NodeData) -> bool {
     let saved_override = node.base.get("RenderIntentOverride").and_then(Value::as_str);
     let intent_override = saved_override.and_then(RenderIntent::from_name).unwrap_or_default();
-    let out_intent = editor.node_caches.get(&node.id).and_then(|cache| cache.out_intent).unwrap_or_default();
+    let out_intent = editor.node_caches.get(&node.id).and_then(|cache| cache.out_intent()).unwrap_or_default();
     let explicit = matches!(intent_override, RenderIntent::Default | RenderIntent::Heightfield);
     if explicit && out_intent == RenderIntent::Heightfield {
         return true;

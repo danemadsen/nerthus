@@ -114,6 +114,9 @@ pub enum GraphCommand {
     AddPortAndConnect { from: i32, from_port: String, to: i32 },
     /// Combine nodes (F8, Ctrl F8, Ctrl Shift F8 and the toolbar's).
     Combine(CombineKind),
+    /// A connection dragged out of an output let go on another node's
+    /// output (`CombineOutPorts`).
+    CombineOutputs { dragged: i32, dragged_port: String, other: i32, other_port: String },
     /// Node › Mutate (`MutateNode`).
     Mutate,
     /// The graph toolbar's Mutate (`BtnMutate_OnClick`) and its Mutate all
@@ -455,6 +458,7 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
                 editor.changed();
             }
         }
+        GraphCommand::CombineOutputs { dragged, dragged_port, other, other_port } => combine_outputs(editor, ui_state, dragged, &dragged_port, other, &other_port),
         GraphCommand::Mutate => {
             let selected = editor.selection.clone();
             editor.document.mutate_nodes(&selected, editor.mutation);
@@ -525,9 +529,9 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
     }
 }
 
-/// The graph menus `--show` opens (for checking the editor without a
-/// person at it).
-const LAUNCH_MENUS: [&str; 6] = ["lazy-menu", "node-search", "find-node", "quick-navigation", "manage-portals", "connection-menu"];
+/// The graph menus and windows `--show` opens (for checking the editor
+/// without a person at it).
+const LAUNCH_MENUS: [&str; 7] = ["lazy-menu", "node-search", "find-node", "quick-navigation", "manage-portals", "connection-menu", "create-connection"];
 
 pub fn opens_at_launch(panel: &str) -> bool {
     LAUNCH_MENUS.contains(&panel)
@@ -536,7 +540,9 @@ pub fn opens_at_launch(panel: &str) -> bool {
 /// `--show lazy-menu`, `node-search[:<text>]`, `find-node[:<text>]`,
 /// `quick-navigation` and `manage-portals` (for the selected node), or
 /// `connection-menu` (the first connection of the tab shown), opened in
-/// the middle of the graph.
+/// the middle of the graph; or `create-connection`, the Create
+/// Connection window from the selected node's outputs to another node's
+/// inputs.
 pub fn open_at_launch(show: &str, editor: &mut Editor, ui_state: &mut UiState) {
     let (panel, detail) = show.split_once(':').unwrap_or((show, ""));
     let center = ui_state.graph.rect.center();
@@ -560,6 +566,22 @@ pub fn open_at_launch(show: &str, editor: &mut Editor, ui_state: &mut UiState) {
                 editor.select(None);
                 ui_state.graph.selected_connections = vec![(to, to_port.clone())];
                 ui_state.graph.popup = Some(GraphPopup::Connection { to, to_port, at: center });
+            }
+        }
+        "create-connection" => {
+            let tab = ui_state.graph.tab;
+            let mut on_tab: Vec<i32> = Vec::new();
+            for node in editor.document.terrain().nodes.values() {
+                if node_tab(node) == tab {
+                    on_tab.push(node.id);
+                }
+            }
+            on_tab.sort_unstable();
+            let source = editor.active_node().or(on_tab.first().copied());
+            let target = on_tab.iter().copied().find(|id| Some(*id) != source);
+            if let (Some(source), Some(target)) = (source, target) {
+                let window = crate::ui::create_connection::CreateConnection::new(source, target, true);
+                ui_state.graph.create_connection = Some(window);
             }
         }
         _ => {}
@@ -600,7 +622,7 @@ fn is_color(editor: &Editor, id: i32) -> bool {
     if spec.and_then(|spec| spec.classification.as_deref()) == Some("Colorizer") {
         return true;
     }
-    let live = editor.node_caches.get(&id).and_then(|cache| cache.out_intent);
+    let live = editor.node_caches.get(&id).and_then(|cache| cache.out_intent());
     if let Some(intent) = live {
         return intent == nerthus_engine::RenderIntent::Color;
     }
@@ -821,6 +843,47 @@ fn connect_new(editor: &mut Editor, node: i32, port: &str, output: bool, new_nod
         editor.document.link(new_node, &new_output, node, port);
         record_connection(editor, new_node, &new_output, node);
     }
+}
+
+/// `CombineOutPorts`: a new Combine, 1.5 times the dragged node's width
+/// right of the two nodes and half way between them, its first input fed
+/// by the dragged output and its second by the other. It joins the group
+/// it lands in and is selected.
+fn combine_outputs(editor: &mut Editor, ui_state: &mut UiState, dragged: i32, dragged_port: &str, other: i32, other_port: &str) {
+    if dragged == other {
+        return;
+    }
+    let (Some(dragged_node), Some(other_node)) = (editor.document.node(dragged), editor.document.node(other)) else {
+        return;
+    };
+    let sizes = extents(editor);
+    let right = dragged_node.position[0].max(other_node.position[0]);
+    let top = dragged_node.position[1].min(other_node.position[1]);
+    let bottom = dragged_node.position[1].max(other_node.position[1]);
+    let corner = [right + extent_of(&sizes, dragged)[0] * 1.5, top + (bottom - top) / 2.0];
+    let tab = node_tab(dragged_node);
+    editor.document.checkpoint("Nodes combined as inputs.");
+    let Some(combined) = editor.document.place_node("Combine", corner, tab) else {
+        editor.document.undo();
+        return;
+    };
+    prepare_added_node(editor, combined, None);
+    editor.user.usage.record_node("Combine");
+    let Some(combine_node) = editor.document.node(combined) else {
+        return;
+    };
+    let inputs: Vec<String> = grid_inputs(combine_node).iter().map(|port| port.name.clone()).collect();
+    let (Some(first_input), Some(second_input)) = (inputs.first(), inputs.get(1)) else {
+        return;
+    };
+    editor.document.link(dragged, dragged_port, combined, first_input);
+    record_connection(editor, dragged, dragged_port, combined);
+    editor.document.link(other, other_port, combined, second_input);
+    record_connection(editor, other, other_port, combined);
+    settle(editor, &[combined], tab);
+    ui_state.graph.clear_element_selection();
+    editor.select(Some(combined));
+    editor.changed();
 }
 
 /// `InPort(0)`.
@@ -1062,6 +1125,31 @@ fn lazy_action(tag: &str, editor: &mut Editor, ui_state: &mut UiState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_output_let_go_on_another_output_makes_a_combine() {
+        let mut document = crate::document::Document::new();
+        let erosion = document.add_node("Erosion2", [26000.0, 26000.0]).unwrap();
+        let mountain = document.add_node("Mountain", [26000.0, 26400.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut ui_state = UiState::default();
+        let dropped = GraphCommand::CombineOutputs { dragged: erosion, dragged_port: "Deposits".to_string(), other: mountain, other_port: "Out".to_string() };
+        run(dropped, &mut editor, &mut ui_state);
+
+        let combined = editor.selection[0];
+        let node = editor.document.node(combined).unwrap();
+        assert_eq!(node.type_name, "Combine");
+        // 1.5 widths of the dragged node right of the two, half way down.
+        assert_eq!(node.position, [26000.0 + 230.0 * 1.5, 26200.0]);
+        let source = |port: &str| node.port(port).and_then(|port| port.record.as_ref()).map(|record| (record.from, record.from_port.clone()));
+        assert_eq!(source("In"), Some((erosion, "Deposits".to_string())));
+        assert_eq!(source("Input2"), Some((mountain, "Out".to_string())));
+        // The dragged output is a mask, so the Combine renders as one.
+        assert_eq!(node.base.get("RenderIntentOverride"), Some(&Value::from("Mask")));
+        assert_eq!(editor.document.undo_labels()[0], "Nodes combined as inputs.");
+        editor.document.undo();
+        assert!(editor.document.node(combined).is_none());
+    }
 
     #[test]
     fn groups_wrap_their_elements() {

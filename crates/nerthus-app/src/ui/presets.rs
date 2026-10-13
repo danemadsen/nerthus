@@ -2,13 +2,13 @@
 //! and the Node menu (`Shell.LoadNodePresets`) and the Create Preset window
 //! (`CreatePresetWindow`).
 
-use egui::{Align, Id, Key, Layout, RichText, Stroke, Vec2};
+use egui::{Align, Id, Key, Layout, RichText};
 
 use crate::editor::Editor;
 use crate::presets;
 use crate::theme;
 use crate::ui::commands::Command;
-use crate::ui::widgets::{menu_item, menu_item_enabled, menu_separator};
+use crate::ui::widgets::{dialog_button, menu_item, menu_item_enabled, menu_separator};
 
 /// `LoadNodePresets`: Create Preset, then the presets for the selected
 /// node's type (each with its description as the tooltip) or "No presets
@@ -161,17 +161,6 @@ pub fn show_create_window(ctx: &egui::Context, editor: &mut Editor) {
 fn make_safe(name: &str) -> String {
     let unsafe_character = |character: char| matches!(character, '"' | '<' | '>' | '|' | ':' | '*' | '?' | '\\' | '/') || (character as u32) < 32;
     name.chars().map(|character| if unsafe_character(character) { '_' } else { character }).collect()
-}
-
-/// `Button`, or with `important` `Button-Important`.
-fn dialog_button(ui: &mut egui::Ui, text: &str, important: bool) -> egui::Response {
-    let label = RichText::new(text).font(theme::interface(12.0)).color(theme::LABEL_EMPHASIS);
-    let border = if important { theme::BUTTON_IMPORTANT_BORDER } else { theme::BUTTON_BORDER };
-    let mut widget = egui::Button::new(label);
-    widget = widget.fill(theme::BUTTON_BACKGROUND);
-    widget = widget.stroke(Stroke::new(1.0, border));
-    widget = widget.min_size(Vec2::new(80.0, 26.0));
-    ui.add(widget)
 }
 
 #[cfg(test)]

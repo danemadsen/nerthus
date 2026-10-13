@@ -44,6 +44,7 @@ pub const ACCENT_TRANSPARENT_GREEN: Color32 = argb(0x666d9258);
 pub const ACCENT_TRANSPARENT_TEAL: Color32 = argb(0x6647b4b3);
 pub const ACCENT_TRANSPARENT_YELLOW: Color32 = argb(0x66cacd46);
 pub const ACCENT_TRANSPARENT_RED: Color32 = argb(0x66dc4a4a);
+pub const ACCENT_TRANSPARENT_PURPLE: Color32 = argb(0x666f459e);
 /// `Button-Important-Border`.
 pub const BUTTON_IMPORTANT_BORDER: Color32 = rgb(0x1492e6);
 /// `ParamsA-Color1` to `4`: Options › Compute marks each device type with
@@ -76,6 +77,7 @@ pub const BUTTON_PRESSED: Color32 = rgb(0x111111);
 pub const TEXTBOX_BACKGROUND: Color32 = rgb(0x101010);
 pub const TEXTBOX_FOCUSED_BORDER: Color32 = rgb(0x1492e6);
 pub const TEXTBOX_FILE_BORDER: Color32 = rgb(0x424242);
+pub const LISTBOX_BACKGROUND: Color32 = rgb(0x161616);
 pub const LISTBOX_BORDER: Color32 = rgb(0x181818);
 pub const TEXTBOX_FILE_FOREGROUND: Color32 = rgb(0x1492e6);
 pub const TOGGLE_INDICATOR: Color32 = rgb(0x202020);

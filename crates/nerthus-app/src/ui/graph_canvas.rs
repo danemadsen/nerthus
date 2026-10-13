@@ -2,9 +2,10 @@
 //! with the toolbox category's colour on the title, icon, ports and
 //! outgoing connections, borders that show the build state, "circuit"
 //! connections, groups and notes behind the nodes, and the mouse
-//! handling (drag to move or connect, marquee selection, wheel zoom,
-//! middle or right drag to pan, a connection dropped into the node
-//! search, files and toolbox entries dropped onto the graph).
+//! handling (drag to move or connect, marquee selection, Ctrl Shift drag
+//! to push elements aside, wheel zoom, middle or right drag to pan, a
+//! connection dropped into the node search or onto another output, files
+//! and toolbox entries dropped onto the graph).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -14,11 +15,12 @@ use egui::{Color32, CursorIcon, Key, PointerButton, Pos2, Rect, Response, Sense,
 use nerthus_engine::{Catalogue, NodeData, NodeState, PortData};
 use serde_json::Value;
 
-use crate::document::{grid_inputs, grid_outputs, node_tab, ExportSettings, GroupData};
+use crate::document::{grid_inputs, grid_outputs, node_tab, Document, ExportSettings, GroupData};
 use crate::editor::Editor;
 use crate::icons;
 use crate::theme;
 use crate::ui::commands::Command;
+use crate::ui::create_connection::CreateConnection;
 use crate::ui::graph_commands::{GraphCommand, NodeSource};
 use crate::ui::graph_groups::{self, GroupDrag, GroupState};
 use crate::ui::graph_popups::GraphPopup;
@@ -145,9 +147,28 @@ enum Drag {
     Marquee { start: Pos2, additive: bool },
     /// A connection pulled out of an output, or backwards out of an input.
     /// A `sticky` one (a port double-clicked, `IsClickClick`) ends at the
-    /// next click instead of the release.
-    FromOutput { node: i32, port: String, sticky: bool },
-    FromInput { node: i32, port: String, sticky: bool },
+    /// next click instead of the release. One pulled out of a compact
+    /// node's collapsed ports (`collapsed`) starts at the first of them.
+    FromOutput { node: i32, port: String, sticky: bool, collapsed: bool },
+    FromInput { node: i32, port: String, sticky: bool, collapsed: bool },
+    /// Ctrl Shift on empty graph (`DragArrange`): where the push began
+    /// (canvas units), and what lay to the right of it then.
+    Push { press: Pos2, elements: PushedElements },
+}
+
+/// What a push moves, and where each started (canvas units). A group's
+/// nodes and notes move with the group rather than on their own.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct PushedElements {
+    nodes: Vec<(i32, [f32; 2])>,
+    notes: Vec<(i32, [f32; 2])>,
+    groups: Vec<(i32, [f32; 2])>,
+}
+
+impl PushedElements {
+    fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.notes.is_empty() && self.groups.is_empty()
+    }
 }
 
 /// The graph's interaction state between frames.
@@ -189,6 +210,8 @@ pub struct GraphState {
     pub bookmark_removing: Option<i32>,
     /// A menu or the search open over the graph.
     pub popup: Option<GraphPopup>,
+    /// The Create Connection window, while open.
+    pub create_connection: Option<CreateConnection>,
     /// Where the pointer is, while it is over the graph (screen).
     pub pointer: Option<Pos2>,
     /// Shift held this frame (Ungroup then takes the group's nodes too).
@@ -245,6 +268,7 @@ impl Default for GraphState {
             dimmed: HashSet::new(),
             bookmark_removing: None,
             popup: None,
+            create_connection: None,
             pointer: None,
             shift_held: false,
             snap_to_ports: true,
@@ -283,6 +307,7 @@ impl GraphState {
         self.note_drag = None;
         self.editing_note = None;
         self.popup = None;
+        self.create_connection = None;
         self.renaming_group = None;
         self.group_drag = None;
         self.group_states.clear();
@@ -727,6 +752,10 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
     let zoom = view.zoom;
     if state.show_grid {
         draw_grid(&painter, rect, &view);
+    }
+    if let Some(Drag::Push { press, .. }) = &state.drag {
+        let pointer = ui.input(|input| input.pointer.interact_pos());
+        draw_push_band(&painter, rect, &view, origin, *press, pointer);
     }
 
     let connections = layout_connections(editor, &layouts, &by_id, &frame, &view, origin, tab);
@@ -1229,11 +1258,11 @@ fn draw_portal(painter: &egui::Painter, port: &PortLayout, portal: Portal, color
     painter.galley(position, galley, theme::PORTAL_FOREGROUND);
 }
 
-/// The port a dragged connection would attach to.
+/// The port a dragged connection would be let go on (`HandleSnapToPorts`):
+/// any port of another node, outputs as well as inputs.
 fn snapping_port(layouts: &[NodeLayout], view: &GraphView, origin: Pos2, state: &GraphState, point: Pos2) -> Option<(i32, String, bool)> {
-    let (source_node, wants_input) = match &state.drag {
-        Some(Drag::FromOutput { node, .. }) => (*node, true),
-        Some(Drag::FromInput { node, .. }) => (*node, false),
+    let source_node = match &state.drag {
+        Some(Drag::FromOutput { node, .. } | Drag::FromInput { node, .. }) => *node,
         _ => return None,
     };
     let mut best: Option<(f32, (i32, String, bool))> = None;
@@ -1241,7 +1270,7 @@ fn snapping_port(layouts: &[NodeLayout], view: &GraphView, origin: Pos2, state: 
         if layout.id == source_node {
             continue;
         }
-        for port in layout.ports().filter(|port| port.is_input == wants_input) {
+        for port in layout.ports() {
             let anchor = view.to_screen(origin, port.dot.center());
             let distance = anchor.distance(point);
             let near = if state.snap_to_ports { distance <= SNAP_DISTANCE.max(12.0 * view.zoom) } else { view.rect_to_screen(origin, port.hit).contains(point) };
@@ -1268,19 +1297,68 @@ fn drag_port_name(editor: &Editor, node: i32, port: &PortLayout) -> Option<Strin
     ports.get(1).map(|second| second.name.clone())
 }
 
+/// A dragged connection as it is let go: the port it was pulled from.
+struct DraggedConnection {
+    node: i32,
+    port: String,
+    from_output: bool,
+    /// Pulled out of a compact node's collapsed ports.
+    collapsed: bool,
+}
+
+/// What a dragged connection let go on a port does
+/// (`NodeElement_OnConnectionManipulationCompleted`, `CreateConnection`).
+#[derive(Clone, Debug, PartialEq)]
+enum PortDrop {
+    /// An output feeds an input.
+    Connect { from: i32, from_port: String, to: i32, to_port: String },
+    /// Output on output: a new Combine takes both (`CombineOutPorts`).
+    CombineOutputs { dragged: i32, dragged_port: String, other: i32, other_port: String },
+    /// On a collapsed stand-in: that node's ports to choose from
+    /// (`ShowPortsMenu(ToNode, hidePrimary: true)`).
+    PortsMenu { node: i32 },
+    /// From collapsed ports onto another node's: both ports picked in the
+    /// Create Connection window (`ShowCollapsedOutOutMenu`).
+    CreateConnection { node: i32 },
+    /// Input on input, or on its own node (`IsConnectionValid`).
+    Nothing,
+}
+
+/// Where a connection let go on a node's `port` ends up.
+fn port_drop(dragged: &DraggedConnection, node: i32, port: &str, is_input: bool) -> PortDrop {
+    if node == dragged.node {
+        return PortDrop::Nothing;
+    }
+    if port == COLLAPSED_PORT {
+        if dragged.collapsed {
+            return PortDrop::CreateConnection { node };
+        }
+        return PortDrop::PortsMenu { node };
+    }
+    let dragged_port = dragged.port.clone();
+    let port = port.to_string();
+    match (dragged.from_output, is_input) {
+        (true, true) => PortDrop::Connect { from: dragged.node, from_port: dragged_port, to: node, to_port: port },
+        (true, false) => PortDrop::CombineOutputs { dragged: dragged.node, dragged_port, other: node, other_port: port },
+        (false, false) => PortDrop::Connect { from: node, from_port: port, to: dragged.node, to_port: dragged_port },
+        (false, true) => PortDrop::Nothing,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_port_drags(ui: &Ui, editor: &mut Editor, state: &mut GraphState, layouts: &[NodeLayout], groups: &[GroupData], ports: &[(usize, PortLayout, Response)], origin: Pos2, commands: &mut Vec<Command>) {
     let double_click_connect = editor.user.options.double_click_connect();
     for (index, port, response) in ports {
         let node = layouts[*index].id;
+        let collapsed = port.collapsed;
         // `PortElement.OnMouseDoubleClick` (Double-Click Connect): a
         // connection follows the pointer until the next click.
         if double_click_connect && response.double_clicked() {
             let Some(name) = drag_port_name(editor, node, port) else { continue };
             state.drag = if port.is_input {
-                Some(Drag::FromInput { node, port: name, sticky: true })
+                Some(Drag::FromInput { node, port: name, sticky: true, collapsed })
             } else {
-                Some(Drag::FromOutput { node, port: name, sticky: true })
+                Some(Drag::FromOutput { node, port: name, sticky: true, collapsed })
             };
             continue;
         }
@@ -1289,21 +1367,22 @@ fn handle_port_drags(ui: &Ui, editor: &mut Editor, state: &mut GraphState, layou
         }
         let Some(name) = drag_port_name(editor, node, port) else { continue };
         if !port.is_input {
-            state.drag = Some(Drag::FromOutput { node, port: name, sticky: false });
+            state.drag = Some(Drag::FromOutput { node, port: name, sticky: false, collapsed });
             continue;
         }
         // Pulling a connected input detaches its connection. A connection
         // from a node the project no longer has (one of an unknown type,
-        // dropped on open) is not drawn, so the input acts unconnected.
+        // dropped on open) is not drawn, so the input acts unconnected. The
+        // collapsed stand-in is no connection's end.
         let record = editor.document.node(node).and_then(|data| data.port(&name)).and_then(|data| data.record.clone());
         let source_exists = record.as_ref().is_some_and(|record| editor.document.node(record.from).is_some());
         match record {
-            Some(record) if source_exists => {
+            Some(record) if source_exists && !collapsed => {
                 editor.document.disconnect(node, &name);
                 editor.changed();
-                state.drag = Some(Drag::FromOutput { node: record.from, port: record.from_port, sticky: false });
+                state.drag = Some(Drag::FromOutput { node: record.from, port: record.from_port, sticky: false, collapsed: false });
             }
-            _ => state.drag = Some(Drag::FromInput { node, port: name, sticky: false }),
+            _ => state.drag = Some(Drag::FromInput { node, port: name, sticky: false, collapsed }),
         }
     }
 
@@ -1321,51 +1400,61 @@ fn handle_port_drags(ui: &Ui, editor: &mut Editor, state: &mut GraphState, layou
     let Some(drag) = state.drag.clone() else {
         return;
     };
-    let (node, port, from_output) = match drag {
-        Drag::FromOutput { node, port, .. } => (node, port, true),
-        Drag::FromInput { node, port, .. } => (node, port, false),
+    let dragged = match drag {
+        Drag::FromOutput { node, port, collapsed, .. } => DraggedConnection { node, port, from_output: true, collapsed },
+        Drag::FromInput { node, port, collapsed, .. } => DraggedConnection { node, port, from_output: false, collapsed },
         _ => return,
     };
     let pointer = ui.input(|input| input.pointer.interact_pos());
     let view = state.view();
     let target = pointer.and_then(|point| snapping_port(layouts, &view, origin, state, point));
     state.drag = None;
-    match target {
-        // The collapsed stand-in: its node's ports to choose from
-        // (`ShowPortsMenu(ToNode, hidePrimary: true)`).
-        Some((target_node, target_port, _)) if target_port == COLLAPSED_PORT => {
-            let at = pointer.unwrap_or(origin);
-            state.popup = Some(GraphPopup::Ports { from: node, from_port: port, from_output, node: target_node, at });
-        }
-        Some((target_node, target_port, _)) => {
-            let command = if from_output {
-                GraphCommand::ConnectPorts { from: node, from_port: port, to: target_node, to_port: target_port }
-            } else {
-                GraphCommand::ConnectPorts { from: target_node, from_port: target_port, to: node, to_port: port }
-            };
-            commands.push(Command::Graph(command));
-        }
-        None => {
-            let Some(point) = pointer.filter(|point| state.rect.contains(*point)) else {
-                return;
-            };
-            let canvas = view.to_canvas(origin, point);
-            // Dropped on a collapsed group: the group's portals are offered.
-            let collapsed_group = groups.iter().find(|group| group.collapsed && group.contains([canvas.x, canvas.y]));
-            if let Some(group) = collapsed_group {
-                if from_output {
-                    return;
-                }
-                state.popup = Some(GraphPopup::GroupPortals { group: group.id, to: node, to_port: port, at: point });
-                return;
+    if let Some((target_node, target_port, target_is_input)) = target {
+        let at = pointer.unwrap_or(origin);
+        let dropped = port_drop(&dragged, target_node, &target_port, target_is_input);
+        match dropped {
+            PortDrop::Connect { from, from_port, to, to_port } => {
+                let command = GraphCommand::ConnectPorts { from, from_port, to, to_port };
+                commands.push(Command::Graph(command));
             }
-            // `OnConnectionDraggedOut`: the node search, to add a node joined
-            // to the dragged port.
-            let source = NodeSource::Port { node, port, output: from_output };
-            let search = SearchPopup::new(SearchMode::Nodes { source }, point, [canvas.x, canvas.y]);
-            state.popup = Some(GraphPopup::Search(search));
+            PortDrop::CombineOutputs { dragged: dragged_node, dragged_port, other, other_port } => {
+                let command = GraphCommand::CombineOutputs { dragged: dragged_node, dragged_port, other, other_port };
+                commands.push(Command::Graph(command));
+            }
+            PortDrop::PortsMenu { node } => {
+                state.popup = Some(GraphPopup::Ports { from: dragged.node, from_port: dragged.port, from_output: dragged.from_output, node, at });
+            }
+            PortDrop::CreateConnection { node } => {
+                state.create_connection = Some(CreateConnection::new(dragged.node, node, dragged.from_output));
+            }
+            PortDrop::Nothing => {}
         }
+        return;
     }
+    let Some(point) = pointer.filter(|point| state.rect.contains(*point)) else {
+        return;
+    };
+    // Let go on one of its own node's ports: nothing (`IsConnectionValid`).
+    let own_layout = layouts.iter().find(|layout| layout.id == dragged.node);
+    let on_own_port = own_layout.is_some_and(|layout| layout.ports().any(|port| view.rect_to_screen(origin, port.hit).contains(point)));
+    if on_own_port {
+        return;
+    }
+    let canvas = view.to_canvas(origin, point);
+    // Dropped on a collapsed group: the group's portals are offered.
+    let collapsed_group = groups.iter().find(|group| group.collapsed && group.contains([canvas.x, canvas.y]));
+    if let Some(group) = collapsed_group {
+        if dragged.from_output {
+            return;
+        }
+        state.popup = Some(GraphPopup::GroupPortals { group: group.id, to: dragged.node, to_port: dragged.port, at: point });
+        return;
+    }
+    // `OnConnectionDraggedOut`: the node search, to add a node joined to
+    // the dragged port.
+    let source = NodeSource::Port { node: dragged.node, port: dragged.port, output: dragged.from_output };
+    let search = SearchPopup::new(SearchMode::Nodes { source }, point, [canvas.x, canvas.y]);
+    state.popup = Some(GraphPopup::Search(search));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1522,6 +1611,95 @@ fn update_group_states(editor: &Editor, state: &mut GraphState, groups: &[GroupD
             state.group_states.insert(group.id, GroupState::Outgoing);
         }
     }
+}
+
+/// `PrepareToPushElements`: every node, group and note of the tab whose
+/// corner lies right of `x`, with where it is. Nodes and notes of a group
+/// that is pushed go with it, not on their own.
+fn elements_to_push(document: &Document, tab: usize, x: f32) -> PushedElements {
+    let mut elements = PushedElements::default();
+    let mut carried: HashSet<i32> = HashSet::new();
+    for group in document.groups() {
+        if group.graph_index != tab || group.position[0] <= x {
+            continue;
+        }
+        carried.extend(group.children.iter().copied());
+        elements.groups.push((group.id, group.position));
+    }
+    for node in document.terrain().nodes.values() {
+        if node_tab(node) != tab || node.position[0] <= x || carried.contains(&node.id) {
+            continue;
+        }
+        elements.nodes.push((node.id, node.position));
+    }
+    for (id, fields) in document.notes() {
+        let graph_index = fields.get("GraphIndex").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let position = fields.get("Position");
+        let coordinate = |axis: &str| position.and_then(|position| position.get(axis)).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let corner = [coordinate("X"), coordinate("Y")];
+        if graph_index != tab || corner[0] <= x || carried.contains(&id) {
+            continue;
+        }
+        elements.notes.push((id, corner));
+    }
+    elements
+}
+
+/// A push begins at `press` (canvas units): one undo step for it, when
+/// there is anything to push.
+fn start_push(editor: &mut Editor, state: &mut GraphState, press: Pos2) {
+    let elements = elements_to_push(&editor.document, state.tab, press.x);
+    if !elements.is_empty() {
+        editor.document.checkpoint("Push");
+    }
+    state.drag = Some(Drag::Push { press, elements });
+}
+
+/// `PushElements`: what lay right of where the push began moves across
+/// with the pointer (back too), until the button comes up.
+fn push_elements(ui: &Ui, editor: &mut Editor, state: &mut GraphState, origin: Pos2) {
+    let Some(Drag::Push { press, elements }) = state.drag.clone() else {
+        return;
+    };
+    let view = state.view();
+    let pointer = ui.input(|input| input.pointer.interact_pos());
+    if let Some(pointer) = pointer {
+        let shift = view.to_canvas(origin, pointer).x - press.x;
+        let pushed = |start: [f32; 2]| [start[0] + shift, start[1]];
+        for (id, start) in &elements.groups {
+            editor.document.move_group(*id, pushed(*start), false);
+        }
+        let moves: Vec<(i32, [f32; 2])> = elements.nodes.iter().map(|(id, start)| (*id, pushed(*start))).collect();
+        editor.document.move_nodes(&moves, false);
+        for (id, start) in &elements.notes {
+            editor.document.set_note_vector(*id, "Position", pushed(*start), false);
+        }
+    }
+    ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
+    if !ui.input(|input| input.pointer.primary_down()) {
+        state.drag = None;
+    }
+}
+
+/// `VerticalDragRect`: from where the push began to the pointer, the
+/// graph's whole height, behind everything else.
+fn draw_push_band(painter: &egui::Painter, rect: Rect, view: &GraphView, origin: Pos2, press: Pos2, pointer: Option<Pos2>) {
+    let Some(pointer) = pointer else {
+        return;
+    };
+    let left = view.to_screen(origin, press).x;
+    if pointer.x <= left {
+        return;
+    }
+    // Past the graph's top and bottom, so only the sides' lines show.
+    let top_left = Pos2::new(left, rect.top() - 2.0);
+    let bottom_right = Pos2::new(pointer.x, rect.bottom() + 2.0);
+    let band = Rect::from_min_max(top_left, bottom_right);
+    // The rectangle's `Opacity` 0.75 over its fill and line.
+    let fill = theme::ACCENT_TRANSPARENT_PURPLE.gamma_multiply(0.75);
+    let line = Stroke::new(view.zoom, theme::ACCENT_PURPLE.gamma_multiply(0.75));
+    painter.rect_filled(band, 0.0, fill);
+    painter.rect_stroke(band, 0.0, line, StrokeKind::Inside);
 }
 
 /// `SnapToOtherShapes`: the dragged box's edges and centres against each
@@ -1707,6 +1885,8 @@ fn handle_background(
     let view = state.view();
     let modifiers = ui.input(|input| input.modifiers);
     let additive = modifiers.command || modifiers.shift;
+    // Ctrl and Shift together push elements aside instead of selecting.
+    let pushing = modifiers.command && modifiers.shift;
     let hovered = hovered_connection.map(|index| &connections[index]);
     if background.clicked() {
         state.renaming = None;
@@ -1721,6 +1901,7 @@ fn handle_background(
                     state.selected_connections = vec![key];
                 }
             }
+            None if pushing => {}
             None => {
                 state.clear_element_selection();
                 editor.select(None);
@@ -1743,9 +1924,17 @@ fn handle_background(
         }
     }
     if background.drag_started_by(PointerButton::Primary) && state.drag.is_none() {
-        let start = background.interact_pointer_pos().unwrap_or(origin);
-        state.drag = Some(Drag::Marquee { start, additive });
+        if pushing {
+            // The push reaches back to where the button went down.
+            let press = ui.input(|input| input.pointer.press_origin()).unwrap_or(origin);
+            let canvas = view.to_canvas(origin, press);
+            start_push(editor, state, canvas);
+        } else {
+            let start = background.interact_pointer_pos().unwrap_or(origin);
+            state.drag = Some(Drag::Marquee { start, additive });
+        }
     }
+    push_elements(ui, editor, state, origin);
     if let Some(Drag::Marquee { start, additive }) = state.drag.clone() {
         let released = !ui.input(|input| input.pointer.primary_down());
         if released {
@@ -1964,8 +2153,164 @@ mod tests {
     }
 
     #[test]
+    fn connections_let_go_on_ports() {
+        let dragged = |port: &str, from_output: bool, collapsed: bool| DraggedConnection { node: 1, port: port.to_string(), from_output, collapsed };
+        let out = dragged("Out", true, false);
+        let connect = PortDrop::Connect { from: 1, from_port: "Out".to_string(), to: 2, to_port: "In".to_string() };
+        assert_eq!(port_drop(&out, 2, "In", true), connect);
+        let combine = PortDrop::CombineOutputs { dragged: 1, dragged_port: "Out".to_string(), other: 2, other_port: "Wear".to_string() };
+        assert_eq!(port_drop(&out, 2, "Wear", false), combine);
+        assert_eq!(port_drop(&out, 2, COLLAPSED_PORT, false), PortDrop::PortsMenu { node: 2 });
+        assert_eq!(port_drop(&out, 1, "Wear", false), PortDrop::Nothing);
+        // Backwards out of an input: an output feeds it, an input does not.
+        let input = dragged("In", false, false);
+        let backwards = PortDrop::Connect { from: 2, from_port: "Out".to_string(), to: 1, to_port: "In".to_string() };
+        assert_eq!(port_drop(&input, 2, "Out", false), backwards);
+        assert_eq!(port_drop(&input, 2, "In", true), PortDrop::Nothing);
+        // Collapsed ports onto collapsed ports: both picked in the window.
+        let collapsed = dragged("Input2", false, true);
+        assert_eq!(port_drop(&collapsed, 2, COLLAPSED_PORT, true), PortDrop::CreateConnection { node: 2 });
+        let onto_port = PortDrop::Connect { from: 2, from_port: "Out".to_string(), to: 1, to_port: "Input2".to_string() };
+        assert_eq!(port_drop(&collapsed, 2, "Out", false), onto_port);
+    }
+
+    const SCREEN: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1200.0, 800.0));
+
+    /// One frame of the graph with these events, the modifiers held.
+    fn graph_frame(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> Vec<Command> {
+        let mut held_then_events = vec![egui::Event::ModifiersChanged(modifiers)];
+        held_then_events.extend(events);
+        let input = egui::RawInput { screen_rect: Some(SCREEN), events: held_then_events, ..Default::default() };
+        let mut commands = Vec::new();
+        let output = context.run_ui(input, |ui| show(ui, SCREEN, editor, state, &mut commands));
+        output.drop_without_applying_deltas();
+        commands
+    }
+
+    /// A context with the editor's fonts, which take effect a frame after
+    /// they are set.
+    fn themed_context() -> egui::Context {
+        let context = egui::Context::default();
+        theme::apply(&context);
+        let input = egui::RawInput { screen_rect: Some(SCREEN), ..Default::default() };
+        let output = context.run_ui(input, |_| {});
+        output.drop_without_applying_deltas();
+        context
+    }
+
+    /// A press at `from`, a drag to `to` and the release there.
+    fn drag(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, from: Pos2, to: Pos2, modifiers: egui::Modifiers) -> Vec<Command> {
+        let button = |pos: Pos2, pressed: bool| egui::Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers };
+        graph_frame(context, editor, state, vec![egui::Event::PointerMoved(from)], modifiers);
+        graph_frame(context, editor, state, vec![button(from, true)], modifiers);
+        let past_threshold = from + Vec2::new(12.0, 0.0);
+        graph_frame(context, editor, state, vec![egui::Event::PointerMoved(past_threshold)], modifiers);
+        graph_frame(context, editor, state, vec![egui::Event::PointerMoved(to)], modifiers);
+        graph_frame(context, editor, state, vec![button(to, false)], modifiers)
+    }
+
+    /// The screen point of a port's dot.
+    fn port_dot(editor: &Editor, state: &GraphState, node: i32, port: &str, is_input: bool) -> Pos2 {
+        let data = editor.document.node(node).unwrap();
+        let layout = layout_node(data, editor.user.options.default_node_size());
+        let dot = layout.port(port, is_input).unwrap().dot.center();
+        state.view().to_screen(state.rect.min, dot)
+    }
+
+    #[test]
+    fn an_output_dragged_onto_another_output_combines_the_two() {
+        let mut document = Document::new();
+        let first = document.add_node("Mountain", [26100.0, 26100.0]).unwrap();
+        let second = document.add_node("Erosion2", [26100.0, 26400.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut state = GraphState::default();
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        let from = port_dot(&editor, &state, first, "Out", false);
+        let to = port_dot(&editor, &state, second, "Wear", false);
+        let commands = drag(&context, &mut editor, &mut state, from, to, egui::Modifiers::NONE);
+        let combine = GraphCommand::CombineOutputs { dragged: first, dragged_port: "Out".to_string(), other: second, other_port: "Wear".to_string() };
+        assert_eq!(commands, vec![Command::Graph(combine)]);
+    }
+
+    #[test]
+    fn collapsed_ports_dragged_onto_collapsed_ports_open_create_connection() {
+        let mut document = Document::new();
+        let erosion = document.add_node("Erosion2", [26100.0, 26100.0]).unwrap();
+        let combine = document.add_node("Combine", [26500.0, 26300.0]).unwrap();
+        document.add_input(combine);
+        for node in [erosion, combine] {
+            document.set_member(node, "NodeSize", serde_json::json!("Compact"), "Node size", false);
+        }
+        let mut editor = Editor::new(document);
+        let mut state = GraphState::default();
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        let from = port_dot(&editor, &state, erosion, COLLAPSED_PORT, false);
+        let to = port_dot(&editor, &state, combine, COLLAPSED_PORT, true);
+        let commands = drag(&context, &mut editor, &mut state, from, to, egui::Modifiers::NONE);
+        assert!(commands.is_empty());
+        assert_eq!(state.create_connection, Some(CreateConnection::new(erosion, combine, true)));
+    }
+
+    #[test]
+    fn ctrl_shift_dragging_the_graph_pushes_what_lies_right() {
+        let mut document = Document::new();
+        let left = document.add_node("Mountain", [26100.0, 26100.0]).unwrap();
+        let right = document.add_node("Mountain", [26700.0, 26100.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut state = GraphState::default();
+        let context = themed_context();
+        graph_frame(&context, &mut editor, &mut state, Vec::new(), egui::Modifiers::NONE);
+        let view = state.view();
+        let origin = state.rect.min;
+        // Between the two nodes, on empty graph.
+        let from = view.to_screen(origin, Pos2::new(26450.0, 26140.0));
+        let to = from + Vec2::new(150.0, 30.0);
+        let pushing = egui::Modifiers { shift: true, ctrl: true, command: true, ..Default::default() };
+        let commands = drag(&context, &mut editor, &mut state, from, to, pushing);
+        assert!(commands.is_empty());
+        let shift = view.to_canvas(origin, to).x - view.to_canvas(origin, from).x;
+        assert_eq!(editor.document.node(left).unwrap().position, [26100.0, 26100.0]);
+        let pushed = editor.document.node(right).unwrap().position;
+        assert!((pushed[0] - (26700.0 + shift)).abs() < 1e-3 && pushed[1] == 26100.0, "{pushed:?}");
+        assert_eq!(editor.document.undo_labels()[0], "Push");
+        assert!(state.drag.is_none());
+    }
+
+    #[test]
+    fn pushes_take_what_lies_right_of_the_pointer() {
+        let mut document = Document::new();
+        let left = document.add_node("Mountain", [0.0, 0.0]).unwrap();
+        let right = document.add_node("Mountain", [500.0, 0.0]).unwrap();
+        // A group right of the point takes its node and note along.
+        let grouped = document.add_node("Blur", [800.0, 50.0]).unwrap();
+        let note = document.add_note([820.0, 200.0], 0);
+        let group = document.add_group(&[grouped, note], [780.0, 0.0], [300.0, 300.0], 0);
+        // A node right of the point in a group left of it goes on its own.
+        let straggler = document.add_node("Blur", [300.0, 400.0]).unwrap();
+        let home = document.add_group(&[straggler], [100.0, 350.0], [300.0, 200.0], 0);
+        let loose_note = document.add_note([400.0, 700.0], 0);
+        // Other tabs stay as they are.
+        let elsewhere = document.add_node("Mountain", [900.0, 0.0]).unwrap();
+        document.project.terrain_mut().nodes.get_mut(&elsewhere).unwrap().set_member("GraphIndex", serde_json::json!(1));
+
+        let pushed = elements_to_push(&document, 0, 200.0);
+        let mut nodes: Vec<i32> = pushed.nodes.iter().map(|(id, _)| *id).collect();
+        nodes.sort_unstable();
+        let mut expected = vec![right, straggler];
+        expected.sort_unstable();
+        assert_eq!(nodes, expected);
+        assert!(!nodes.contains(&left) && !nodes.contains(&grouped));
+        assert_eq!(pushed.groups, vec![(group, [780.0, 0.0])]);
+        assert!(!pushed.groups.iter().any(|(id, _)| *id == home));
+        assert_eq!(pushed.notes, vec![(loose_note, [400.0, 700.0])]);
+        assert!(elements_to_push(&document, 0, 2000.0).is_empty());
+    }
+
+    #[test]
     fn compact_nodes_collapse_their_extra_ports() {
-        let mut document = crate::document::Document::new();
+        let mut document = Document::new();
         let combine = document.add_node("Combine", [0.0, 0.0]).unwrap();
         document.add_input(combine);
         let mut node = document.node(combine).unwrap().clone();

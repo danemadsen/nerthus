@@ -4,27 +4,19 @@
 //! expression over a 16 × 16 map), with Apply and Run, Accept Changes and
 //! Cancel. The window stays on top and does not block the editor.
 
-use egui::text::{LayoutJob, TextFormat};
-use egui::{Color32, Id, RichText, Stroke, Vec2};
+use egui::{Id, RichText, Stroke, Vec2};
 use nerthus_engine::automation::VariableValue;
 use serde_json::Value;
 
 use crate::editor::Editor;
 use crate::icons;
 use crate::theme;
+use crate::ui::syntax_box;
 
 /// `debounceInterval`.
 const DEBOUNCE_SECONDS: f64 = 0.5;
 /// The map the check runs over.
 const CHECK_SIZE: usize = 16;
-
-const KEYWORDS: [&str; 10] = ["if", "else", "return", "while", "for", "break", "continue", "switch", "case", "default"];
-const DECLARATIONS: [&str; 7] = ["var", "local", "constant", "infix", "prefix", "postfix", "operator"];
-const FUNCTIONS: [&str; 24] = [
-    "abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "cosh", "exp", "floor", "ln", "log", "log10", "max", "min", "pow", "rand", "round", "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
-];
-const OPERATORS: [char; 13] = ['+', '-', '/', '*', '%', '=', '!', '^', '|', '&', '<', '>', ','];
-const MUTED_YELLOW: Color32 = Color32::from_rgb(0xcb, 0xcd, 0x77);
 
 /// The window while it is open.
 #[derive(Clone, Debug)]
@@ -84,19 +76,24 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor) {
         let help = RichText::new("Use a, b, c to access inputs. Use x, y for coordinates.").font(theme::interface(12.0)).color(theme::LABEL_DEFAULT.gamma_multiply(0.7));
         let editor_height = (ui.available_height() - bottom_height - 60.0).max(80.0);
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = highlight(text.as_str());
+            let mut job = syntax_box::highlight(text.as_str(), theme::monospace(14.0));
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|fonts| fonts.layout_job(job))
         };
         ui.add_space(8.0);
+        let box_id = window_id().with("expression");
+        let changed_by_keys = syntax_box::take_keys(ui, box_id, &mut state.text);
         let mut text_edit = egui::TextEdit::multiline(&mut state.text);
+        text_edit = text_edit.id(box_id);
         text_edit = text_edit.font(theme::monospace(14.0));
         text_edit = text_edit.desired_width(f32::INFINITY);
         text_edit = text_edit.code_editor();
+        // Tab and Enter are the `SyntaxBox`'s.
+        text_edit = text_edit.return_key(None);
         text_edit = text_edit.layouter(&mut layouter);
         let scroll = egui::ScrollArea::vertical().max_height(editor_height).id_salt("math-expression");
         let response = scroll.show(ui, |ui| ui.add_sized(Vec2::new(ui.available_width(), editor_height), text_edit)).inner;
-        if response.changed() {
+        if response.changed() || changed_by_keys {
             state.changed_at = Some(now);
         }
         ui.add_space(8.0);
@@ -179,128 +176,6 @@ fn check_expression(editor: &Editor, node: i32, text: &str) -> (String, bool) {
     }
 }
 
-/// The `SyntaxBox` rules, each painting over the ones before it: keywords,
-/// declarations and functions (whole words), operators (anywhere),
-/// numbers, brackets, strings, then line and block comments.
-fn highlight(text: &str) -> LayoutJob {
-    let characters: Vec<char> = text.chars().collect();
-    let mut colours = vec![theme::LABEL_EMPHASIS; characters.len()];
-    let paint = |colours: &mut Vec<Color32>, from: usize, to: usize, colour: Color32| {
-        for slot in colours.iter_mut().take(to).skip(from) {
-            *slot = colour;
-        }
-    };
-    let is_word = |character: char| character.is_alphanumeric() || character == '_';
-    // Whole words.
-    let mut index = 0;
-    while index < characters.len() {
-        if !is_word(characters[index]) {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        while index < characters.len() && is_word(characters[index]) {
-            index += 1;
-        }
-        let word: String = characters[start..index].iter().collect();
-        let colour = if KEYWORDS.contains(&word.as_str()) {
-            Some(theme::ACCENT_MUTED_BLUE)
-        } else if DECLARATIONS.contains(&word.as_str()) {
-            Some(theme::ACCENT_MUTED_TEAL)
-        } else if FUNCTIONS.contains(&word.as_str()) {
-            Some(theme::ACCENT_MUTED_PURPLE)
-        } else {
-            None
-        };
-        if let Some(colour) = colour {
-            paint(&mut colours, start, index, colour);
-        }
-    }
-    for (position, character) in characters.iter().enumerate() {
-        if OPERATORS.contains(character) {
-            colours[position] = theme::ACCENT_MUTED_RED;
-        }
-    }
-    // `\b\d+\.?\d*\b`.
-    let mut index = 0;
-    while index < characters.len() {
-        let at_boundary = index == 0 || !is_word(characters[index - 1]);
-        if !(at_boundary && characters[index].is_ascii_digit()) {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        while index < characters.len() && characters[index].is_ascii_digit() {
-            index += 1;
-        }
-        if index < characters.len() && characters[index] == '.' {
-            index += 1;
-            while index < characters.len() && characters[index].is_ascii_digit() {
-                index += 1;
-            }
-        }
-        let at_end = index >= characters.len() || !is_word(characters[index]);
-        if at_end {
-            paint(&mut colours, start, index, theme::ACCENT_GRAY);
-        }
-    }
-    for (position, character) in characters.iter().enumerate() {
-        if matches!(character, '(' | ')' | '[' | ']' | '{' | '}') {
-            colours[position] = MUTED_YELLOW;
-        }
-    }
-    // Strings, then comments.
-    let mut index = 0;
-    while index < characters.len() {
-        if characters[index] != '"' {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        index += 1;
-        while index < characters.len() && characters[index] != '"' && characters[index] != '\n' {
-            index += if characters[index] == '\\' { 2 } else { 1 };
-        }
-        if index < characters.len() && characters[index] == '"' {
-            index += 1;
-            paint(&mut colours, start, index, theme::ACCENT_BRIGHT);
-        }
-    }
-    let mut index = 0;
-    while index + 1 < characters.len() {
-        if characters[index] == '/' && characters[index + 1] == '/' {
-            let end = characters[index..].iter().position(|character| *character == '\n').map_or(characters.len(), |offset| index + offset);
-            paint(&mut colours, index, end, theme::ACCENT_MUTED_GREEN);
-            index = end;
-            continue;
-        }
-        if characters[index] == '/' && characters[index + 1] == '*' {
-            let closing = (index + 2..characters.len().saturating_sub(1)).find(|position| characters[*position] == '*' && characters[*position + 1] == '/');
-            if let Some(closing) = closing {
-                paint(&mut colours, index, closing + 2, theme::ACCENT_MUTED_GREEN);
-                index = closing + 2;
-                continue;
-            }
-        }
-        index += 1;
-    }
-
-    let mut job = LayoutJob::default();
-    let font = theme::monospace(14.0);
-    let mut start = 0;
-    while start < characters.len() {
-        let colour = colours[start];
-        let mut end = start;
-        while end < characters.len() && colours[end] == colour {
-            end += 1;
-        }
-        let piece: String = characters[start..end].iter().collect();
-        job.append(&piece, 0.0, TextFormat::simple(font.clone(), colour));
-        start = end;
-    }
-    job
-}
-
 /// `Button-IconText-Bordered` with `player-play`: Apply and Run.
 fn apply_button(ui: &mut egui::Ui) -> egui::Response {
     let galley = ui.painter().layout_no_wrap("Apply and Run".to_string(), theme::interface(12.0), theme::LABEL_EMPHASIS);
@@ -324,20 +199,4 @@ fn dialog_button(ui: &mut egui::Ui, text: &str, important: bool) -> egui::Respon
     widget = widget.stroke(Stroke::new(1.0, border));
     widget = widget.min_size(Vec2::new(80.0, 28.0));
     ui.add(widget)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rules_paint_over_each_other() {
-        let job = highlight("sin(a) + 2 // twice");
-        let section_text = |section: &egui::text::LayoutSection| job.text[section.byte_range.start.0..section.byte_range.end.0].to_string();
-        let colour_of = |text: &str| job.sections.iter().find(|section| section_text(section) == text).map(|section| section.format.color);
-        assert_eq!(colour_of("sin"), Some(theme::ACCENT_MUTED_PURPLE));
-        assert_eq!(colour_of("("), Some(MUTED_YELLOW));
-        assert_eq!(colour_of("2"), Some(theme::ACCENT_GRAY));
-        assert_eq!(colour_of("// twice"), Some(theme::ACCENT_MUTED_GREEN));
-    }
 }

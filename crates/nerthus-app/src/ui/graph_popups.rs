@@ -161,7 +161,8 @@ fn ports_menu(ui: &mut Ui, editor: &Editor, from: i32, from_port: &str, from_out
         data.ports.iter().filter(|port| port.is_output() && !port.is_primary()).collect()
     };
     for port in ports {
-        if !port_row(ui, &display_label(port), port.record.is_some()) {
+        let connected = editor.document.port_connected(node, port);
+        if !port_row(ui, &display_label(port), connected) {
             continue;
         }
         let command = if from_output {

@@ -175,14 +175,13 @@ fn command_row(ui: &mut Ui, area: Rect, top: f32, editor: &mut Editor, node_id: 
     const COMMAND_COLORS: [u32; 4] = [0xe4ba4a, 0xa9b871, 0x6eb699, 0xe4ba4a];
     for (index, parameter) in entries.iter().enumerate() {
         let icon = parameter.command.as_ref().and_then(Value::as_str).unwrap_or("square-rounded");
-        let label = parameter.display_name();
+        // The `[Name]`, else the property name humanized (sentence case),
+        // which is also the tooltip.
+        let label = parameter.label.clone().unwrap_or_else(|| nerthus_engine::humanize::humanize(&parameter.name));
         let color_value = COMMAND_COLORS[(index + 1) % 4];
         let color = Color32::from_rgb((color_value >> 16) as u8, (color_value >> 8) as u8, color_value as u8);
         let response = icon_text_button(&mut bar, icon, &label, color, None);
-        let response = match &parameter.description {
-            Some(help) => response.on_hover_text(help),
-            None => response.on_hover_text(label.as_ref()),
-        };
+        let response = response.on_hover_text(&label);
         if response.clicked() {
             open_command_window(ui, editor, node_id, &parameter.name, commands);
         }
@@ -475,15 +474,22 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 let value = computed.or_else(|| values.get(&parameter.name).cloned()).unwrap_or(Value::Null);
                 let id = ui.id().with(("parameter", node_id, &parameter.name));
                 let enabled = parameter.enabled && rules.enabled(&parameter.name);
-                let context = EditorContext { color: *color, default: spec.defaults.get(&parameter.name), area_width };
+                let context = EditorContext { color: *color, default: spec.defaults.get(&parameter.name), values: Some(&values), area_width };
                 // Labels stand alone (`EditorLabel`, `ComputedString`).
                 let is_label = parameter.value_type == nerthus_engine::ValueType::Byte || parameter.kind == "ComputedString";
                 if is_label {
                     let row = ui.add_enabled_ui(enabled, |ui| editors::parameter(ui, id, parameter, &value, &context));
+                    if let Some(help) = &parameter.description {
+                        row.response.on_hover_text(help);
+                    }
                     edits.push((parameter.name.clone(), row.inner));
                     continue;
                 }
-                if let Some(custom) = custom_editor(ui, id, parameter, &value, node, &asset.terrain.nodes) {
+                let custom_row = ui.scope(|ui| custom_editor(ui, id, parameter, &value, node, &asset.terrain.nodes));
+                if let Some(custom) = custom_row.inner {
+                    if let Some(help) = &parameter.description {
+                        custom_row.response.on_hover_text(help);
+                    }
                     edits.extend(custom);
                     continue;
                 }
@@ -492,7 +498,12 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 }
                 let bind_type = bind_type(&asset.automation, node_id, &parameter.name);
                 let automated = Automated::of(&asset.automation, node_id, &parameter.name);
-                let edit = editor_row(ui, enabled, parameter.description.as_deref(), bind_type, &automated, |ui| editors::parameter(ui, id, parameter, &value, &context));
+                // An option bar without a label is named by its tooltip
+                // until the documentation gives it one.
+                let unlabelled = parameter.kind == "HorizontalListNoLabel" && area_width > 300.0;
+                let unlabelled_name = unlabelled.then_some(parameter.name.as_str());
+                let help = parameter.description.as_deref().or(unlabelled_name);
+                let edit = editor_row(ui, enabled, help, bind_type, &automated, |ui| editors::parameter(ui, id, parameter, &value, &context));
                 edits.push((parameter.name.clone(), edit));
             }
         });
@@ -548,10 +559,7 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
             Edit::AskUnbind => {
                 ui.data_mut(|data| data.get_temp_mut_or_default::<ParameterDialogs>(dialogs_id()).unbind = Some((node_id, name.clone())));
             }
-            Edit::Expression => {
-                let text = editor.document.expression(node_id, &name);
-                ui.data_mut(|data| data.get_temp_mut_or_default::<ParameterDialogs>(dialogs_id()).expression = Some((node_id, name.clone(), text)));
-            }
+            Edit::Expression => commands.push(Command::EditExpression { node: node_id, property: name.clone() }),
             Edit::NewSeed => {
                 // `XorShift64Star.Next(0, 65536)`.
                 let seed = editor.document.random_seed_below(65536);
@@ -671,7 +679,7 @@ fn modifier_list(ui: &mut Ui, node: &nerthus_engine::NodeData, node_id: i32, col
                     let default = spec.and_then(|spec| spec.defaults.get(&parameter.name));
                     let value = modifier.values.get(&parameter.name).cloned().or(default.cloned()).unwrap_or(Value::Null);
                     let id = ui.id().with(("modifier", node_id, index, &parameter.name));
-                    let context = EditorContext { color, default, area_width };
+                    let context = EditorContext { color, default, values: None, area_width };
                     // Each editor has a 2px margin.
                     let mut cell = egui::Frame::new();
                     cell.inner_margin = egui::Margin::same(2);
@@ -876,8 +884,6 @@ fn parameter_menu(ui: &mut Ui, rect: Rect, enabled: bool, bind_type: BindType, a
 struct ParameterDialogs {
     /// `Mx2_Click`: unbind only, or unbind and delete the variable.
     unbind: Option<(i32, String)>,
-    /// The expression being edited: node, property, text.
-    expression: Option<(i32, String, String)>,
 }
 
 fn dialogs_id() -> egui::Id {
@@ -915,37 +921,6 @@ fn parameter_dialogs(ui: &mut Ui, editor: &mut Editor) {
         if response.should_close() {
             dialogs.unbind = None;
         }
-    }
-    if let Some((node, property, mut text)) = dialogs.expression.clone() {
-        let modal = egui::Modal::new(egui::Id::new("parameter-expression"));
-        let mut close = false;
-        let response = modal.show(ui.ctx(), |ui| {
-            ui.set_width(380.0);
-            ui.label(RichText::new(format!("Expression for {property}")).font(theme::semibold(13.0)).color(theme::LABEL_EMPHASIS));
-            ui.label(RichText::new("x is the property's value; variables, Resolution and PX can be used.").color(theme::ICON_DEFAULT));
-            ui.add_space(6.0);
-            let mut edit = egui::TextEdit::singleline(&mut text);
-            edit = edit.font(theme::monospace(13.0));
-            edit = edit.desired_width(f32::INFINITY);
-            ui.add(edit);
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("OK").clicked() {
-                    editor.document.set_expression(node, &property, &text);
-                    editor.changed();
-                    close = true;
-                }
-                if ui.button("Clear").clicked() {
-                    editor.document.set_expression(node, &property, "");
-                    editor.changed();
-                    close = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-            });
-        });
-        dialogs.expression = if close || response.should_close() { None } else { Some((node, property, text)) };
     }
     ui.data_mut(|data| data.insert_temp(dialogs_id(), dialogs));
 }

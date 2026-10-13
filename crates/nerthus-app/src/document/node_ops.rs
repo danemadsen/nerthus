@@ -144,8 +144,20 @@ impl Document {
             }
         }
         let _ = spec;
+        // `RecreateConnectionsElements`: the kept inputs pass their render
+        // intent on as new connections do, then outputs of the same name
+        // feed on.
+        let replacement_node = self.node(replacement)?;
+        let mut sources: Vec<(i32, String, String)> = Vec::new();
+        for port in replacement_node.ports.iter().filter(|port| port.is_input()) {
+            if let Some(record) = &port.record {
+                sources.push((record.from, record.from_port.clone(), port.name.clone()));
+            }
+        }
+        for (source, output, input) in sources {
+            self.convey_render_intent(source, &output, replacement, &input);
+        }
         self.take_out_node(id);
-        // `RecreateConnectionsElements`: outputs of the same name feed on.
         for (target, input, output) in reads {
             let has_output = self.node(replacement).is_some_and(|node| node.port(&output).is_some_and(|port| port.is_output()));
             if has_output {
@@ -535,6 +547,22 @@ mod tests {
         assert_eq!(node.port("Layer1").unwrap().record.as_ref().unwrap().from, second);
         let red = node.values["Layer1"]["Color"]["R"].as_f64().unwrap();
         assert!((red - 0xf7 as f64 / 255.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_replacement_takes_and_passes_on_render_intents() {
+        let mut document = Document::new();
+        let erosion = document.add_node("Erosion2", [0.0, 0.0]).unwrap();
+        let blur = document.add_node("Blur", [300.0, 0.0]).unwrap();
+        let after = document.add_node("Blur", [600.0, 0.0]).unwrap();
+        document.connect(erosion, "Deposits", blur, "In");
+        document.connect(blur, "Out", after, "In");
+        document.set_member(after, "RenderIntentOverride", json!("Heightfield"), "Render intent", true);
+        let replaced = document.replace_node(blur, "Combine").unwrap();
+        let intent = |id: i32| document.node(id).unwrap().base.get("RenderIntentOverride").cloned();
+        // Fed a mask, the new node is one, and passes that on.
+        assert_eq!(intent(replaced), Some(json!("Mask")));
+        assert_eq!(intent(after), Some(json!("Mask")));
     }
 
     #[test]

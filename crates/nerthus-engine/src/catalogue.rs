@@ -59,6 +59,11 @@ pub struct ParameterSpec {
     pub group_collapsed: bool,
     #[serde(default)]
     pub label: Option<String>,
+    /// An information line's text (its `[Description]`), shown in place of
+    /// an editor.
+    #[serde(default)]
+    pub information: Option<String>,
+    /// The tooltip: the node documentation's entry for the parameter.
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default = "default_true")]
@@ -328,5 +333,19 @@ mod tests {
         let elsewhere = catalogue.node_for_type("Vendor.Terrain.Nodes.Erosion2, Vendor.Nodes");
         assert_eq!(elsewhere.map(NodeSpec::key), Some("Erosion2"), "types are matched on their class name");
         assert!(catalogue.node_for_type(&node_type("NoSuchNode")).is_none());
+    }
+
+    #[test]
+    fn multi_word_parameters_have_their_help() {
+        let catalogue = Catalogue::get();
+        let accumulator = catalogue.node("Accumulator").expect("Accumulator is in the catalogue");
+        let restrict = accumulator.parameter("RestrictToGroup").expect("Accumulator has RestrictToGroup");
+        let help = restrict.description.as_deref().unwrap_or_default();
+        assert!(help.starts_with("Restricts accumulating"), "found {help:?}");
+        // An information line keeps its text apart from its help.
+        let aperture = catalogue.node("Aperture").expect("Aperture is in the catalogue");
+        let information = aperture.parameter("Information").expect("Aperture has an information line");
+        assert!(information.information.as_deref().is_some_and(|text| text.starts_with("PREVIEW VERSION")));
+        assert!(information.description.as_deref().is_some_and(|text| text.starts_with("Displays additional information")));
     }
 }

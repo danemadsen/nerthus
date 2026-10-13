@@ -1,15 +1,18 @@
 //! The recurring controls: toolbars (`Toolbar` border style), icon
-//! buttons (`Button-IconOnly`), icon menus (`MenuItem Tag="Icon"`) and menu
-//! entries (`Default-Menu-Item`) with an icon, an accent and a shortcut.
+//! buttons (`Button-IconOnly`), icon menus (`MenuItem Tag="Icon"`), menu
+//! entries (`Default-Menu-Item`) with an icon, an accent and a shortcut,
+//! and dialog buttons.
 
 use egui::containers::menu::{MenuButton, MenuConfig, SubMenu};
-use egui::{Button, Color32, CornerRadius, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
+use egui::{Button, Color32, CornerRadius, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::icons;
 use crate::theme;
 
 /// `Toolbar.ButtonSize`.
 pub const TOOLBAR_BUTTON: f32 = 32.0;
+/// A dialog button's least height.
+pub const DIALOG_BUTTON_HEIGHT: f32 = 26.0;
 /// `Default-Menu-Item`: rows 23 high (11px text, padding 2, 4), a 30 icon
 /// column and a 20 arrow column; menus at least 190 wide.
 const MENU_ROW_HEIGHT: f32 = 23.0;
@@ -293,6 +296,17 @@ pub fn menu_separator(ui: &mut Ui) {
     let y = rect.center().y;
     let stroke = Stroke::new(1.0, theme::MENU_SEPARATOR.gamma_multiply(0.2));
     ui.painter().line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], stroke);
+}
+
+/// A dialog's `Button`, or with `important` its `Button-Important`.
+pub fn dialog_button(ui: &mut Ui, text: &str, important: bool) -> Response {
+    let label = RichText::new(text).font(theme::interface(12.0)).color(theme::LABEL_EMPHASIS);
+    let border = if important { theme::BUTTON_IMPORTANT_BORDER } else { theme::BUTTON_BORDER };
+    let mut widget = Button::new(label);
+    widget = widget.fill(theme::BUTTON_BACKGROUND);
+    widget = widget.stroke(Stroke::new(1.0, border));
+    widget = widget.min_size(Vec2::new(80.0, DIALOG_BUTTON_HEIGHT));
+    ui.add(widget)
 }
 
 /// A rule across a vertical toolbar (`Separator` with margins `above` and

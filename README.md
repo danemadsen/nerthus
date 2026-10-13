@@ -66,28 +66,6 @@ licensing, the Houdini, Unity and Unreal bridges (and Tools › Install
 Plugins), and features Gaea ships disabled or unfinished, such as Network
 Build.
 
-### Graph
-
-- Dropping a connection from an output onto another node's output. Gaea
-  joins the two outputs through a new Combine node.
-- Ctrl+Shift drag on an empty part of the graph, which pushes every node,
-  group and note to the right of the pointer sideways to make room.
-- Render intents carried along connections: connecting a mask, or a node set
-  to render as a mask, to a node's main input makes that node render as a
-  mask too.
-- The Create Connection window, for picking both ports when a connection is
-  drawn from one compact node's hidden ports to another's.
-
-### Properties
-
-- Help tooltips for about 275 parameters on 74 nodes. Gaea finds a
-  parameter's help by its spaced-out name ("Restrict to group"); Nerthus's
-  node catalogue looked it up by the bare name ("RestrictToGroup"), so most
-  multi-word parameters have none.
-- The Edit Expression dialog's syntax highlighting, line numbers and
-  Expression Examples help. Nerthus's is a plain text box.
-- The palette behind SatMap's and SuperColor's Range slider.
-
 ### Viewport
 
 - Ctrl+M, Gaea's other shortcut for a floating 2D view of the current node

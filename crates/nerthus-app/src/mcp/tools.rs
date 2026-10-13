@@ -251,7 +251,7 @@ fn edit_tools() -> Vec<Value> {
     let connect_nodes = tool(
         "connect_nodes",
         "Connect Nodes",
-        "Connects an output to an input as an undoable edit, in place of what fed that input. Refuses connections that would make a loop.",
+        "Connects an output to an input as an undoable edit, in place of what fed that input. Feeding a node's main input passes the source's render intent on, as connecting in the editor does: fed a mask, the node renders as a mask. Refuses connections that would make a loop.",
         connect_properties,
         &["from", "to"],
         Effect::Edits,

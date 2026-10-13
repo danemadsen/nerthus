@@ -86,6 +86,7 @@ enum_values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 name = "RestrictToGroup"
 type = "bool"
 kind = "Standard"
+description = "Restricts accumulating from other nodes that are in the same Group as the Accumulator node."
 
 [[Accumulator.parameters]]
 name = "Warning"
@@ -286,6 +287,7 @@ description = "Sets the processing resolution for the node. Higher quality yield
 name = "SmoothEdges"
 type = "bool"
 kind = "Standard"
+description = "Softens the edges of eroded features, reducing sharp transitions and creating a more natural appearance."
 
 [[Anastomosis.ports]]
 name = "In"
@@ -393,7 +395,8 @@ Antialiased = true
 name = "Information"
 type = "byte"
 kind = "Standard"
-description = "PREVIEW VERSION\n\nThis is an Early Access Preview of the redesigned Aperture node. It is still subject to change, so please do not use it in production."
+information = "PREVIEW VERSION\n\nThis is an Early Access Preview of the redesigned Aperture node. It is still subject to change, so please do not use it in production."
+description = "Displays additional information or metadata about the aperture operation and its current settings."
 
 [[Aperture.parameters]]
 name = "Mode"
@@ -427,6 +430,7 @@ type = "int"
 kind = "Standard"
 min = 4
 max = 32
+description = "For polygon shapes, sets the number of vertices (sides) used, controlling the regularity and appearance of the structuring element."
 
 [[Aperture.parameters]]
 name = "CornerAngle"
@@ -434,6 +438,7 @@ type = "int"
 kind = "Standard"
 min = 0
 max = 180
+description = "Specifies the angle of the corner for the 'Corner' shape, adjusting the sharpness or openness of the structuring element."
 
 [[Aperture.parameters]]
 name = "Direction"
@@ -525,6 +530,7 @@ description = "Specifies how connected blobs must be to be considered a single s
 name = "EnforceQuantization"
 type = "bool"
 kind = "Standard"
+description = "If enabled, forces the use of quantization during blob detection, improving efficiency and consistency in identifying blobs."
 
 [[BlobRemover.parameters]]
 name = "Quantization"
@@ -664,6 +670,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Controls the uniformity of the size of bombed instances. Higher values produce more consistent sizes, while lower values allow greater variation."
 
 [[Bomber.parameters]]
 name = "Rotation"
@@ -683,6 +690,7 @@ label = "Proportional"
 name = "VariableHeight"
 type = "bool"
 kind = "Standard"
+description = "Allows variations in the height of bombed instances, introducing additional randomness to their elevation."
 
 [[Bomber.parameters]]
 name = "Height"
@@ -720,6 +728,7 @@ name = "FadeEdges"
 type = "bool"
 kind = "Standard"
 separator = true
+description = "Softens the edges of bombed instances, blending them more smoothly into the base terrain."
 
 [[Bomber.parameters]]
 name = "BlendMode"
@@ -727,6 +736,7 @@ type = "enum"
 kind = "Enum"
 enum = ["None", "Blend", "Add", "Subtract", "Difference", "Multiply", "Screen", "Max", "Min"]
 enum_values = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+description = "Specifies how the base terrain and bombed instances are merged together."
 
 [[Bomber.parameters]]
 name = "Quality"
@@ -742,6 +752,7 @@ type = "bool"
 kind = "Command"
 label = "Add Input"
 command = "port-connect"
+description = "Allows an additional input to be included in the bombing operation, enabling more complex or layered effects."
 
 [[Bomber.ports]]
 name = "In"
@@ -985,6 +996,7 @@ kind = "Standard"
 group = "Structure"
 min = 0
 max = 1
+description = "Applies large-scale warping to the canyon structure to introduce bends, meanders, and macro variation."
 
 [[Canyon.parameters]]
 name = "Seed"
@@ -1001,12 +1013,14 @@ group = "Formation"
 group_start = true
 min = 0
 max = 1
+description = "Applies finer warping to add small-scale distortion and surface complexity without changing the overall canyon layout."
 
 [[Canyon.parameters]]
 name = "AlternateStyle"
 type = "bool"
 kind = "Standard"
 group = "Formation"
+description = "Introduces a secondary variation of the selected style to break uniformity and add visual diversity."
 
 [[Canyon.ports]]
 name = "In"
@@ -1098,12 +1112,14 @@ kind = "HorizontalListNoLabel"
 group = "Map Style"
 enum = ["Smooth", "LargeContours", "AllContours"]
 enum_values = [0, 1, 2]
+description = "Specifies the style of gradient used to represent elevation or terrain features on the map."
 
 [[Cartography.parameters]]
 name = "EqualizeGradient"
 type = "bool"
 kind = "Standard"
 group = "Map Style"
+description = "Balances the gradient distribution to ensure even representation of elevation changes across the map."
 
 [[Cartography.parameters]]
 name = "Reverse"
@@ -1136,6 +1152,7 @@ enum = [
     "FertileMurky",
 ]
 enum_values = [0, 1, 2, 3, 4, 5, 6, 7]
+description = "Selects the color palette used for land areas on the map."
 
 [[Cartography.parameters]]
 name = "LandContours"
@@ -1144,6 +1161,7 @@ kind = "Standard"
 group = "Land"
 min = 3
 max = 50
+description = "Controls the visibility and density of contour lines on land areas, highlighting elevation changes."
 
 [[Cartography.parameters]]
 name = "LandContourIntenstity"
@@ -1152,6 +1170,7 @@ kind = "Standard"
 group = "Land"
 min = 0
 max = 1
+description = "Adjusts the brightness or opacity of land contour lines, making them more or less prominent."
 
 [[Cartography.parameters]]
 name = "LandBias"
@@ -1160,6 +1179,7 @@ kind = "Standard"
 group = "Land"
 min = -1
 max = 1
+description = "Applies a bias to the land color or contour mapping, shifting emphasis to certain elevation ranges or features."
 
 [[Cartography.parameters]]
 name = "WaterPalette"
@@ -1169,6 +1189,7 @@ group = "Land"
 enum = ["Classic", "BlackSea", "Caribbean"]
 enum_values = [0, 1, 2]
 separator = true
+description = "Selects the color palette used for water areas on the map."
 
 [[Cartography.parameters]]
 name = "WaterContours"
@@ -1177,6 +1198,7 @@ kind = "Standard"
 group = "Land"
 min = 3
 max = 50
+description = "Controls the visibility and density of contour lines in water areas, indicating depth or underwater features."
 
 [[Cartography.parameters]]
 name = "WaterContourIntenstity"
@@ -1185,6 +1207,7 @@ kind = "Standard"
 group = "Land"
 min = 0
 max = 1
+description = "Adjusts the brightness or opacity of water contour lines, making them more or less prominent."
 
 [[Cartography.parameters]]
 name = "WaterBias"
@@ -1193,6 +1216,7 @@ kind = "Standard"
 group = "Land"
 min = -1
 max = 1
+description = "Applies a bias to the water color or contour mapping, shifting emphasis to certain depth ranges or features."
 
 [[Cartography.parameters]]
 name = "Trim"
@@ -1211,6 +1235,7 @@ group = "Line Art"
 group_start = true
 min = 4
 max = 100
+description = "Sets the number of grid divisions overlaid on the map, controlling the density of the grid."
 
 [[Cartography.parameters]]
 name = "GridIntenstity"
@@ -1219,6 +1244,7 @@ kind = "Standard"
 group = "Line Art"
 min = 0
 max = 1
+description = "Adjusts the brightness or opacity of the grid lines, making them more or less visible."
 
 [[Cartography.parameters]]
 name = "GridStyle"
@@ -1227,6 +1253,7 @@ kind = "Enum"
 group = "Line Art"
 enum = ["None", "OverWater", "OverLand", "Everywhere"]
 enum_values = [0, 1, 2, 3]
+description = "Specifies where grid lines are drawn on the map."
 
 [[Cartography.parameters]]
 name = "BoundaryThickness"
@@ -1235,6 +1262,7 @@ kind = "Standard"
 group = "Line Art"
 min = 1
 max = 10
+description = "Sets the thickness of boundary lines, such as map borders or region outlines."
 
 [[Cartography.parameters]]
 name = "ContourThickness"
@@ -1243,6 +1271,7 @@ kind = "Standard"
 group = "Line Art"
 min = 1
 max = 10
+description = "Specifies the thickness of contour lines, affecting their visual prominence."
 
 [[Cartography.parameters]]
 name = "GridThickness"
@@ -1251,6 +1280,7 @@ kind = "Standard"
 group = "Line Art"
 min = 1
 max = 10
+description = "Controls the thickness of grid lines overlaid on the map."
 
 [[Cartography.ports]]
 name = "In"
@@ -1373,6 +1403,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Blends between the paired distance behaviors implied by the selected Distance Metric (e.g., Euclidian ↔ Manhattan/Chebyshev), changing cell geometry continuously."
 
 [[Cellular.parameters]]
 name = "DistanceMetric"
@@ -1380,6 +1411,7 @@ type = "enum"
 kind = "Enum"
 enum = ["Euclidian_Manhattan", "Euclidian_Chebyshev", "Minkowski"]
 enum_values = [0, 1, 2]
+description = "Selects the distance-space used to evaluate the cellular field, affecting the fundamental shape of cells and borders."
 
 [[Cellular.parameters]]
 name = "CoordinateAxesJitter"
@@ -1387,6 +1419,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Adds jitter in coordinate/axis space before evaluation, warping the field and introducing directional wobble and boundary distortion."
 
 [[Cellular.parameters]]
 name = "CAJClustering"
@@ -1394,6 +1427,7 @@ type = "float"
 kind = "Standard"
 min = 1
 max = 5
+description = "Controls how Coordinate Axes Jitter groups together. Low values spread distortion evenly; higher values create patchy/clumped distortion regions."
 
 [[Cellular.parameters]]
 name = "Anisotropy"
@@ -1409,6 +1443,7 @@ type = "enum"
 kind = "Enum"
 enum = ["Hash", "DistanceInv", "Distance2Inv", "DistanceDiff", "DistanceToEdge"]
 enum_values = [0, 1, 2, 3, 4]
+description = "Defines what value is output from the cellular field (cell IDs, distances to points, borders, or edges)."
 
 [[Cellular.parameters]]
 name = "Seed"
@@ -1488,6 +1523,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Applies random offset to cell positions along the X axis, introducing irregularity and breaking uniformity."
 
 [[Cellular3D.parameters]]
 name = "JitterY"
@@ -1495,6 +1531,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Applies random offset to cell positions along the Y axis, adding variation and natural randomness."
 
 [[Cellular3D.parameters]]
 name = "JitterZ"
@@ -1502,6 +1539,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Applies random offset to cell positions along the Z axis, further enhancing the organic appearance of the 3D pattern."
 
 [[Cellular3D.parameters]]
 name = "ScaleX"
@@ -1509,6 +1547,7 @@ type = "float"
 kind = "Standard"
 min = 0.1
 max = 10
+description = "Adjusts the scale of the cellular pattern along the X axis, stretching or compressing cells horizontally."
 
 [[Cellular3D.parameters]]
 name = "ScaleY"
@@ -1516,6 +1555,7 @@ type = "float"
 kind = "Standard"
 min = 0.1
 max = 10
+description = "Adjusts the scale of the cellular pattern along the Y axis, stretching or compressing cells vertically."
 
 [[Cellular3D.parameters]]
 name = "ScaleZ"
@@ -1523,6 +1563,7 @@ type = "float"
 kind = "Standard"
 min = 0.1
 max = 10
+description = "Adjusts the scale of the cellular pattern along the Z axis, stretching or compressing cells in depth."
 
 [[Cellular3D.parameters]]
 name = "Seed"
@@ -1534,6 +1575,7 @@ description = "Randomization seed for generating unique variations of the 3D cel
 name = "NormalizeInput"
 type = "bool"
 kind = "Standard"
+description = "If enabled, normalizes the input values to a standard range before applying the cellular pattern, ensuring consistent results regardless of input scale."
 
 [[Cellular3D.ports]]
 name = "In"
@@ -2260,6 +2302,7 @@ group = "Lines"
 group_start = true
 min = 0
 max = 1
+description = "Controls the brightness or opacity of the main contour lines, making them more or less prominent in the output."
 
 [[Contours.parameters]]
 name = "SubIntensity"
@@ -2268,6 +2311,7 @@ kind = "Standard"
 group = "Lines"
 min = 0
 max = 1
+description = "Adjusts the brightness or opacity of the subdivision lines, which are the finer lines between main contours."
 
 [[Contours.parameters]]
 name = "LineThickness"
@@ -2276,6 +2320,7 @@ kind = "Standard"
 group = "Lines"
 min = 1
 max = 20
+description = "Specifies the thickness of the contour lines. Higher values produce bolder, wider lines."
 
 [[Contours.ports]]
 name = "In"
@@ -2384,6 +2429,7 @@ kind = "Standard"
 group = "Cracks"
 min = 0
 max = 1
+description = "The strength of the warp distortion applied to the cracks."
 
 [[Cracks.parameters]]
 name = "WarpSize"
@@ -2392,6 +2438,7 @@ kind = "Standard"
 group = "Cracks"
 min = 0
 max = 1
+description = "The size of the warp distortion applied to the cracks."
 
 [[Cracks.parameters]]
 name = "Seed"
@@ -2408,6 +2455,7 @@ group = "Advanced settings"
 group_start = true
 min = 0
 max = 100
+description = "The non-uniform scale on the X axis."
 
 [[Cracks.parameters]]
 name = "ScaleY"
@@ -2416,6 +2464,7 @@ kind = "Standard"
 group = "Advanced settings"
 min = 0
 max = 100
+description = "The non-uniform scale on the Y axis."
 
 [[Cracks.ports]]
 name = "In"
@@ -2766,6 +2815,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Controls material resistance, reducing how much terrain collapses. Higher values simulate harder, more resilient rock."
 
 [[Crumble.parameters]]
 name = "Edge"
@@ -2898,6 +2948,7 @@ name = "CurveSpline"
 type = "float2_list"
 kind = "Custom"
 editor = "CurveEditor"
+description = "Defines the shape of the curve or spline used to remap or adjust values. The curve controls how input values are transformed, allowing for custom response profiles or non-linear adjustments."
 
 [[Curve.parameters]]
 name = "Mode"
@@ -2912,6 +2963,7 @@ name = "FitCurve"
 type = "bool"
 kind = "Command"
 label = "Fit Curve"
+description = "Automatically fits or scales the curve to match the input range, ensuring the curve covers the full extent of the data."
 
 [[Curve.ports]]
 name = "In"
@@ -3063,6 +3115,7 @@ type = "int"
 kind = "Standard"
 min = 1
 max = 1000000
+description = "Controls how many individual rocks or debris pieces are emitted across the terrain."
 
 [[Debris.parameters]]
 name = "AmountMultiplier"
@@ -3071,6 +3124,7 @@ kind = "Standard"
 min = 0
 max = 10
 curve = [4]
+description = "Scales the emitted debris amount globally without changing other parameters, allowing quick adjustment of overall density."
 
 [[Debris.parameters]]
 name = "Scale"
@@ -3131,6 +3185,7 @@ description = "Determines the geometric style of debris elements, affecting thei
 name = "RenderStillRocks"
 type = "bool"
 kind = "Standard"
+description = "Enables rendering of non-moving debris that has settled on the terrain."
 
 [[Debris.parameters]]
 name = "Distribution"
@@ -3144,12 +3199,13 @@ description = "Specifies how debris is distributed across the emission area."
 name = "ExportPointCloud"
 type = "bool"
 kind = "Standard"
+description = "Enables the export of debris positions as a point cloud for further processing or use in external applications."
 
 [[Debris.parameters]]
 name = "Information"
 type = "byte"
 kind = "Standard"
-description = "Connect a Point Cloud node to this node's Output to save the debris as a point cloud."
+information = "Connect a Point Cloud node to this node's Output to save the debris as a point cloud."
 
 [[Debris.ports]]
 name = "In"
@@ -3491,6 +3547,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 2
+description = "Introduces randomness to the angle of distance propagation, creating more organic and less uniform distance fields."
 
 [[Distance.parameters]]
 name = "Falloff"
@@ -3514,6 +3571,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Adds randomness to the falloff rate, producing irregular or natural-looking distance gradients."
 
 [[Distance.parameters]]
 name = "InvertInput"
@@ -3521,18 +3579,21 @@ type = "bool"
 kind = "Standard"
 group = "Options"
 group_start = true
+description = "Inverts the input mask or field before calculating distance, reversing the source and background."
 
 [[Distance.parameters]]
 name = "InvertOutput"
 type = "bool"
 kind = "Standard"
 group = "Options"
+description = "Inverts the resulting distance field, swapping near and far values."
 
 [[Distance.parameters]]
 name = "MultiplyByInput"
 type = "bool"
 kind = "Standard"
 group = "Options"
+description = "Multiplies the final distance field by the original input, masking or modulating the result."
 
 [[Distance.parameters]]
 name = "Seed"
@@ -3710,6 +3771,7 @@ type = "enum"
 kind = "Enum"
 enum = ["None", "Blend", "Add", "Subtract", "Difference", "Multiply", "Screen", "Max", "Min"]
 enum_values = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+description = "Determines how the dot noise is combined with the underlying surface or input."
 
 [[DotNoise.parameters]]
 name = "Seed"
@@ -4125,6 +4187,7 @@ kind = "Standard"
 group = "Distribution"
 min = 0
 max = 1
+description = "Modifies how much snow accumulates on slopes, allowing for more or less coverage on inclined surfaces."
 
 [[Dusting.parameters]]
 name = "Flow"
@@ -4157,6 +4220,7 @@ name = "IncludeExistingSnow"
 type = "bool"
 kind = "Standard"
 group = "Effects"
+description = "Allows the dusting effect to respect and blend with existing snow layers, ensuring seamless integration."
 
 [[Dusting.parameters]]
 name = "Seed"
@@ -4172,6 +4236,7 @@ kind = "Standard"
 group = "Effects"
 min = 0
 max = 1
+description = "Provides fine-tuning options for the overall look and style of the snow dusting, supporting creative or stylized results."
 
 [[Dusting.ports]]
 name = "In"
@@ -4472,6 +4537,7 @@ kind = "Standard"
 group = "Erosion"
 min = 0.05
 max = 1
+description = "Controls the softness of the rock material. Softer rocks erode more quickly, resulting in faster and more pronounced erosion."
 
 [[Erosion.parameters]]
 name = "Strength"
@@ -4508,6 +4574,7 @@ kind = "Standard"
 group = "Downcutting"
 min = 0
 max = 5
+description = "Sets the lowest elevation that downcutting can reach before sediment is deposited. This helps fill large valleys and form valley floors, influenced by terrain slope, altitude, and stream velocity."
 
 [[Erosion.parameters]]
 name = "FeatureScale"
@@ -4518,12 +4585,14 @@ group_start = true
 group_collapsed = true
 min = 5
 max = 20000
+description = "Determines the lateral size of the largest erosion features, such as the width of major valleys and ridges, measured in meters."
 
 [[Erosion.parameters]]
 name = "RealScale"
 type = "bool"
 kind = "Standard"
 group = "Scale"
+description = "Automatically determines the scale from the Terrain Definition, ensuring erosion features are sized appropriately for the terrain."
 
 [[Erosion.parameters]]
 name = "TerrainScale"
@@ -4532,6 +4601,7 @@ kind = "Standard"
 group = "Scale"
 min = 500
 max = 20000
+description = "Sets the simulated scale of the entire terrain width. Available when Rivers is enabled, this parameter helps match erosion to real-world dimensions."
 
 [[Erosion.parameters]]
 name = "Verticality"
@@ -4568,6 +4638,7 @@ kind = "Standard"
 group = "Flow"
 min = 0
 max = 1
+description = "Removes sediment produced during erosion. This can be modulated using the Sediment Removal mask input to control where sediment is retained or cleared."
 
 [[Erosion.parameters]]
 name = "AreaEffect"
@@ -4577,6 +4648,7 @@ group = "Selective Processing"
 group_start = true
 enum = ["ErosionStrength", "RockSoftness", "PrecipitationAmount", "None"]
 enum_values = [0, 1, 2, 3]
+description = "Specifies the effect applied when an Area input or Bias is defined. Determines which erosion property is selectively processed."
 
 [[Erosion.parameters]]
 name = "BiasType"
@@ -4585,6 +4657,7 @@ kind = "HorizontalList"
 group = "Selective Processing"
 enum = ["Altitude", "Slope"]
 enum_values = [0, 1]
+description = "Specifies the type of automatic bias to apply when an Area input is not provided. Determines how erosion is distributed based on terrain features."
 
 [[Erosion.parameters]]
 name = "Bias"
@@ -4615,6 +4688,7 @@ name = "AggressiveMode"
 type = "bool"
 kind = "Standard"
 group = "Other Settings"
+description = "Enables faster erosion processing at the risk of introducing soft artifacts in minor areas. Useful for quick previews or when speed is prioritized over detail."
 
 [[Erosion.parameters]]
 name = "Deterministic"
@@ -4629,7 +4703,7 @@ type = "byte"
 kind = "Standard"
 group = "Information"
 group_start = true
-description = "Erosion2 is the recommended Erosion node. Erosion is still a very powerful but uses older technology and may be unable to produce similar results."
+information = "Erosion2 is the recommended Erosion node. Erosion is still a very powerful but uses older technology and may be unable to produce similar results."
 
 [[Erosion.ports]]
 name = "In"
@@ -4761,6 +4835,7 @@ group = "General"
 min = 1
 max = 20000
 curve = [6]
+description = "Sets the overall size of erosion features, from fine gullies to massive ravines."
 
 [[Erosion2.parameters]]
 name = "Seed"
@@ -4859,6 +4934,7 @@ kind = "Standard"
 group = "Shape"
 min = 0
 max = 1
+description = "Defines how sharp or concave ridges become after erosion."
 
 [[Erosion2.parameters]]
 name = "ShapeDetailScale"
@@ -4868,6 +4944,7 @@ group = "Shape"
 min = 0
 max = 1
 curve = [3]
+description = "Sets the scale of simulated details, from broad ravines to fine gullies."
 
 [[Erosion2.parameters]]
 name = "Enable"
@@ -4882,6 +4959,7 @@ name = "DirectionalPrecipitation"
 type = "bool"
 kind = "Standard"
 group = "Orographic Influence"
+description = "Simulates rain falling more intensely from one direction to create rain shadows."
 
 [[Erosion2.parameters]]
 name = "Direction"
@@ -4900,6 +4978,7 @@ kind = "Standard"
 group = "Orographic Influence"
 min = 0
 max = 1
+description = "Controls how strongly terrain blocks rainfall from certain directions."
 
 [[Erosion2.parameters]]
 name = "Slope"
@@ -5033,6 +5112,7 @@ description = "Specifies where the exported file will be saved."
 name = "OutputPath"
 type = "string"
 kind = "Folder"
+description = "Defines the full file path or directory where the exported file will be saved."
 
 [[Export.parameters]]
 name = "IfFileExists"
@@ -5040,13 +5120,15 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["Overwrite", "Increment"]
 enum_values = [0, 1]
+description = "Determines what happens if a file with the same name already exists at the export location."
 
 [[Export.parameters]]
 name = "Information"
 type = "byte"
 kind = "Standard"
 separator = true
-description = "This node will export the data during a Build. The filename will be the same as name of this node. Rename the node to change the filename.\n\nTo specify full explicit path including filename, use Explicit mode and set the path by assigning a variable to Output Path. Set the variable to the full path without file extension."
+information = "This node will export the data during a Build. The filename will be the same as name of this node. Rename the node to change the filename.\n\nTo specify full explicit path including filename, use Explicit mode and set the path by assigning a variable to Output Path. Set the variable to the full path without file extension."
+description = "Displays additional information or metadata about the export process or output file."
 
 [[Export.parameters]]
 name = "HoudiniOut"
@@ -5059,7 +5141,8 @@ command = "transfer-out"
 name = "InformationHoudini"
 type = "byte"
 kind = "Standard"
-description = "To use with a bridge to another program, bind the explicit output path to a variable, or click 'Prepare for Bridge' to have it done for you."
+information = "To use with a bridge to another program, bind the explicit output path to a variable, or click 'Prepare for Bridge' to have it done for you."
+description = "Displays or stores metadata related to Houdini integration, such as file attributes or export status."
 
 [[Export.ports]]
 name = "In"
@@ -5155,26 +5238,31 @@ label = "File"
 name = "RelativePath"
 type = "bool"
 kind = "Standard"
+description = "Defines the file path relative to the project or asset directory, ensuring portability and correct asset referencing."
 
 [[File.parameters]]
 name = "IsRGB"
 type = "bool"
 kind = "Standard"
+description = "Indicates whether the loaded file should be interpreted as an RGB image. Enable this for color maps or multi-channel data."
 
 [[File.parameters]]
 name = "EnforceLinearGamma"
 type = "bool"
 kind = "Standard"
+description = "Forces the loaded terrain or image data to use linear gamma correction, ensuring accurate color and height interpretation."
 
 [[File.parameters]]
 name = "AllowUnclamped"
 type = "bool"
 kind = "Standard"
+description = "Allows values outside the standard 0–1 range to be loaded, preserving high dynamic range or special data in the file."
 
 [[File.parameters]]
 name = "CropToSquare"
 type = "bool"
 kind = "Standard"
+description = "Automatically crops the loaded file to a square aspect ratio, which is often required for terrain processing."
 
 [[File.parameters]]
 name = "HoudiniIn"
@@ -5187,7 +5275,8 @@ command = "transfer-in"
 name = "InformationHoudini"
 type = "byte"
 kind = "Standard"
-description = "To use with a bridge to another program, bind the path to a variable, or click 'Prepare for Bridge' to have it done for you."
+information = "To use with a bridge to another program, bind the path to a variable, or click 'Prepare for Bridge' to have it done for you."
+description = "Displays or stores metadata related to Houdini integration, such as file attributes or import status."
 
 [[File.parameters]]
 name = "PurgeCache"
@@ -5197,12 +5286,14 @@ group = "Caching"
 group_start = true
 group_collapsed = true
 command = "file-shredder"
+description = "Clears the cached version of the loaded file, forcing a reload from disk on the next access."
 
 [[File.parameters]]
 name = "NeverCache"
 type = "bool"
 kind = "Standard"
 group = "Caching"
+description = "Prevents the loaded file from being cached, ensuring it is always read directly from disk."
 
 [[File.ports]]
 name = "In"
@@ -5324,6 +5415,7 @@ description = "Filter sharpness/bandwidth (higher Q = narrower, more selective b
 name = "KeepDC"
 type = "bool"
 kind = "Standard"
+description = "Preserves the overall baseline/average height (DC offset) so the filter affects detail without shifting the mean elevation."
 
 [[Filter.ports]]
 name = "In"
@@ -5398,6 +5490,7 @@ kind = "Standard"
 min = 0
 max = 1
 curve = [2]
+description = "Controls how far flow paths are traced across the surface (longer values produce longer streams/flow lines)."
 
 [[FlowMap.parameters]]
 name = "FlowVolume"
@@ -5405,6 +5498,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Controls the amount/strength of flow accumulation used to form the flow map (higher values emphasize major channels)."
 
 [[FlowMap.parameters]]
 name = "Seed"
@@ -5684,6 +5778,7 @@ kind = "Standard"
 label = "Shapes separation"
 group = "Advanced"
 group_start = true
+description = "Controls how distinctly individual terrace shapes are separated from each other, affecting the clarity of terrace boundaries."
 
 [[FractalTerraces.parameters]]
 name = "MacroOctaves"
@@ -5693,6 +5788,7 @@ label = "Macro octaves"
 group = "Advanced"
 min = 1
 max = 12
+description = "Sets the number of large-scale terrace layers, influencing the overall structure and major steps in the terrain."
 
 [[FractalTerraces.parameters]]
 name = "MicroShape"
@@ -5702,6 +5798,7 @@ label = "Micro shape"
 group = "Advanced"
 min = -1
 max = 1
+description = "Adjusts the fine detail and small-scale shaping of terraces, adding subtle variations to each step."
 
 [[FractalTerraces.parameters]]
 name = "Character"
@@ -5721,6 +5818,7 @@ label = "Thickness uniformity"
 group = "Advanced"
 min = 0
 max = 1
+description = "Controls how consistent the thickness of each terrace step is across the terrain. Higher values produce more uniform terraces."
 
 [[FractalTerraces.parameters]]
 name = "HardnessUniformity"
@@ -5730,6 +5828,7 @@ label = "Hardness uniformity"
 group = "Advanced"
 min = 0
 max = 1
+description = "Adjusts the consistency of terrace edge hardness, affecting whether terrace boundaries are sharp or soft throughout."
 
 [[FractalTerraces.parameters]]
 name = "StrataDetails"
@@ -5739,6 +5838,7 @@ label = "Strata details"
 group = "Advanced"
 min = 0
 max = 1
+description = "Adds additional detail to the strata or layers within the terraces, enhancing geological realism."
 
 [[FractalTerraces.parameters]]
 name = "ProtectRange"
@@ -5746,6 +5846,7 @@ type = "bool"
 kind = "Standard"
 label = "Protect Range"
 group = "Advanced"
+description = "Defines a range within which the original terrain is protected from terracing, preserving natural features in specified areas."
 
 [[FractalTerraces.parameters]]
 name = "ApplyTilt"
@@ -5754,6 +5855,7 @@ kind = "Standard"
 label = "Apply Tilt"
 group = "Tilt"
 group_start = true
+description = "Enables or disables the tilt effect, allowing terraces to be slanted in a specified direction."
 
 [[FractalTerraces.parameters]]
 name = "TiltAmount"
@@ -5763,6 +5865,7 @@ label = "Tilt Amount"
 group = "Tilt"
 min = 0
 max = 1
+description = "Sets the degree of tilt applied to the terraces, controlling how steeply they are angled."
 
 [[FractalTerraces.parameters]]
 name = "Direction"
@@ -5780,6 +5883,7 @@ type = "int"
 kind = "Seed"
 label = "Tilt Seed"
 group = "Tilt"
+description = "Randomization seed for the tilt effect, producing varied tilt patterns when changed."
 
 [[FractalTerraces.parameters]]
 name = "WarpAmount"
@@ -5789,6 +5893,7 @@ label = "Warp Amount"
 group = "Tilt"
 min = 0
 max = 1
+description = "Controls the strength of the warp effect applied to the terraces, introducing distortion and organic variation."
 
 [[FractalTerraces.parameters]]
 name = "WarpSize"
@@ -5798,6 +5903,7 @@ label = "Warp Size"
 group = "Tilt"
 min = 0
 max = 1
+description = "Sets the scale of the warp effect, determining how broad or fine the distortion is."
 
 [[FractalTerraces.parameters]]
 name = "WarpStyle"
@@ -5807,6 +5913,7 @@ label = "Warp Style"
 group = "Tilt"
 enum = ["A", "B", "C", "D"]
 enum_values = [0, 1, 2, 3]
+description = "Specifies the style of warping applied to the terraces, affecting the nature of the distortion."
 
 [[FractalTerraces.ports]]
 name = "In"
@@ -6330,6 +6437,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Controls the brightness or opacity of the main grid lines, making them more or less prominent in the texture."
 
 [[Grid.parameters]]
 name = "SubIntensity"
@@ -6337,6 +6445,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Adjusts the brightness or opacity of the subdivision lines, which are the finer lines between main grid lines."
 
 [[Grid.parameters]]
 name = "LineThickness"
@@ -6344,6 +6453,7 @@ type = "int"
 kind = "Standard"
 min = 1
 max = 20
+description = "Specifies the thickness of the grid lines. Higher values produce bolder, wider lines."
 
 [[Grid.ports]]
 name = "In"
@@ -6908,6 +7018,7 @@ type = "float"
 kind = "Standard"
 min = -1
 max = 1
+description = "Applies the first shaping function or modifier to the ice floes, affecting their outline and internal structure."
 
 [[IceFloe.parameters]]
 name = "Shaper2"
@@ -6915,6 +7026,7 @@ type = "float"
 kind = "Standard"
 min = -1
 max = 1
+description = "Applies a secondary shaping function or modifier, allowing for additional variation and detail in the ice floes."
 
 [[IceFloe.parameters]]
 name = "Reverse"
@@ -6926,6 +7038,7 @@ description = "Inverts the effect of the primary shaping function, altering the 
 name = "Reverse2"
 type = "bool"
 kind = "Standard"
+description = "Inverts the effect of the secondary shaping function, providing further control over the appearance of the ice floes."
 
 [[IceFloe.parameters]]
 name = "Seed"
@@ -7119,12 +7232,14 @@ group = "Lake Formation"
 min = 0
 max = 1
 curve = [4]
+description = "Level of the water."
 
 [[Lake.parameters]]
 name = "RenderSurface"
 type = "bool"
 kind = "Standard"
 group = "Lake Formation"
+description = "Whether to render the surface of the water or just create masks."
 
 [[Lake.parameters]]
 name = "Precipitation"
@@ -7142,12 +7257,14 @@ kind = "Standard"
 group = "Lake Formation"
 min = 0
 max = 1
+description = "Enables or adjusts the creation of smaller lakes, increasing the frequency of minor water bodies across the terrain."
 
 [[Lake.parameters]]
 name = "FloodControl"
 type = "bool"
 kind = "Standard"
 group = "Lake Formation"
+description = "Limits excessive flooding by managing water distribution, preventing lakes from overflowing or merging unnaturally."
 
 [[Lake.parameters]]
 name = "WaterFloor"
@@ -7156,6 +7273,7 @@ kind = "Standard"
 group = "Lake Formation"
 min = 0
 max = 1
+description = "Sets the elevation of the lake bed, determining the minimum depth and base level of the water body."
 
 [[Lake.parameters]]
 name = "ShoreSize"
@@ -7165,6 +7283,7 @@ group = "Lake Formation"
 min = 0
 max = 1
 separator = true
+description = "Controls the width and extent of the shoreline around lakes, affecting how far the shore transitions into the surrounding terrain."
 
 [[Lake.parameters]]
 name = "AltitudeBias"
@@ -7173,6 +7292,7 @@ kind = "Standard"
 group = "Lake Formation"
 min = 0
 max = 1
+description = "Biases lake placement towards certain altitudes, favoring higher or lower terrain for lake formation."
 
 [[Lake.parameters]]
 name = "SizeBias"
@@ -7181,6 +7301,7 @@ kind = "Standard"
 group = "Lake Formation"
 min = 0
 max = 1
+description = "Adjusts the likelihood of generating larger or smaller lakes, influencing the overall distribution of lake sizes."
 
 [[Lake.ports]]
 name = "In"
@@ -7480,6 +7601,7 @@ type = "enum"
 kind = "HorizontalListNoLabel"
 enum = ["Manual", "Geographic"]
 enum_values = [0, 1]
+description = "Specifies how the sun direction is determined for lighting calculations."
 
 [[LightX.parameters]]
 name = "North"
@@ -7503,6 +7625,7 @@ type = "int"
 kind = "Standard"
 min = 1
 max = 365
+description = "Sets the day of the year for geographic sun calculations, affecting seasonal sun position and lighting."
 
 [[LightX.parameters]]
 name = "SolarHour"
@@ -7510,6 +7633,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 24
+description = "Specifies the time of day for geographic sun calculations, determining the sun's position in the sky."
 
 [[LightX.parameters]]
 name = "SunAzimuth"
@@ -7517,6 +7641,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 360
+description = "Sets the horizontal angle of the sun, determining the direction from which sunlight is cast."
 
 [[LightX.parameters]]
 name = "SunElevation"
@@ -7524,6 +7649,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 90
+description = "Controls the vertical angle of the sun above the horizon, affecting the length and intensity of shadows."
 
 [[LightX.parameters]]
 name = "AngularDiameter"
@@ -7532,12 +7658,14 @@ kind = "Standard"
 min = 0
 max = 20
 separator = true
+description = "Specifies the apparent size of the sun in the sky, influencing the softness of shadows and highlights."
 
 [[LightX.parameters]]
 name = "DirectLight"
 type = "bool"
 kind = "Standard"
 separator = true
+description = "Adjusts the intensity of direct sunlight in the scene, affecting brightness and shadow contrast."
 
 [[LightX.parameters]]
 name = "Shadows"
@@ -7549,11 +7677,13 @@ description = "Enables or adjusts the rendering of shadows cast by terrain featu
 name = "AmbientLight"
 type = "bool"
 kind = "Standard"
+description = "Controls the overall ambient light level, simulating indirect illumination from the sky and environment."
 
 [[LightX.parameters]]
 name = "AmbientOcclusion"
 type = "bool"
 kind = "Standard"
+description = "Enables or adjusts ambient occlusion, which darkens crevices and areas shielded from ambient light for added realism."
 
 [[LightX.parameters]]
 name = "Quality"
@@ -7580,6 +7710,7 @@ kind = "Standard"
 group = "Light"
 min = 0
 max = 2
+description = "Sets the strength of the sun's light, affecting the brightness of direct illumination."
 
 [[LightX.parameters]]
 name = "AmbientIntensity"
@@ -7588,6 +7719,7 @@ kind = "Standard"
 group = "Light"
 min = 0
 max = 2
+description = "Controls the strength of ambient light, influencing the brightness of areas not directly lit by the sun."
 
 [[LightX.parameters]]
 name = "AirDensity"
@@ -7597,6 +7729,7 @@ group = "Light"
 min = 0
 max = 2
 separator = true
+description = "Simulates atmospheric density, affecting the scattering of light and the appearance of haze."
 
 [[LightX.parameters]]
 name = "Haze"
@@ -7622,18 +7755,21 @@ type = "bool"
 kind = "Standard"
 group = "Colors"
 group_start = true
+description = "Enables automatic adjustment of sun and ambient colors based on sun position and atmospheric conditions."
 
 [[LightX.parameters]]
 name = "SunColor"
 type = "color"
 kind = "Standard"
 group = "Colors"
+description = "Sets the color of direct sunlight, allowing for warm, cool, or custom lighting effects."
 
 [[LightX.parameters]]
 name = "AmbientColor"
 type = "color"
 kind = "Standard"
 group = "Colors"
+description = "Specifies the color of ambient light, affecting the overall tone of shaded areas."
 
 [[LightX.parameters]]
 name = "GroundBrightness"
@@ -7642,6 +7778,7 @@ kind = "Standard"
 group = "Colors"
 min = 0
 max = 1
+description = "Controls the brightness of the ground plane, influencing the overall illumination and visual balance of the scene."
 
 [[LightX.ports]]
 name = "In"
@@ -7819,7 +7956,7 @@ Information1 = 0
 name = "Information1"
 type = "byte"
 kind = "Standard"
-description = "This node is under construction and will be available in a near-future build."
+information = "This node is under construction and will be available in a near-future build."
 
 [[LoopBegin.ports]]
 name = "In"
@@ -7879,7 +8016,7 @@ name = "Information"
 type = "byte"
 kind = "Standard"
 group = "Primed"
-description = "WARNING: Do not prime the node until you are ready to execute the loop. The UI may be locked for the duration of the loop."
+information = "WARNING: Do not prime the node until you are ready to execute the loop. The UI may be locked for the duration of the loop."
 
 [[LoopEnd.parameters]]
 name = "Loops"
@@ -7896,6 +8033,7 @@ name = "MutateSeeds"
 type = "bool"
 kind = "Standard"
 group = "Loop"
+description = "When enabled, the seeds of all nodes within the loop are mutated."
 
 [[LoopEnd.parameters]]
 name = "Seed"
@@ -8174,11 +8312,13 @@ type = "bool"
 kind = "Command"
 label = "Open Editor"
 command = "terminal-2"
+description = "Opens the Math Editor dialog."
 
 [[MathX.parameters]]
 name = "NormalizedCoordinates"
 type = "bool"
 kind = "Standard"
+description = "Normalizes all coordinate inputs."
 
 [[MathX.ports]]
 name = "In"
@@ -8304,7 +8444,7 @@ kind = "Standard"
 name = "Information"
 type = "byte"
 kind = "Standard"
-description = "TextureBaker fits your maps to the mesh perfectly at any LOD.\n\nConnect Mesher/In port to a Mesher node that will be used to make a Mesh.\n\nAdd additional ports to connect to masks or color maps. To generate Tangent-space normal maps, check \"General Normal Map\".\n\nAn LOD will be generated for each input map corresponding to the number of LODs set in the Mesher node."
+information = "TextureBaker fits your maps to the mesh perfectly at any LOD.\n\nConnect Mesher/In port to a Mesher node that will be used to make a Mesh.\n\nAdd additional ports to connect to masks or color maps. To generate Tangent-space normal maps, check \"General Normal Map\".\n\nAn LOD will be generated for each input map corresponding to the number of LODs set in the Mesher node."
 
 [[MeshWarp.parameters]]
 name = "AddInput"
@@ -8318,7 +8458,7 @@ name = "Information1"
 type = "byte"
 kind = "Standard"
 separator = true
-description = "NOTE: TextureBaker works with Tris and Adaptive output, but not quads."
+information = "NOTE: TextureBaker works with Tris and Adaptive output, but not quads."
 
 [[MeshWarp.parameters]]
 name = "LODInfo"
@@ -8416,6 +8556,7 @@ kind = "Standard"
 min = 64
 max = 16384
 force_regenerate = true
+description = "Sets the resolution of the mesh by specifying the number of vertices along each side. Higher values increase detail but also file size."
 
 [[Mesher.parameters]]
 name = "ArtifactReduction"
@@ -8423,12 +8564,14 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["None", "Low", "Med"]
 enum_values = [0, 1, 2]
+description = "Applies post-processing to reduce visual artifacts in the mesh, such as smoothing or correcting problematic geometry."
 
 [[Mesher.parameters]]
 name = "CreateNormals"
 type = "bool"
 kind = "Standard"
 separator = true
+description = "If enabled, generates normal vectors for the mesh, improving shading and rendering quality in 3D applications."
 
 [[Mesher.parameters]]
 name = "CreateUVs"
@@ -8442,17 +8585,20 @@ type = "enum"
 kind = "Enum"
 enum = ["TopLeft", "BottomLeft"]
 enum_values = [0, 1]
+description = "Specifies the origin point for the UV coordinate system, affecting how textures are mapped onto the mesh."
 
 [[Mesher.parameters]]
 name = "CreateWalls"
 type = "bool"
 kind = "Standard"
 separator = true
+description = "Creates vertical walls along the edges of the mesh, useful for generating closed or extruded terrain models."
 
 [[Mesher.parameters]]
 name = "CenterPivot"
 type = "bool"
 kind = "Standard"
+description = "If enabled, centers the mesh's pivot point at the origin, making it easier to manipulate in 3D applications."
 
 [[Mesher.parameters]]
 name = "LevelOfDetail"
@@ -8462,6 +8608,7 @@ enum = ["None", "LOD1", "LOD2", "LOD3", "LOD4", "LOD5", "LOD6"]
 enum_values = [0, 1, 2, 3, 4, 5, 6]
 separator = true
 force_regenerate = true
+description = "Specifies the level of detail (LOD) for the exported mesh, allowing for simplified versions to be generated for performance optimization."
 
 [[Mesher.parameters]]
 name = "LODInfo"
@@ -8474,7 +8621,7 @@ name = "Information"
 type = "byte"
 kind = "Standard"
 separator = true
-description = "Use the TextureBaker node to generate Tangent-space Normals and bake bitmaps for this mesh."
+information = "Use the TextureBaker node to generate Tangent-space Normals and bake bitmaps for this mesh."
 
 [[Mesher.ports]]
 name = "In"
@@ -8532,6 +8679,7 @@ kind = "Standard"
 group = "Meshify"
 min = 0
 max = 1
+description = "Controls how closely the mesh facets follow the underlying terrain detail. Higher sensitivity preserves more terrain features; lower sensitivity results in smoother, more abstract faceting."
 
 [[Meshify.ports]]
 name = "In"
@@ -8937,6 +9085,7 @@ description = "Controls the mass and volume of the mountain, affecting how thick
 name = "ReduceDetails"
 type = "bool"
 kind = "Standard"
+description = "Reduces the amount of fine surface detail on the mountain, resulting in a smoother, more simplified shape."
 
 [[Mountain.parameters]]
 name = "Seed"
@@ -9202,6 +9351,7 @@ group = "Fractal"
 group_start = true
 enum = ["FBM", "Billowy", "Ridged"]
 enum_values = [0, 1, 2]
+description = "Selects the type of fractal noise used to generate the terrain. Each type produces distinct shapes and features."
 
 [[MultiFractal.parameters]]
 name = "AutoOctaves"
@@ -9209,6 +9359,7 @@ type = "bool"
 kind = "Standard"
 label = "Auto Octaves"
 group = "Fractal"
+description = "Automatically determines the optimal number of octaves for the fractal, balancing detail and performance."
 
 [[MultiFractal.parameters]]
 name = "Octaves"
@@ -9254,6 +9405,7 @@ label = "Edge smoothing"
 group = "Fractal"
 min = 0
 max = 1
+description = "Smooths the edges of the generated terrain, reducing harsh transitions and creating a more natural appearance."
 
 [[MultiFractal.parameters]]
 name = "Seed"
@@ -9346,6 +9498,7 @@ kind = "Standard"
 group = "Position"
 min = -5
 max = 5
+description = "Shifts the fractal pattern horizontally, moving features left or right across the terrain."
 
 [[MultiFractal.parameters]]
 name = "OffsetY"
@@ -9354,6 +9507,7 @@ kind = "Standard"
 group = "Position"
 min = -5
 max = 5
+description = "Shifts the fractal pattern vertically, moving features up or down across the terrain."
 
 [[MultiFractal.parameters]]
 name = "Perturb"
@@ -9468,6 +9622,7 @@ type = "enum"
 kind = "HorizontalListNoLabel"
 enum = ["Random", "Perlin", "Gaussian", "Fixed", "Micro"]
 enum_values = [0, 1, 2, 3, 4]
+description = "Selects the algorithm used to generate noise. Each type produces a distinct pattern and character, suitable for different terrain or texture effects."
 
 [[Noise.parameters]]
 name = "Height"
@@ -9490,6 +9645,7 @@ description = "Adjusts the frequency or scale of the noise pattern. Higher densi
 name = "RelativeDensity"
 type = "bool"
 kind = "Standard"
+description = "When enabled, density is scaled relative to the current resolution or context, maintaining consistent detail at different scales."
 
 [[Noise.parameters]]
 name = "BlendMode"
@@ -9497,6 +9653,7 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["Add", "Multiply", "Subtract"]
 enum_values = [0, 1, 2]
+description = "Determines how the generated noise is combined with the input or base layer, affecting the final appearance."
 
 [[Noise.parameters]]
 name = "Seed"
@@ -9568,6 +9725,7 @@ kind = "Standard"
 min = 0
 max = 1
 curve = [3]
+description = "Controls the scale of fine details captured in the normal map. Smaller values emphasize finer features, while larger values smooth out detail."
 
 [[Normals.parameters]]
 name = "Handedness"
@@ -9583,12 +9741,13 @@ type = "enum"
 kind = "HorizontalListNoLabel"
 enum = ["YUp", "ZUp"]
 enum_values = [0, 1]
+description = "Specifies which axis is considered 'up' for the normal map, ensuring compatibility with different engine conventions."
 
 [[Normals.parameters]]
 name = "Information1"
 type = "byte"
 kind = "Standard"
-description = "Use the MeshWarp node to generate Tangent-space Normals and warp bitmaps for a mesh."
+information = "Use the MeshWarp node to generate Tangent-space Normals and warp bitmaps for a mesh."
 
 [[Normals.ports]]
 name = "In"
@@ -9650,6 +9809,7 @@ label = "Mesh"
 name = "RelativePath"
 type = "bool"
 kind = "Standard"
+description = "Defines the file path to the mesh relative to the project or asset directory. Ensures portability and correct asset referencing."
 
 [[Object.parameters]]
 name = "DropToFloor"
@@ -9658,6 +9818,7 @@ kind = "Standard"
 label = "Drop to Floor"
 group = "Position"
 group_start = true
+description = "Automatically positions the object so its lowest point rests on the terrain base, preventing it from floating or being embedded below the surface."
 
 [[Object.parameters]]
 name = "OffsetX"
@@ -9666,6 +9827,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Shifts the object horizontally along the X axis, allowing precise placement within the terrain."
 
 [[Object.parameters]]
 name = "OffsetY"
@@ -9674,6 +9836,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Shifts the object horizontally along the Y axis, allowing precise placement within the terrain."
 
 [[Object.parameters]]
 name = "OffsetZ"
@@ -9682,6 +9845,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Moves the object vertically along the Z axis, raising or lowering it relative to the terrain surface."
 
 [[Object.parameters]]
 name = "Scale"
@@ -9993,6 +10157,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Sets the size of individual dots or elements within the pattern. Larger values produce bigger dots or features."
 
 [[Pattern.parameters]]
 name = "Spacing"
@@ -10033,6 +10198,7 @@ type = "int"
 kind = "Standard"
 min = 1
 max = 20
+description = "Adjusts the resolution or granularity of the pattern, controlling how fine or coarse the pattern details appear."
 
 [[Pattern.ports]]
 name = "In"
@@ -10232,6 +10398,7 @@ group = "Transform"
 group_start = true
 min = 0.0001
 max = 100
+description = "The non-uniform scale of the X axis, stretching or compressing the noise horizontally."
 
 [[Perlin.parameters]]
 name = "ScaleY"
@@ -10240,6 +10407,7 @@ kind = "Standard"
 group = "Transform"
 min = 0.0001
 max = 100
+description = "The non-uniform scale of the Y axis, stretching or compressing the noise vertically."
 
 [[Perlin.parameters]]
 name = "X"
@@ -10533,11 +10701,13 @@ description = "Sets the unit or normalization method for the exported point clou
 name = "CenterPivot"
 type = "bool"
 kind = "Standard"
+description = "If enabled, centers the point cloud around the origin by offsetting all points so that the dataset's centroid is at (0,0,0). Useful for easier manipulation in 3D applications."
 
 [[PointCloud.parameters]]
 name = "IgnoreZeroValues"
 type = "bool"
 kind = "Standard"
+description = "When enabled, points with zero or null values are excluded from the export. This helps remove empty data such as the normal low floor of the terrain from the output file."
 
 [[PointCloud.ports]]
 name = "In"
@@ -10687,6 +10857,7 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["None", "Autolevel", "Equalize"]
 enum_values = [0, 1, 2]
+description = "Selects the enhancement method for the Red channel before merging. Adjusts the contrast and distribution of red values to improve the final output."
 
 [[RGBMerge.parameters]]
 name = "EnhanceG"
@@ -10694,6 +10865,7 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["None", "Autolevel", "Equalize"]
 enum_values = [0, 1, 2]
+description = "Selects the enhancement method for the Green channel before merging. Adjusts the contrast and distribution of green values to improve the final output."
 
 [[RGBMerge.parameters]]
 name = "EnhanceB"
@@ -10701,6 +10873,7 @@ type = "enum"
 kind = "HorizontalList"
 enum = ["None", "Autolevel", "Equalize"]
 enum_values = [0, 1, 2]
+description = "Selects the enhancement method for the Blue channel before merging. Adjusts the contrast and distribution of blue values to improve the final output."
 
 [[RGBMerge.ports]]
 name = "In"
@@ -10747,6 +10920,7 @@ Method = "Average"
 name = "AutolevelChannels"
 type = "bool"
 kind = "Standard"
+description = "Automatically adjusts the levels of each RGB channel independently, ensuring optimal contrast and brightness for each channel after splitting."
 
 [[RGBSplit.parameters]]
 name = "Method"
@@ -10944,6 +11118,7 @@ description = "The number of repetitions on either axis. Controls how many times
 name = "CompensateHeight"
 type = "bool"
 kind = "Standard"
+description = "Adjusts the height of each tile to prevent elevation buildup at tile seams, ensuring a smoother and more seamless repeat pattern."
 
 [[Repeat.parameters]]
 name = "Height"
@@ -11069,6 +11244,7 @@ group = "Advanced"
 group_start = true
 min = 0.0001
 max = 2.5
+description = "The non-uniform scale of the X axis."
 
 [[Ridge.parameters]]
 name = "ScaleY"
@@ -11077,6 +11253,7 @@ kind = "Standard"
 group = "Advanced"
 min = 0.0001
 max = 2.5
+description = "The non-uniform scale of the Y axis."
 
 [[Ridge.ports]]
 name = "In"
@@ -11174,6 +11351,7 @@ description = "The number of headwaters from which rivers can start. Not all wil
 name = "RenderSurface"
 type = "bool"
 kind = "Standard"
+description = "Whether to render the surface of the water or just create masks."
 
 [[Rivers.parameters]]
 name = "Seed"
@@ -12284,6 +12462,7 @@ description = "Controls the water level of the sea. Higher values raise the sea,
 name = "CoastalErosion"
 type = "bool"
 kind = "Standard"
+description = "Applies erosion to the coastal areas where the sea meets the land, simulating natural shoreline wear and shaping."
 
 [[Sea.parameters]]
 name = "ShoreSize"
@@ -12291,6 +12470,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Determines the width of the shore created by coastal erosion. Larger values produce broader beaches or transition zones."
 
 [[Sea.parameters]]
 name = "ShoreHeight"
@@ -12298,6 +12478,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Sets the elevation difference between the sea level and the top of the shore, affecting the steepness of the coastline."
 
 [[Sea.parameters]]
 name = "Variation"
@@ -12311,16 +12492,19 @@ description = "Controls the amount of natural variation and irregularity along t
 name = "UniformVariations"
 type = "bool"
 kind = "Standard"
+description = "When enabled, applies consistent variation along the entire coast, resulting in a more uniform shoreline appearance."
 
 [[Sea.parameters]]
 name = "ExtraCliffDetails"
 type = "bool"
 kind = "Standard"
+description = "Adds additional detail and features to cliffs along the coast, enhancing realism and visual interest in steep shoreline areas."
 
 [[Sea.parameters]]
 name = "RenderSurface"
 type = "bool"
 kind = "Standard"
+description = "Determines whether the sea surface is rendered in the final terrain output. Enable to visualize the water surface."
 
 [[Sea.ports]]
 name = "In"
@@ -12400,6 +12584,7 @@ kind = "Standard"
 label = "Shift X"
 min = 0
 max = 1
+description = "Shift blending on the X axis."
 
 [[Seamless.parameters]]
 name = "ShiftY"
@@ -12408,6 +12593,7 @@ kind = "Standard"
 label = "Shift Y"
 min = 0
 max = 1
+description = "Shift blending on the Y axis."
 
 [[Seamless.parameters]]
 name = "ToggleTiling"
@@ -12560,6 +12746,7 @@ type = "enum"
 kind = "HorizontalListNoLabel"
 enum = ["TableTop", "HillShade", "Occlusion", "SoftLight"]
 enum_values = [0, 1, 2, 3]
+description = "Specifies the shading technique used to render the terrain. Each style provides a different visual representation for analysis or artistic purposes."
 
 [[Shade.parameters]]
 name = "SunAzimuth"
@@ -12567,6 +12754,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 360
+description = "Sets the horizontal angle of the sun in degrees, determining the direction from which sunlight is cast across the terrain."
 
 [[Shade.parameters]]
 name = "SunElevation"
@@ -12574,6 +12762,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 90
+description = "Controls the vertical angle of the sun above the horizon, affecting the length and intensity of shadows on the terrain."
 
 [[Shade.parameters]]
 name = "Sunlight"
@@ -12589,6 +12778,7 @@ type = "float"
 kind = "Standard"
 min = -1
 max = 1
+description = "Offsets the shading calculation to reduce or increase shadow strength, helping to fine-tune the balance between light and dark areas."
 
 [[Shade.parameters]]
 name = "SoftShadows"
@@ -12596,16 +12786,19 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Enables or adjusts the softness of shadows, creating more gradual transitions between light and shadow for a realistic effect."
 
 [[Shade.parameters]]
 name = "ReflectedLight"
 type = "bool"
 kind = "Standard"
+description = "Simulates indirect illumination by adding light reflected from surrounding terrain, enhancing realism and reducing overly dark shadowed areas."
 
 [[Shade.parameters]]
 name = "HighQuality"
 type = "bool"
 kind = "Standard"
+description = "Enables high-quality rendering for shading, using more advanced calculations for smoother gradients and more accurate lighting effects."
 
 [[Shade.ports]]
 name = "In"
@@ -12700,6 +12893,7 @@ type = "float"
 kind = "Standard"
 min = 0.0001
 max = 2
+description = "Adjusts the width of the shape by scaling it along the X axis independently."
 
 [[Shape.parameters]]
 name = "ScaleY"
@@ -12707,6 +12901,7 @@ type = "float"
 kind = "Standard"
 min = 0.0001
 max = 2
+description = "Adjusts the height of the shape by scaling it along the Y axis independently."
 
 [[Shape.parameters]]
 name = "Thickness"
@@ -12784,6 +12979,7 @@ description = "Negative values will bulk down the shape, while positive values w
 name = "LocalEffect"
 type = "bool"
 kind = "Standard"
+description = "Limits the shaping effect to localized regions instead of applying it globally, allowing for targeted adjustments."
 
 [[Shaper.parameters]]
 name = "LocalArea"
@@ -12791,11 +12987,13 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Specifies the size or extent of the local region affected when 'Local Effect' is enabled. Larger values increase the area of influence."
 
 [[Shaper.parameters]]
 name = "MaintainFineDetails"
 type = "bool"
 kind = "Standard"
+description = "When enabled, finer detail is preserved regardless of shape changes."
 
 [[Shaper.parameters]]
 name = "DetailSize"
@@ -12803,6 +13001,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Controls the scale of details to be preserved or affected during shaping. Smaller values focus on finer details, while larger values affect broader features."
 
 [[Shaper.ports]]
 name = "In"
@@ -13035,6 +13234,7 @@ name = "IsRelative"
 type = "bool"
 kind = "Standard"
 group = "Shrubs"
+description = "If enabled, the shrub count is relative to the terrain size or other factors, rather than being an absolute number."
 
 [[Shrubs.parameters]]
 name = "Shape"
@@ -13069,6 +13269,7 @@ kind = "HorizontalList"
 group = "Growth"
 enum = ["None", "Previous", "All"]
 enum_values = [0, 1, 2]
+description = "Controls how shrubs interact with tree placement, affecting their distribution relative to trees."
 
 [[Shrubs.parameters]]
 name = "Health"
@@ -13104,6 +13305,7 @@ kind = "Standard"
 group = "Growth"
 min = -1
 max = 1
+description = "Adjusts the simulation to favor certain environmental conditions or behaviors, influencing shrub distribution."
 
 [[Shrubs.parameters]]
 name = "Slope"
@@ -13122,6 +13324,7 @@ kind = "Standard"
 group = "Aspect Inhibition"
 min = 0
 max = 90
+description = "Controls how quickly shrub density decreases as slope increases."
 
 [[Shrubs.parameters]]
 name = "Altitude"
@@ -13140,6 +13343,7 @@ kind = "Standard"
 group = "Aspect Inhibition"
 min = 0
 max = 1
+description = "Controls the rate at which shrub density decreases with altitude."
 
 [[Shrubs.parameters]]
 name = "DeadFlow"
@@ -13149,6 +13353,7 @@ group = "Snow Inhibition"
 group_start = true
 min = 0
 max = 1
+description = "Prevents shrub growth in areas with stagnant or 'dead' water flow, simulating natural avoidance of such regions."
 
 [[Shrubs.parameters]]
 name = "ConsolidateFlows"
@@ -13157,6 +13362,7 @@ kind = "Standard"
 group = "Snow Inhibition"
 min = 0
 max = 1
+description = "Encourages shrubs to grow along consolidated water flow paths, such as stream banks or drainage lines."
 
 [[Shrubs.parameters]]
 name = "Bias"
@@ -13184,6 +13390,7 @@ kind = "Standard"
 group = "Artistic Control"
 min = 0
 max = 1
+description = "Softens the boundaries of shrub patches, blending them more smoothly into the surrounding terrain."
 
 [[Shrubs.parameters]]
 name = "CustomInfluence"
@@ -13194,6 +13401,7 @@ group_start = true
 min = 0
 max = 1
 curve = [3]
+description = "Allows custom input maps or masks to influence shrub placement and density."
 
 [[Shrubs.parameters]]
 name = "Trim"
@@ -13288,6 +13496,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Enhances fine details and subtle variations in the slope mask, adding extra texture and definition to small-scale features."
 
 [[Slope.ports]]
 name = "In"
@@ -13640,6 +13849,7 @@ group = "Melt"
 group_start = true
 enum = ["Uniform", "Directional"]
 enum_values = [0, 1]
+description = "Defines the method by which snow melts from the terrain, affecting the pattern and distribution of melting."
 
 [[Snow.parameters]]
 name = "Melt"
@@ -13657,6 +13867,7 @@ kind = "Standard"
 group = "Melt"
 min = 0
 max = 1
+description = "Specifies the amount and appearance of snow left behind after melting, such as patches or traces of residual snow."
 
 [[Snow.parameters]]
 name = "Direction"
@@ -13675,6 +13886,7 @@ group = "Melt"
 min = 0
 max = 1
 ticks = ["TerrainMarks"]
+description = "Defines the altitude or threshold below which snow does not accumulate, simulating natural snow lines on mountains."
 
 [[Snow.parameters]]
 name = "SlipOffAngle"
@@ -13694,6 +13906,7 @@ label = "Adhered snow mass"
 group = "Advanced"
 min = 0
 max = 30
+description = "Controls the amount of snow that remains attached to surfaces, even on steep or vertical terrain."
 
 [[Snow.parameters]]
 name = "ModelScale"
@@ -13703,6 +13916,7 @@ label = "Model scale"
 group = "Advanced"
 min = 1
 max = 16
+description = "Sets the scale of the terrain model, influencing how snow parameters are interpreted relative to real-world dimensions."
 
 [[Snow.parameters]]
 name = "RealScale"
@@ -13710,6 +13924,7 @@ type = "bool"
 kind = "Standard"
 label = "Real Scale"
 group = "Advanced"
+description = "Specifies the actual physical scale represented by the terrain, used for accurate snow simulation and parameter scaling."
 
 [[Snow.parameters]]
 name = "TerrainScale"
@@ -13719,6 +13934,7 @@ label = "Terrain Scale"
 group = "Advanced"
 min = 500
 max = 20000
+description = "Adjusts the scaling factor for the terrain, affecting how snow features are distributed and visualized."
 
 [[Snow.parameters]]
 name = "Verticality"
@@ -14017,6 +14233,7 @@ type = "enum"
 kind = "Enum"
 enum = ["AboveThreshold", "BelowThreshold"]
 enum_values = [0, 1]
+description = "Selects whether the soft clipping effect is applied above or below the specified threshold."
 
 [[SoftClip.parameters]]
 name = "Threshold"
@@ -14164,6 +14381,7 @@ description = "Automatically adjusts the levels of the combined channels to maxi
 name = "ClampProduct"
 type = "bool"
 kind = "Standard"
+description = "Clamps the product of the R, G, and B channels to the 0..1 range, ensuring the output does not exceed valid limits."
 
 [[Splat.ports]]
 name = "In"
@@ -14389,6 +14607,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Applies an angular tilt to the stratified layers, simulating geological tilting or shifting of strata."
 
 [[Stratify.parameters]]
 name = "Direction"
@@ -14694,6 +14913,7 @@ DiscardAlternate = false
 name = "SwitchRoute"
 type = "bool"
 kind = "Standard"
+description = "Selects which input route is active. Use this to dynamically switch between different input sources or branches in your graph."
 
 [[Switch.parameters]]
 name = "DiscardAlternate"
@@ -14795,6 +15015,7 @@ kind = "Command"
 label = "Export JSON"
 group = "Sampling"
 command = "device-floppy"
+description = "Exports the synthesized gradient and node configuration as a JSON file for use in other applications or for documentation purposes."
 
 [[Synth.ports]]
 name = "In"
@@ -14906,12 +15127,13 @@ AddInput = false
 name = "GenerateNormals"
 type = "bool"
 kind = "Standard"
+description = "Enables the generation of tangent-space normal maps for the mesh. When checked, MeshWarp will output normal maps that align with the mesh geometry at each LOD, suitable for advanced shading and detail."
 
 [[TextureBaker.parameters]]
 name = "Information"
 type = "byte"
 kind = "Standard"
-description = "TextureBaker fits your maps to the mesh perfectly at any LOD.\n\nConnect Mesher/In port to a Mesher node that will be used to make a Mesh.\n\nAdd additional ports to connect to masks or color maps. To generate Tangent-space normal maps, check \"General Normal Map\".\n\nAn LOD will be generated for each input map corresponding to the number of LODs set in the Mesher node."
+information = "TextureBaker fits your maps to the mesh perfectly at any LOD.\n\nConnect Mesher/In port to a Mesher node that will be used to make a Mesh.\n\nAdd additional ports to connect to masks or color maps. To generate Tangent-space normal maps, check \"General Normal Map\".\n\nAn LOD will be generated for each input map corresponding to the number of LODs set in the Mesher node."
 
 [[TextureBaker.parameters]]
 name = "AddInput"
@@ -14919,6 +15141,7 @@ type = "bool"
 kind = "Command"
 label = "Add Input"
 command = "port-connect"
+description = "Adds an additional input port to connect masks, color maps, or other data layers. Each input will be processed and fitted to the mesh at all LODs."
 
 [[TextureBaker.parameters]]
 name = "LODInfo"
@@ -14926,6 +15149,7 @@ type = "string"
 kind = "ComputedString"
 text_format = [false, true, ""]
 separator = true
+description = "Shows Level of Detail (LOD) information for the mesh and all connected maps. Each input map will have an LOD generated to match the mesh's LODs as set in the Mesher node."
 
 [[TextureBaker.ports]]
 name = "In"
@@ -15272,6 +15496,7 @@ kind = "Standard"
 group = "Talus"
 min = 0
 max = 1
+description = "Determines the amount of sediment removed during talus formation. Higher values produce cleaner, sharper features, while lower values allow more sediment to accumulate, creating smoother transitions."
 
 [[Thermal.parameters]]
 name = "FeatureScale"
@@ -15281,12 +15506,14 @@ group = "Scale"
 group_start = true
 min = 1
 max = 300
+description = "Sets the scale of the largest thermal erosion features in the terrain. Larger values create broader, more pronounced features; smaller values result in finer details."
 
 [[Thermal.parameters]]
 name = "RealScale"
 type = "bool"
 kind = "Standard"
 group = "Scale"
+description = "Uses the scale defined by the terrain's physical dimensions. Disable to access additional options and manually adjust erosion physics."
 
 [[Thermal.parameters]]
 name = "TerrainScale"
@@ -15295,6 +15522,7 @@ kind = "Standard"
 group = "Scale"
 min = 500
 max = 20000
+description = "Specifies the overall scale of the terrain when Real Scale is turned off, allowing for manual adjustment of terrain size."
 
 [[Thermal.parameters]]
 name = "Verticality"
@@ -15406,6 +15634,7 @@ kind = "Standard"
 group = "Talus"
 min = 0
 max = 1
+description = "Controls the amount of sediment removed during talus formation. Higher values produce cleaner, sharper features by removing excess material, while lower values allow more sediment to accumulate, resulting in smoother transitions."
 
 [[Thermal2.parameters]]
 name = "FeatureScale"
@@ -15416,6 +15645,7 @@ group_start = true
 min = 1
 max = 300
 curve = [5]
+description = "Adjusts the scale of thermal erosion features in meters. Larger values create broader, more pronounced features, while smaller values result in finer details."
 
 [[Thermal2.ports]]
 name = "In"
@@ -15505,6 +15735,7 @@ type = "float"
 kind = "Standard"
 min = 0
 max = 1
+description = "Preserves fine details from the original terrain during thermal shaping. Higher values maintain more microdetail, such as rocky textures and small features, while lower values result in smoother, more uniform terrain."
 
 [[ThermalShaper.ports]]
 name = "In"
@@ -15596,11 +15827,13 @@ kind = "Standard"
 name = "EnforceLinearGamma"
 type = "bool"
 kind = "Standard"
+description = "Lorem ipsum"
 
 [[TileInput.parameters]]
 name = "FlipY"
 type = "bool"
 kind = "Standard"
+description = "Lorem ipsum"
 
 [[TileInput.parameters]]
 name = "PurgeCache"
@@ -15761,6 +15994,7 @@ group = "Position"
 group_start = true
 min = -1
 max = 1
+description = "Shifts the terrain or object horizontally along the X axis, allowing precise placement within the scene."
 
 [[Transform.parameters]]
 name = "OffsetY"
@@ -15769,6 +16003,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Shifts the terrain or object horizontally along the Y axis, moving it forward or backward in the workspace."
 
 [[Transform.parameters]]
 name = "OffsetZ"
@@ -15777,6 +16012,7 @@ kind = "Standard"
 group = "Position"
 min = 0
 max = 2
+description = "Moves the terrain or object vertically along the Z axis, raising or lowering its elevation."
 
 [[Transform.parameters]]
 name = "Uniform"
@@ -15803,6 +16039,7 @@ kind = "Standard"
 group = "Scale"
 min = 0.0001
 max = 10
+description = "The non-uniform scale on the X axis, allowing independent horizontal stretching or compression."
 
 [[Transform.parameters]]
 name = "ScaleY"
@@ -15811,6 +16048,7 @@ kind = "Standard"
 group = "Scale"
 min = 0.0001
 max = 10
+description = "The non-uniform scale on the Y axis, allowing independent vertical stretching or compression."
 
 [[Transform.parameters]]
 name = "Rotate"
@@ -15830,6 +16068,7 @@ group = "Settings"
 group_start = true
 enum = ["None", "Blend", "Add", "Subtract", "Difference", "Multiply", "Screen", "Max", "Min"]
 enum_values = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+description = "Specifies how the transformed terrain or object is merged with the underlying data or input."
 
 [[Transform.parameters]]
 name = "Edges"
@@ -15908,6 +16147,7 @@ kind = "Standard"
 label = "Drop to Floor"
 group = "Position"
 group_start = true
+description = "Automatically positions the object so its lowest point rests on the ground plane, preventing it from floating or being embedded below the surface."
 
 [[Transform3D.parameters]]
 name = "OffsetX"
@@ -15916,6 +16156,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Shifts the object horizontally along the X axis, allowing precise placement within the 3D space."
 
 [[Transform3D.parameters]]
 name = "OffsetY"
@@ -15924,6 +16165,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Shifts the object horizontally along the Y axis, moving it forward or backward in the 3D scene."
 
 [[Transform3D.parameters]]
 name = "OffsetZ"
@@ -15932,6 +16174,7 @@ kind = "Standard"
 group = "Position"
 min = -1
 max = 1
+description = "Moves the object vertically along the Z axis, raising or lowering its elevation relative to the ground."
 
 [[Transform3D.parameters]]
 name = "Scale"
@@ -16181,6 +16424,7 @@ name = "IsRelative"
 type = "bool"
 kind = "Standard"
 group = "Trees"
+description = "If enabled, tree count scales with terrain resolution for consistent density. Recommended for predictable results at higher resolutions, but may increase resource usage."
 
 [[Trees.parameters]]
 name = "LODInfo"
@@ -16188,6 +16432,7 @@ type = "string"
 kind = "ComputedString"
 group = "Trees"
 text_format = [true, true, ""]
+description = "Provides Level of Detail (LOD) information for tree instances, enabling optimized rendering and export at different distances or resolutions."
 
 [[Trees.parameters]]
 name = "TreeSize"
@@ -16197,6 +16442,7 @@ group = "Trees"
 min = 0
 max = 1
 curve = [3]
+description = "Controls the height of each tree instance. Affects the appearance of exported trees but not the mask. Useful for adjusting the final look of tree outputs."
 
 [[Trees.parameters]]
 name = "TrimUnder"
@@ -16205,6 +16451,7 @@ kind = "Standard"
 group = "Trees"
 min = 0
 max = 1
+description = "Removes tree instances below a certain size threshold, clamping down on smaller or weaker trees to refine the mask and output."
 
 [[Trees.parameters]]
 name = "Shape"
@@ -16239,6 +16486,7 @@ kind = "HorizontalList"
 group = "Growth"
 enum = ["None", "Previous", "All"]
 enum_values = [0, 1, 2]
+description = "Masks out areas occupied by other tree nodes, useful for stacking multiple tree species or biomes without overlap."
 
 [[Trees.parameters]]
 name = "Health"
@@ -16296,6 +16544,7 @@ group = "Aspect Inhibition"
 min = 0
 max = 90
 ticks = ["Degrees90"]
+description = "Controls how quickly tree density decreases as slope increases. Use with slope inhibition for gradual or sharp transitions."
 
 [[Trees.parameters]]
 name = "Altitude"
@@ -16314,6 +16563,7 @@ kind = "Standard"
 group = "Aspect Inhibition"
 min = 0
 max = 1
+description = "Controls the rate at which tree density decreases with altitude, enabling smooth or sharp transitions in elevation-based inhibition."
 
 [[Trees.parameters]]
 name = "Peaks"
@@ -16340,6 +16590,7 @@ group = "Snow Inhibition"
 group_start = true
 min = 0
 max = 1
+description = "Represents areas where tree growth is suppressed due to snow mass or adverse conditions. Controls the amount of snow mass moving down the terrain."
 
 [[Trees.parameters]]
 name = "ConsolidateFlows"
@@ -16348,6 +16599,7 @@ kind = "Standard"
 group = "Snow Inhibition"
 min = 0
 max = 1
+description = "Groups snow flows into larger masses, affecting how far snow moves down the terrain and influencing tree inhibition."
 
 [[Trees.parameters]]
 name = "Bias"
@@ -16386,12 +16638,14 @@ kind = "Standard"
 group = "Artistic Control"
 min = 0
 max = 1
+description = "Softens and tapers the edges of tree patches, blending them into the terrain for a more natural transition."
 
 [[Trees.parameters]]
 name = "VisualizeData"
 type = "bool"
 kind = "Standard"
 group = "Artistic Control"
+description = "Enables visualization of tree placement, flows, and snow inhibition, assisting with mask tuning and debugging."
 
 [[Trees.parameters]]
 name = "CustomInfluence"
@@ -16402,6 +16656,7 @@ group_start = true
 min = 0
 max = 1
 curve = [3]
+description = "Applies custom influence maps or masks to control tree placement according to user specifications, enabling highly tailored results."
 
 [[Trees.parameters]]
 name = "Trim"
@@ -16554,6 +16809,7 @@ type = "enum"
 kind = "Enum"
 enum = ["x8193", "x4097", "x2049", "x1025", "x513"]
 enum_values = [0, 1, 2, 3, 4]
+description = "Specifies the export resolution for Unity terrain heightmaps and textures. Select from standard Unity-compatible sizes to ensure proper import and terrain fidelity."
 
 [[Unity.parameters]]
 name = "AddInput"
@@ -16561,6 +16817,7 @@ type = "bool"
 kind = "Command"
 label = "Add Input"
 command = "port-connect"
+description = "Adds an additional input map layer for export, allowing for more complex terrain data to be sent to Unity."
 
 [[Unity.ports]]
 name = "In"
@@ -16634,6 +16891,7 @@ Information1 = 0
 name = "AutomaticSize"
 type = "bool"
 kind = "Standard"
+description = "Automatically determines the optimal export resolution for Unreal Engine based on the input terrain and project settings."
 
 [[Unreal.parameters]]
 name = "TargetSize"
@@ -16641,17 +16899,20 @@ type = "enum"
 kind = "Enum"
 enum = ["x8129", "x4033", "x2017", "x1009", "x505", "x253", "x127"]
 enum_values = [0, 1, 2, 3, 4, 5, 6]
+description = "Specifies the desired export resolution for Unreal Engine heightmaps and textures. Choose from standard Unreal-compatible sizes for best results."
 
 [[Unreal.parameters]]
 name = "DontResizeTextures"
 type = "bool"
 kind = "Standard"
+description = "Prevents automatic resizing of textures during export, preserving the original resolution of input textures."
 
 [[Unreal.parameters]]
 name = "LODInfo"
 type = "string"
 kind = "ComputedString"
 text_format = [false, true, ""]
+description = "Provides Level of Detail (LOD) information for exported terrain, enabling optimized rendering and streaming in Unreal Engine."
 
 [[Unreal.parameters]]
 name = "Format"
@@ -16667,6 +16928,7 @@ type = "bool"
 kind = "Standard"
 group = "Naming"
 group_start = true
+description = "Applies Unreal Engine-compatible naming conventions to exported files for easier import and organization."
 
 [[Unreal.parameters]]
 name = "Map1"
@@ -16755,6 +17017,7 @@ kind = "Command"
 label = "Add Input"
 group = "Naming"
 command = "port-connect"
+description = "Adds an additional input map layer for export, allowing for more complex terrain data to be sent to Unreal Engine."
 
 [[Unreal.parameters]]
 name = "Information2"
@@ -16763,7 +17026,8 @@ kind = "Standard"
 group = "Information"
 group_start = true
 group_collapsed = true
-description = "This node is meant to work with an Unreal Engine importer. Once the build is complete, import it in Unreal Engine."
+information = "This node is meant to work with an Unreal Engine importer. Once the build is complete, import it in Unreal Engine."
+description = "Additional metadata or notes related to the Unreal Engine export process."
 
 [[Unreal.parameters]]
 name = "Information1"
@@ -16771,7 +17035,8 @@ type = "byte"
 kind = "Standard"
 group = "Information"
 separator = true
-description = "Unreal Friendly Naming:\nThis will prefix 'T_' in front of masks and textures and 'H_' in front of the heightfield.\n\nNOTE: The heightfield should always be the primary input. You can drop a connection on the middle of a node to add additional ports."
+information = "Unreal Friendly Naming:\nThis will prefix 'T_' in front of masks and textures and 'H_' in front of the heightfield.\n\nNOTE: The heightfield should always be the primary input. You can drop a connection on the middle of a node to add additional ports."
+description = "General information or notes about the Unreal Engine export settings."
 
 [[Unreal.ports]]
 name = "In"
@@ -16889,11 +17154,13 @@ type = "enum"
 kind = "Enum"
 enum = ["Consume", "Modify"]
 enum_values = [0, 1]
+description = "Specifies how the variable is used in the node. 'Consume' reads the value of an existing variable, while 'Modify' changes the value or applies an expression to the variable."
 
 [[Var.parameters]]
 name = "VariableName"
 type = "string"
 kind = "TextBox"
+description = "The name of the variable to consume or modify. This should match the variable defined elsewhere in the graph or macro."
 
 [[Var.parameters]]
 name = "Expression"
@@ -16905,6 +17172,7 @@ description = "An optional mathematical or logical expression to apply when modi
 name = "DefaultValue"
 type = "string"
 kind = "TextBox"
+description = "The value to use if the specified variable is not set or available. Ensures the node has a fallback value."
 
 [[Var.ports]]
 name = "In"
@@ -17212,6 +17480,7 @@ group = "Transform"
 group_start = true
 min = 0.0001
 max = 100
+description = "The non-uniform scale of the X axis, stretching or compressing the pattern horizontally."
 
 [[Voronoi.parameters]]
 name = "ScaleY"
@@ -17220,6 +17489,7 @@ kind = "Standard"
 group = "Transform"
 min = 0.0001
 max = 100
+description = "The non-uniform scale of the Y axis, stretching or compressing the pattern vertically."
 
 [[Voronoi.parameters]]
 name = "X"
@@ -17322,6 +17592,7 @@ label = "Z Scale"
 group = "Warp"
 min = 0
 max = 1
+description = "Vertical axis scale for the noise, affecting the intensity of the warp along the Z (height) axis."
 
 [[Warp.parameters]]
 name = "NoiseType"
@@ -17374,6 +17645,7 @@ label = "Edge Behaviour"
 group = "Warp"
 enum = ["Edge", "Mirror"]
 enum_values = [0, 1]
+description = "Determines how the warp handles the edges of the input, preventing visible seams or artifacts."
 
 [[Warp.parameters]]
 name = "Modulation"
@@ -17392,6 +17664,7 @@ label = "Modulation Direction"
 group = "Warp"
 min = 0
 max = 360
+description = "Sets the direction of the modulation, controlling how the modulation input influences the warp."
 
 [[Warp.parameters]]
 name = "Seed"
@@ -17717,6 +17990,7 @@ group = "Ripples"
 group_start = true
 min = 0
 max = 2
+description = "Controls the speed at which ripples animate across the surface, affecting how quickly the pattern evolves over time."
 
 [[WaveShine.parameters]]
 name = "Size"
@@ -17809,6 +18083,7 @@ kind = "Standard"
 group = "Lighting"
 min = 0
 max = 360
+description = "Sets the horizontal angle of the sun, determining the direction of sunlight and resulting highlights or reflections."
 
 [[WaveShine.parameters]]
 name = "SunElevation"
@@ -17817,6 +18092,7 @@ kind = "Standard"
 group = "Lighting"
 min = 0
 max = 90
+description = "Sets the vertical angle of the sun above the horizon, affecting the length and intensity of highlights and shadows on the waves."
 
 [[WaveShine.ports]]
 name = "In"
@@ -17898,6 +18174,7 @@ name = "WashedOut"
 type = "bool"
 kind = "Standard"
 group = "Primary"
+description = "Toggles if colors are faded or desaturated, mimicking the effect of prolonged exposure to the elements."
 
 [[Weathering.parameters]]
 name = "Inverse"
@@ -18096,6 +18373,7 @@ kind = "HorizontalList"
 group = "Erosion"
 enum = ["Low", "Med", "High", "Ultra"]
 enum_values = [0, 1, 2, 3]
+description = "This parameter controls the amount of downcutting, or vertical erosion. This results in deeper channels, and can be useful for getting mountain ranges."
 
 [[Wizard.parameters]]
 name = "ChannelWidth"
@@ -18104,6 +18382,7 @@ kind = "HorizontalList"
 group = "Erosion"
 enum = ["Low", "Med", "High", "Ultra"]
 enum_values = [0, 1, 2, 3]
+description = "This parameter controls the width of the channels by creating sediment deposits in the base of the channels."
 
 [[Wizard.parameters]]
 name = "Deposits"

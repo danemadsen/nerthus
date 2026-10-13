@@ -976,6 +976,8 @@ impl Editor {
             }
             BuildEvent::Finished { generation, target, outputs, underlay, custom_colours, port_intents, error, cache_bytes, node_caches } => {
                 self.cache_bytes = cache_bytes;
+                let built_intents = node_caches.iter().map(|(id, cache)| (*id, cache.port_intents.clone())).collect();
+                self.document.set_built_intents(built_intents);
                 self.node_caches = node_caches;
                 if generation != self.generation {
                     return;

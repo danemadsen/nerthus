@@ -198,6 +198,9 @@ pub enum Command {
     EditVariable(String),
     DeleteVariable(String),
     DeleteVariableConfirmed(String),
+    /// A parameter's Expression…: Edit Expression for a node's property
+    /// (`EditorMenu.ShowExpression`).
+    EditExpression { node: i32, property: String },
     /// Vars › Create Connected Nodes › For Macros: MacroPorts on the
     /// selected nodes' inputs, outputs or both (`BtnCreateMacroPorts_OnClick`).
     CreateMacroPorts { inputs: bool, outputs: bool },
@@ -635,6 +638,10 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
         Command::File(command) => crate::ui::file_commands::run(command, editor, ui_state),
         Command::ShowMessage { caption, text } => ui_state.prompt = Some(Prompt::message(&caption, &text)),
         Command::EditVariable(key) => ui_state.variable_dialog = crate::ui::variable_dialog::open(editor, &key),
+        Command::EditExpression { node, property } => {
+            let dialog = crate::ui::expression_dialog::ExpressionDialog::open(editor, node, &property);
+            ui_state.expression_dialog = Some(dialog);
+        }
         Command::DeleteVariable(key) => {
             let caption = format!("Are you sure you want to delete the [{key}] variable?");
             let text = "All node properties linked to this variable will revert to normal.";
