@@ -19,6 +19,7 @@ use nerthus_export::swarm;
 use crate::editor::Editor;
 use crate::theme;
 use crate::ui::file_dialogs::{DialogKind, DialogRequest, FileDialogs};
+use crate::ui::tool_window;
 
 /// `noProfile`.
 const NO_PROFILE: &str = "Current Settings (No Profile)";
@@ -217,12 +218,9 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, window: &mut BatchWindow, 
     let mut open = true;
     let mut close = false;
     let mut frame = egui::Window::new("Batch Build Manager");
-    frame = frame.id(Id::new("batch-build"));
     frame = frame.collapsible(false);
     frame = frame.resizable(true);
-    frame = frame.default_size(Vec2::new(750.0, 450.0));
-    frame = frame.pivot(egui::Align2::CENTER_CENTER);
-    frame = frame.default_pos(ctx.content_rect().center());
+    frame = tool_window::place(ctx, frame, Id::new("batch-build"), Vec2::new(750.0, 450.0));
     frame = frame.open(&mut open);
     frame.show(ctx, |ui| {
         ui.add_space(8.0);

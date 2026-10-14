@@ -8,6 +8,7 @@
 use egui::{Id, Key, RichText, ScrollArea, TextEdit, Vec2};
 
 use crate::theme;
+use crate::ui::tool_window;
 
 /// `wpfConsole.PromptText` is `⟫`, which Roboto Mono lacks; its nearest
 /// is the guillemet.
@@ -199,10 +200,9 @@ const CROCODILE: &str = "                     _.---._     .---.\n            __.
 pub fn show(ctx: &egui::Context, console: &mut ConsoleWindow) -> bool {
     let mut open = true;
     let mut window = egui::Window::new("Nerthus Debug Console");
-    window = window.id(Id::new("debug-console"));
     window = window.collapsible(false);
     window = window.resizable(true);
-    window = window.default_size(Vec2::new(800.0, 450.0));
+    window = tool_window::place(ctx, window, Id::new("debug-console"), Vec2::new(800.0, 450.0));
     window = window.open(&mut open);
     window.show(ctx, |ui| {
         let font = theme::monospace(13.0);

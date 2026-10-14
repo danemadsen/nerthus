@@ -20,6 +20,7 @@ use crate::ui::commands::Command;
 use crate::ui::input_box::{InputAnswer, InputBox};
 use crate::ui::regions::{self, RegionsState};
 use crate::ui::tool_commands::ToolCommand;
+use crate::ui::tool_window;
 use crate::ui::widgets::{icon_menu, link_button, menu_item, menu_separator};
 
 /// `BuildSettingsWindow`'s tabs.
@@ -198,12 +199,9 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, state: &mut Option<BuildSe
     let mut open = true;
     let mut close = false;
     let mut window = egui::Window::new("Build Settings and Regions");
-    window = window.id(Id::new("build-settings"));
     window = window.collapsible(false);
     window = window.resizable(true);
-    window = window.default_size(Vec2::new(920.0, 640.0));
-    window = window.pivot(egui::Align2::CENTER_CENTER);
-    window = window.default_pos(ctx.content_rect().center());
+    window = tool_window::place(ctx, window, Id::new("build-settings"), Vec2::new(920.0, 640.0));
     window = window.open(&mut open);
     window.show(ctx, |ui| {
         let footer_height = 36.0;

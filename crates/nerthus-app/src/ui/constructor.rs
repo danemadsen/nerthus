@@ -21,6 +21,7 @@ use crate::editor::Editor;
 use crate::icons;
 use crate::theme;
 use crate::ui::editors::{self, SliderSpec};
+use crate::ui::tool_window;
 use crate::ui::widgets::{check_item, icon_menu, menu_separator};
 
 /// The right column's narrowest and the left's (`MinWidth`s).
@@ -178,11 +179,10 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, window: &mut ConstructorWi
     frame.fill = theme::PANEL_BACKGROUND;
     frame.inner_margin = egui::Margin::same(12);
     let mut constructor = egui::Window::new("God Mode: Constructor");
-    constructor = constructor.id(Id::new(("constructor", window.node)));
     constructor = constructor.open(&mut open);
-    constructor = constructor.default_size(Vec2::new(1280.0, 720.0));
     constructor = constructor.collapsible(false);
     constructor = constructor.frame(frame);
+    constructor = tool_window::place(ctx, constructor, Id::new(("constructor", window.node)), Vec2::new(1280.0, 720.0));
     constructor.show(ctx, |ui| {
         let area = ui.available_rect_before_wrap();
         ui.allocate_rect(area, Sense::hover());

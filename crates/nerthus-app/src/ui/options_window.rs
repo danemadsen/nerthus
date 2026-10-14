@@ -19,6 +19,7 @@ use crate::icons;
 use crate::theme;
 use crate::ui::file_dialogs::FileDialogs;
 use crate::ui::options_pages::{self, OptionsCopy, PageRequest};
+use crate::ui::tool_window;
 use crate::user;
 
 /// `OptionsWindow`'s pages (Network Builds stays collapsed).
@@ -630,12 +631,10 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, state: &mut Option<Options
     let mut open = true;
     let mut close = false;
     let mut window = egui::Window::new("Options");
-    window = window.id(Id::new("options"));
     window = window.collapsible(false);
     window = window.resizable(false);
     window = window.fixed_size(WINDOW_SIZE);
-    window = window.pivot(egui::Align2::CENTER_CENTER);
-    window = window.default_pos(ctx.content_rect().center());
+    window = tool_window::place(ctx, window, Id::new("options"), WINDOW_SIZE);
     window = window.open(&mut open);
     window.show(ctx, |ui| {
         let footer_height = 44.0;

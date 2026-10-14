@@ -60,6 +60,7 @@ mod status_bar;
 mod syntax_box;
 mod title_bar;
 mod tool_commands;
+mod tool_window;
 pub(crate) mod toolbox;
 mod turntable_window;
 mod variable_dialog;
@@ -510,7 +511,8 @@ fn draw_editor(
 
     let title_rect = Rect::from_min_size(full.min, Vec2::new(full.width(), title_bar::HEIGHT));
     let status_rect = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - status_bar::HEIGHT), full.max);
-    let body = Rect::from_min_max(Pos2::new(full.left(), title_rect.bottom()), Pos2::new(full.right(), status_rect.top()));
+    // Where the tool windows stay too.
+    let body = tool_window::body(ctx);
     // Painted once the 3D view's place is known: everything but that.
     let background = root.painter().add(egui::Shape::Noop);
 

@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::editor::Editor;
 use crate::theme;
+use crate::ui::tool_window;
 
 /// `Width="666"`, `Height="666"` (minimums too).
 const WINDOW_SIZE: f32 = 666.0;
@@ -118,13 +119,12 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor) {
     let mut settings: PainterSettings = ctx.data(|data| data.get_temp(settings_id())).unwrap_or_default();
     let mut open = true;
     let mut window = egui::Window::new("Painter");
-    window = window.id(window_id().with("window"));
     window = window.open(&mut open);
-    window = window.default_size(Vec2::new(WINDOW_SIZE, WINDOW_SIZE + TOOLBAR_HEIGHT));
     window = window.min_size(Vec2::new(WINDOW_SIZE, WINDOW_SIZE));
     window = window.collapsible(false);
     window = window.order(egui::Order::Foreground);
     window = window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::MENU_BACKGROUND).inner_margin(0));
+    window = tool_window::place(ctx, window, window_id().with("window"), Vec2::new(WINDOW_SIZE, WINDOW_SIZE + TOOLBAR_HEIGHT));
     window.show(ctx, |ui| {
         let available = ui.available_size();
         let side = available.x.min(available.y - TOOLBAR_HEIGHT).max(64.0);

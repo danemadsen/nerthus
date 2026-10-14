@@ -12,6 +12,7 @@ use crate::editor::Editor;
 use crate::icons;
 use crate::theme;
 use crate::ui::syntax_box;
+use crate::ui::tool_window;
 
 /// `debounceInterval`.
 const DEBOUNCE_SECONDS: f64 = 0.5;
@@ -64,13 +65,12 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor) {
     let mut open = true;
     let mut action = None;
     let mut window = egui::Window::new("Edit Math Node");
-    window = window.id(window_id().with("window"));
     window = window.open(&mut open);
-    // 480 × 400 at the interface scale (the window's `UIScaler`).
-    window = window.default_size(Vec2::new(480.0, 400.0));
     window = window.collapsible(false);
     window = window.order(egui::Order::Foreground);
     window = window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_BACKGROUND).inner_margin(12));
+    // 480 × 400 at the interface scale (the window's `UIScaler`).
+    window = tool_window::place(ctx, window, window_id().with("window"), Vec2::new(480.0, 400.0));
     window.show(ctx, |ui| {
         let bottom_height = 24.0 + 28.0;
         let help = RichText::new("Use a, b, c to access inputs. Use x, y for coordinates.").font(theme::interface(12.0)).color(theme::LABEL_DEFAULT.gamma_multiply(0.7));

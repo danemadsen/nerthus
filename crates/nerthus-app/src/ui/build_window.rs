@@ -12,6 +12,7 @@ use crate::icons;
 use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::memory_dialogs;
+use crate::ui::tool_window;
 use crate::ui::UiState;
 
 /// The build log's height in the progress window.
@@ -146,12 +147,9 @@ pub fn progress(ctx: &egui::Context, editor: &Editor, commands: &mut Vec<Command
     let title = format!("Building {} at {} x {}", build.project_name, build.resolution, build.resolution);
     let mut open = true;
     let mut window = egui::Window::new(title);
-    window = window.id(egui::Id::new("build-progress"));
     window = window.collapsible(false);
     window = window.resizable(true);
-    window = window.default_size(Vec2::new(560.0, 380.0));
-    window = window.pivot(egui::Align2::CENTER_CENTER);
-    window = window.default_pos(ctx.content_rect().center());
+    window = tool_window::place(ctx, window, egui::Id::new("build-progress"), Vec2::new(560.0, 380.0));
     window = window.open(&mut open);
     window.show(ctx, |ui| {
             let status = if let Some(refusal) = &build.refusal {

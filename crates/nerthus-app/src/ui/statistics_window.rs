@@ -12,6 +12,7 @@ use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::data_view::stats::humanize_milliseconds;
 use crate::ui::editors::palette_color;
+use crate::ui::tool_window;
 
 /// `DonutChart.OuterRadius` and `InnerRadius`.
 const OUTER_RADIUS: f32 = 150.0;
@@ -180,11 +181,10 @@ pub fn show(ctx: &egui::Context, window: &mut Option<StatisticsWindow>, commands
     frame.fill = theme::WINDOW_BACKGROUND;
     frame.inner_margin = egui::Margin::same(8);
     let mut statistics_window = egui::Window::new("Statistics");
-    statistics_window = statistics_window.id(Id::new("statistics-window"));
     statistics_window = statistics_window.open(&mut open);
-    statistics_window = statistics_window.default_size(Vec2::new(1200.0, 720.0));
     statistics_window = statistics_window.collapsible(false);
     statistics_window = statistics_window.frame(frame);
+    statistics_window = tool_window::place(ctx, statistics_window, Id::new("statistics-window"), Vec2::new(1200.0, 720.0));
     statistics_window.show(ctx, |ui| {
         let area = ui.available_rect_before_wrap();
         ui.allocate_rect(area, Sense::hover());

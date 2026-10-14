@@ -13,6 +13,7 @@ use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::options_window::OptionsState;
 use crate::ui::tool_commands::{self, ToolCommand};
+use crate::ui::tool_window;
 use crate::ui::UiState;
 
 /// The Start dialog's size (`Width="770" Height="660"`) and its column of
@@ -355,11 +356,10 @@ fn examples_window(ctx: &egui::Context, editor: &mut Editor, commands: &mut Vec<
     let mut memory = memory(ctx);
     let mut open = true;
     let mut window = egui::Window::new("Examples");
-    window = window.id(Id::new("examples-window"));
     window = window.collapsible(false);
     window = window.resizable(true);
-    window = window.default_size(EXAMPLES_SIZE);
     window = window.anchor(Align2::CENTER_CENTER, Vec2::ZERO);
+    window = tool_window::place(ctx, window, Id::new("examples-window"), EXAMPLES_SIZE);
     window = window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_DARK));
     window = window.open(&mut open);
     let projects = examples();

@@ -23,6 +23,7 @@ use crate::editor::{Editor, RenderSource};
 use crate::ui::gizmos::{gizmo_layer, GizmoKind, GizmoState};
 use crate::theme;
 use crate::ui::commands::Command;
+use crate::ui::tool_window;
 use crate::ui::widgets::{check_item, icon_menu, menu_caption, menu_item, menu_separator};
 use crate::viewport_render::{MaskEnhancement, RenderJob, RenderQuality, ViewportRenderer};
 
@@ -487,17 +488,14 @@ pub fn show_floating(ctx: &egui::Context, editor: &mut Editor, state: &mut Viewp
 }
 
 /// A `MapViewer` window: 720 square (its title bar included) in the
-/// middle of the screen, on top of the shell.
+/// middle of the shell's body, on top of the shell.
 fn map_viewer_window<'open>(ctx: &egui::Context, id: Id, title: String, open: &'open mut bool) -> egui::Window<'open> {
-    let left_top = ctx.content_rect().center() - Vec2::splat(FLOATING_SIZE / 2.0);
     let mut window = egui::Window::new(title);
-    window = window.id(id);
     window = window.open(open);
-    window = window.default_size(Vec2::splat(FLOATING_SIZE));
-    window = window.default_pos(left_top);
     window = window.collapsible(false);
     window = window.order(egui::Order::Foreground);
-    window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_DARK).inner_margin(0))
+    window = window.frame(egui::Frame::window(&ctx.global_style()).fill(theme::WINDOW_DARK).inner_margin(0));
+    tool_window::place(ctx, window, id, Vec2::splat(FLOATING_SIZE))
 }
 
 /// A floating view filling its window.
