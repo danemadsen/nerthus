@@ -356,39 +356,79 @@ fn confirm_tab_delete(ui: &mut Ui, tabs: &[crate::document::GraphTabInfo], ui_st
     }
 }
 
-/// The build clock and progress (`StateIcon`, `TotalTime`, `Progress`).
+/// The build strip's width while the graph has room for it.
+const FOOTER_WIDTH: f32 = 200.0;
+/// The build strip's inset from the graph's left and bottom edges (inside
+/// the border), and from its right edge while the graph is narrower than
+/// the strip.
+const FOOTER_INSET: f32 = 1.75;
+/// `ProgressX` in Lines mode: twenty ticks, 2 wide and 6 apart.
+const FOOTER_TICKS: usize = 20;
+const TICK_WIDTH: f32 = 2.0;
+const TICK_SPACING: f32 = 6.0;
+/// Room left after the last tick that fits.
+const TICKS_END_MARGIN: f32 = 4.0;
+
+/// The build strip at the bottom left of the graph `area`: 200 wide, or
+/// narrower so it stays inside the graph's border when the graph is
+/// narrow. None when the graph has no room for it at all.
+fn footer_rect(area: Rect) -> Option<Rect> {
+    let width = FOOTER_WIDTH.min(area.width() - 2.0 * FOOTER_INSET);
+    if width <= 0.0 {
+        return None;
+    }
+    let min = Pos2::new(area.left() + FOOTER_INSET, area.bottom() - FOOTER_INSET - 26.0);
+    Some(Rect::from_min_size(min, Vec2::new(width, 26.0)))
+}
+
+/// How many of the progress ticks, the first centred at `start_x`, fit
+/// before `end_x`: all twenty in the full strip, fewer in a narrower one.
+fn ticks_that_fit(start_x: f32, end_x: f32) -> usize {
+    let room = end_x - TICK_WIDTH / 2.0 - start_x;
+    if room < 0.0 {
+        return 0;
+    }
+    ((room / TICK_SPACING).floor() as usize + 1).min(FOOTER_TICKS)
+}
+
+/// The build clock and progress (`StateIcon`, `TotalTime`, `Progress`),
+/// kept to the strip `footer_rect` gives.
 fn footer(ui: &mut Ui, area: Rect, editor: &Editor) {
-    let footer = Rect::from_min_size(Pos2::new(area.left() + 1.75, area.bottom() - 27.75), Vec2::new(200.0, 26.0));
+    let Some(footer) = footer_rect(area) else {
+        return;
+    };
+    let mut strip = ui.new_child(UiBuilder::new().max_rect(footer));
+    strip.set_clip_rect(footer.intersect(ui.clip_rect()));
     let corners = egui::CornerRadius { nw: 0, ne: 4, sw: 0, se: 4 };
-    ui.painter().rect_filled(footer, corners, theme::PANEL_CLADDING);
+    strip.painter().rect_filled(footer, corners, theme::PANEL_CLADDING);
     let icon_color = if editor.building { theme::ACCENT_PRIMARY } else { theme::ICON_DEFAULT };
     let icon_rect = Rect::from_min_size(footer.min + Vec2::new(8.0, 5.0), Vec2::splat(16.0));
-    icons::paint(ui, icon_rect, "activity-heartbeat", icon_color);
+    icons::paint(&strip, icon_rect, "activity-heartbeat", icon_color);
 
     let seconds = editor.build_seconds();
     let minutes = (seconds / 60.0).floor() as u32;
     let remainder = (seconds % 60.0).floor() as u32;
     let clock = format!("{minutes:02}:{remainder:02}");
-    let galley = ui.painter().layout_no_wrap(clock, theme::monospace_semibold(9.0), theme::LABEL_DEFAULT);
+    let galley = strip.painter().layout_no_wrap(clock, theme::monospace_semibold(9.0), theme::LABEL_DEFAULT);
     let clock_position = Pos2::new(icon_rect.right() + 4.0, footer.center().y - galley.size().y / 2.0);
     let clock_width = galley.size().x;
-    ui.painter().galley(clock_position, galley, theme::LABEL_DEFAULT);
+    strip.painter().galley(clock_position, galley, theme::LABEL_DEFAULT);
 
     let separator_x = clock_position.x + clock_width + 8.0;
     let stroke = Stroke::new(1.0, theme::MENU_SEPARATOR);
-    ui.painter().line_segment([Pos2::new(separator_x, footer.center().y - 4.0), Pos2::new(separator_x, footer.center().y + 4.0)], stroke);
+    strip.painter().line_segment([Pos2::new(separator_x, footer.center().y - 4.0), Pos2::new(separator_x, footer.center().y + 4.0)], stroke);
 
-    // `ProgressX` in Lines mode: twenty ticks lit by progress.
-    let ticks = 20;
+    // `ProgressX` in Lines mode: the ticks that fit, lit by progress.
     let start_x = separator_x + 8.0;
+    let ticks = ticks_that_fit(start_x, footer.right() - TICKS_END_MARGIN);
     let progress = if editor.building { editor.build_progress } else { 0.0 };
     let lit = (progress * ticks as f32).round() as usize;
     for tick in 0..ticks {
-        let tick_x = start_x + tick as f32 * 6.0;
+        let tick_x = start_x + tick as f32 * TICK_SPACING;
         let color = if tick < lit { theme::ACCENT_PRIMARY } else { theme::PROGRESS_EMPTY };
         let top = Pos2::new(tick_x, footer.top() + 8.0);
         let bottom = Pos2::new(tick_x, footer.bottom() - 8.0);
-        ui.painter().line_segment([top, bottom], Stroke::new(2.0, color));
+        strip.painter().line_segment([top, bottom], Stroke::new(TICK_WIDTH, color));
     }
     if editor.building {
         ui.ctx().request_repaint();
@@ -515,4 +555,82 @@ fn engine_toggle(ui: &mut Ui, suspended: bool) -> egui::Response {
     let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::DEFAULT_SIZE));
     icons::paint(ui, icon_rect, "engine", color);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::Document;
+
+    /// The build strip painted at the bottom of a graph frame `width` wide,
+    /// its clock at `seconds`: the strip and the shapes painted, and among
+    /// them the progress ticks (the 2-wide lines).
+    fn painted_footer(width: f32, seconds: f32) -> (Rect, Rect, Vec<egui::epaint::ClippedShape>, Vec<[Pos2; 2]>) {
+        let context = egui::Context::default();
+        theme::apply(&context);
+        let mut editor = Editor::new(Document::new());
+        editor.last_build_seconds = seconds;
+        let area = Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::new(width, 400.0));
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 960.0))), ..Default::default() };
+        let mut output = context.run_ui(input, |ui| footer(ui, area, &editor));
+        let shapes = std::mem::take(&mut output.shapes);
+        output.drop_without_applying_deltas();
+        let ticks = shapes.iter().filter_map(|clipped| match clipped.shape {
+            Shape::LineSegment { points, stroke } if stroke.width == TICK_WIDTH => Some(points),
+            _ => None,
+        });
+        let ticks = ticks.collect();
+        (area, footer_rect(area).unwrap_or(Rect::NOTHING), shapes, ticks)
+    }
+
+    #[test]
+    fn a_wide_graph_shows_the_whole_strip() {
+        for seconds in [0.0, 99.0 * 60.0 + 59.0, 100.0 * 60.0] {
+            let (area, strip, _, ticks) = painted_footer(800.0, seconds);
+            assert_eq!(strip.width(), FOOTER_WIDTH);
+            assert_eq!(strip.left(), area.left() + FOOTER_INSET);
+            assert_eq!(strip.bottom(), area.bottom() - FOOTER_INSET);
+            assert_eq!(ticks.len(), FOOTER_TICKS);
+            assert!(ticks.iter().all(|points| points[0].x + TICK_WIDTH / 2.0 <= strip.right()));
+        }
+    }
+
+    #[test]
+    fn a_narrow_graph_keeps_the_strip_inside_its_border() {
+        // The graph frame beside the Data View at `MIN_GRAPH` (less its
+        // margins and the grid's 1 on the right), and narrower still when
+        // the window leaves the Data View its 340 and no more.
+        let at_min_graph = MIN_GRAPH - 2.0 * AREA_MARGIN - 1.0;
+        for width in [at_min_graph, 120.0, 80.0, 40.0] {
+            let (area, strip, shapes, ticks) = painted_footer(width, 0.0);
+            let inside_border = area.right() - TAB_BORDER;
+            assert!(strip.right() <= inside_border, "{width}: the strip ends at {} past {inside_border}", strip.right());
+            assert!(ticks.len() < FOOTER_TICKS, "{width}: all {} ticks drawn", ticks.len());
+            for points in &ticks {
+                assert!(points[0].x + TICK_WIDTH / 2.0 <= strip.right() - TICKS_END_MARGIN, "{width}: a tick at {} past the strip", points[0].x);
+            }
+            for clipped in &shapes {
+                assert!(strip.contains_rect(clipped.clip_rect), "{width}: {:?} painted outside the strip", clipped.shape);
+            }
+        }
+        let (_, _, _, ticks) = painted_footer(at_min_graph, 0.0);
+        assert!(!ticks.is_empty(), "the strip at the graph's minimum width still shows progress");
+    }
+
+    #[test]
+    fn a_graph_with_no_room_paints_no_strip() {
+        let (_, _, shapes, _) = painted_footer(2.0 * FOOTER_INSET, 0.0);
+        assert!(shapes.is_empty());
+    }
+
+    #[test]
+    fn ticks_fit_before_the_end() {
+        assert_eq!(ticks_that_fit(100.0, 400.0), FOOTER_TICKS);
+        assert_eq!(ticks_that_fit(100.0, 101.0), 1);
+        assert_eq!(ticks_that_fit(100.0, 100.5), 0);
+        assert_eq!(ticks_that_fit(100.0, 50.0), 0);
+        // Ticks at 100, 106, 112 and 118: the last ends at 119.
+        assert_eq!(ticks_that_fit(100.0, 120.0), 4);
+        assert_eq!(ticks_that_fit(100.0, 118.5), 3);
+    }
 }
