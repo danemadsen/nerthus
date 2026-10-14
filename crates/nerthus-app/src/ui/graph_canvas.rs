@@ -863,7 +863,7 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
             port_responses.push((index, port.clone(), response));
         }
     }
-    draw_ports(&painter, &layouts, &view, origin, state, pointer);
+    draw_ports(&painter, &layouts, &view, origin, state, pointer_on_graph);
     draw_shines(ui, &painter, state, &layouts, &view, origin);
 
     handle_port_drags(ui, editor, state, &layouts, &frame.groups, &port_responses, origin, commands);
@@ -1426,8 +1426,12 @@ fn draw_portal(painter: &egui::Painter, port: &PortLayout, portal: Portal, color
 }
 
 /// The port a dragged connection would be let go on (`HandleSnapToPorts`):
-/// any port of another node, outputs as well as inputs.
+/// any port of another node, outputs as well as inputs. Let go outside
+/// the graph, it is none: a port past the edge is not there to take it.
 fn snapping_port(layouts: &[NodeLayout], view: &GraphView, origin: Pos2, state: &GraphState, point: Pos2) -> Option<(i32, String, bool)> {
+    if !state.rect.contains(point) {
+        return None;
+    }
     let source_node = match &state.drag {
         Some(Drag::FromOutput { node, .. } | Drag::FromInput { node, .. }) => *node,
         _ => return None,
@@ -2596,25 +2600,26 @@ mod tests {
         assert_eq!(layout.rect.height(), COMPACT_HEIGHT);
     }
 
-    /// The graph below the 3D view, as the editor lays them out: the
-    /// view's widgets come before the graph's.
+    /// The graph amid the editor's other panels (the 3D view and its
+    /// toolbar, the tab strip, the Data View, the status bar), whose
+    /// widgets come before the graph's as the editor lays them out: one
+    /// under the whole window stands for them.
     const GRAPH: Rect = Rect::from_min_max(Pos2::new(200.0, 300.0), Pos2::new(1100.0, 750.0));
-    const VIEW_ABOVE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1200.0, 300.0));
 
     /// One frame of the graph at `GRAPH` with these events: the shapes
-    /// painted, and whether the view above the graph was clicked.
-    fn frame_below_view(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, events: Vec<egui::Event>) -> (Vec<egui::epaint::ClippedShape>, bool) {
+    /// painted, what of the pointer the panels around it took, and the
+    /// graph's commands.
+    fn frame_amid_panels(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, events: Vec<egui::Event>) -> (Vec<egui::epaint::ClippedShape>, Response, Vec<Command>) {
         let input = egui::RawInput { screen_rect: Some(SCREEN), events, ..Default::default() };
         let mut commands = Vec::new();
-        let mut view_clicked = false;
+        let mut panels = None;
         let mut output = context.run_ui(input, |ui| {
-            let view = ui.interact(VIEW_ABOVE, egui::Id::new("view-above"), Sense::click());
-            view_clicked = view.clicked();
+            panels = Some(ui.interact(SCREEN, egui::Id::new("panels"), Sense::click_and_drag()));
             show(ui, GRAPH, editor, state, &mut commands);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.drop_without_applying_deltas();
-        (shapes, view_clicked)
+        (shapes, panels.unwrap(), commands)
     }
 
     #[test]
@@ -2623,7 +2628,7 @@ mod tests {
         let mut state = GraphState::default();
         let context = themed_context();
         egui_extras::install_image_loaders(&context);
-        frame_below_view(&context, &mut editor, &mut state, Vec::new());
+        frame_amid_panels(&context, &mut editor, &mut state, Vec::new());
 
         // A node with its icon above the graph's top edge; a locked group
         // and an icon note with theirs left of its left edge.
@@ -2642,20 +2647,92 @@ mod tests {
         editor.document.toggle_note_type(note);
 
         // Nothing shows outside the graph.
-        let (shapes, _) = frame_below_view(&context, &mut editor, &mut state, Vec::new());
+        let (shapes, _, _) = frame_amid_panels(&context, &mut editor, &mut state, Vec::new());
         for clipped in &shapes {
             let bounds = clipped.shape.visual_bounding_rect();
             let shown = clipped.clip_rect.intersect(bounds);
             assert!(!shown.is_positive() || GRAPH.contains_rect(shown), "{shown:?} shows outside the graph");
         }
 
-        // A click on the node's hidden part is the view's.
+        // A click on the node's hidden part is the 3D view's.
         let hidden_part = node_corner + Vec2::new(100.0, 20.0);
         let button = |pressed: bool| egui::Event::PointerButton { pos: hidden_part, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
-        frame_below_view(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(hidden_part)]);
-        frame_below_view(&context, &mut editor, &mut state, vec![button(true)]);
-        let (_, view_clicked) = frame_below_view(&context, &mut editor, &mut state, vec![button(false)]);
-        assert!(view_clicked);
+        frame_amid_panels(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(hidden_part)]);
+        frame_amid_panels(&context, &mut editor, &mut state, vec![button(true)]);
+        let (_, panels, _) = frame_amid_panels(&context, &mut editor, &mut state, vec![button(false)]);
+        assert!(panels.clicked());
         assert!(!editor.selection.contains(&node));
+    }
+
+    #[test]
+    fn hidden_parts_leave_hover_clicks_and_drags_to_the_panels_around() {
+        let mut editor = Editor::new(Document::new());
+        let mut state = GraphState::default();
+        let context = themed_context();
+        frame_amid_panels(&context, &mut editor, &mut state, Vec::new());
+
+        // A node across the top edge, one just right of the graph (inside
+        // the 40 nodes are kept for), one with its input past the left
+        // edge, a group across the left edge and a text note across the
+        // bottom right corner, and a node well inside.
+        let view = state.view();
+        let canvas_at = |x: f32, y: f32| {
+            let point = view.to_canvas(GRAPH.min, Pos2::new(x, y));
+            [point.x, point.y]
+        };
+        let document = &mut editor.document;
+        document.add_node("Mountain", canvas_at(500.0, 260.0)).unwrap();
+        document.add_node("Mountain", canvas_at(1120.0, 450.0)).unwrap();
+        let with_input = document.add_node("ErosionPro", canvas_at(170.0, 630.0)).unwrap();
+        document.add_group(&[], canvas_at(100.0, 320.0), [300.0, 270.0], 0);
+        let note = document.add_note(canvas_at(950.0, 650.0), 0);
+        document.set_note_vector(note, "Size", [200.0, 120.0], false);
+        let inside = document.add_node("Mountain", canvas_at(600.0, 450.0)).unwrap();
+        frame_amid_panels(&context, &mut editor, &mut state, Vec::new());
+        let undo_steps = editor.document.undo_labels().len();
+
+        let hidden_input = port_dot(&editor, &state, with_input, "In", true);
+        let hidden_parts = [
+            ("the node across the top", Pos2::new(600.0, 280.0)),
+            ("the node beside the graph", Pos2::new(1140.0, 470.0)),
+            ("the input past the left edge", hidden_input),
+            ("the group's header", Pos2::new(150.0, 330.0)),
+            ("the group's menu button", Pos2::new(120.0, 338.0)),
+            ("the group's resize thumb", Pos2::new(110.0, 580.0)),
+            ("the note", Pos2::new(1050.0, 760.0)),
+            ("the note's resize thumb", Pos2::new(1140.0, 760.0)),
+        ];
+        let button = |pos: Pos2, pressed: bool| egui::Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let mut commands = Vec::new();
+        for (part, point) in hidden_parts {
+            assert!(!GRAPH.contains(point), "{part} shows in the graph");
+            let mut frame = |events: Vec<egui::Event>| {
+                let (_, panels, graph_commands) = frame_amid_panels(&context, &mut editor, &mut state, events);
+                commands.extend(graph_commands);
+                panels
+            };
+            // Hovered, without the graph's tooltip; clicked; dragged.
+            assert!(frame(vec![egui::Event::PointerMoved(point)]).hovered(), "{part} takes the hover");
+            frame(vec![button(point, true)]);
+            assert!(frame(vec![button(point, false)]).clicked(), "{part} takes the click");
+            frame(vec![button(point, true)]);
+            let away = point + Vec2::new(0.0, -30.0);
+            assert!(frame(vec![egui::Event::PointerMoved(away)]).dragged(), "{part} takes the drag");
+            frame(vec![button(away, false)]);
+        }
+        assert!(commands.is_empty(), "{commands:?}");
+        assert!(editor.selection.is_empty() && state.selected_groups.is_empty() && state.selected_note.is_none());
+        assert!(state.drag.is_none() && state.popup.is_none());
+        assert_eq!(editor.document.undo_labels().len(), undo_steps);
+
+        // A connection let go on the hidden input joins nothing.
+        let from = port_dot(&editor, &state, inside, "Out", false);
+        let mut frame = |events: Vec<egui::Event>| frame_amid_panels(&context, &mut editor, &mut state, events).2;
+        frame(vec![egui::Event::PointerMoved(from)]);
+        frame(vec![button(from, true)]);
+        frame(vec![egui::Event::PointerMoved(from + Vec2::new(12.0, 0.0))]);
+        frame(vec![egui::Event::PointerMoved(hidden_input)]);
+        assert!(frame(vec![button(hidden_input, false)]).is_empty());
+        assert!(state.drag.is_none() && state.popup.is_none());
     }
 }
