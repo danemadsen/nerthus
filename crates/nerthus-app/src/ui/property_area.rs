@@ -39,6 +39,11 @@ const GROUP_MARGIN: f32 = 4.0;
 const MODIFIER_BUTTON: f32 = 24.0;
 /// `btnAddModifier`: 32 by 24.
 const ADD_BUTTON_WIDTH: f32 = 32.0;
+/// The node-state menu: 32 square, 8 from the toolbar's top and 12 from
+/// its right.
+const STATE_MENU: f32 = 32.0;
+const STATE_MENU_TOP: f32 = 8.0;
+const STATE_MENU_RIGHT: f32 = 12.0;
 /// The Gate's and a baked node's panels, remembered apart from the
 /// parameters' groups.
 const GATE_PANEL_KEY: usize = usize::MAX - 1;
@@ -1100,9 +1105,16 @@ fn modifier_group_widths() -> [f32; 4] {
     inner.map(|width| width + 2.0 * GROUP_PADDING + 2.0)
 }
 
-/// Places the groups in `area` as a `WrapPanel` (margin 4) does: it
-/// wraps at the full width, the state menu docking right of whatever room
-/// is left; returns them and the height they need.
+/// The node-state menu's place in `area`: docked at its top right.
+fn state_menu_rect(area: Rect) -> Rect {
+    let min = Pos2::new(area.right() - STATE_MENU_RIGHT - STATE_MENU, area.top() + STATE_MENU_TOP);
+    Rect::from_min_size(min, Vec2::splat(STATE_MENU))
+}
+
+/// Places the groups in `area` as a `WrapPanel` (margin 4) does: the
+/// first row wraps short of the state menu, kept as far from it as from
+/// each other, the rows under it at the full width; returns them and the
+/// height they need.
 fn layout_modifier_groups(area: Rect) -> (Vec<Rect>, f32) {
     let left = area.left() + GROUP_MARGIN;
     let right = area.right() - GROUP_MARGIN;
@@ -1110,12 +1122,14 @@ fn layout_modifier_groups(area: Rect) -> (Vec<Rect>, f32) {
     let row_height = group_height + 2.0 * GROUP_MARGIN;
     let mut x = left;
     let mut y = area.top() + GROUP_MARGIN;
+    let mut row_right = state_menu_rect(area).left() - GROUP_MARGIN;
     let mut groups = Vec::new();
     for width in modifier_group_widths() {
         let outer = width + 2.0 * GROUP_MARGIN;
-        if x > left && x + outer > right {
+        if x > left && x + outer > row_right {
             x = left;
             y += row_height;
+            row_right = right;
         }
         let group = Rect::from_min_size(Pos2::new(x + GROUP_MARGIN, y + GROUP_MARGIN), Vec2::new(width, group_height));
         groups.push(group);
@@ -1208,8 +1222,8 @@ fn modifier_toolbar(ui: &mut Ui, rect: Rect, editor: &Editor, node_id: i32, comm
         }
     }
 
-    // The node-state menu (margin 8, 8, 12, 8).
-    let state_rect = Rect::from_min_size(Pos2::new(rect.right() - 12.0 - 32.0, rect.top() + 8.0), Vec2::splat(32.0));
+    // The node-state menu, in the room the groups' first row leaves it.
+    let state_rect = state_menu_rect(rect);
     let saved_state = node_states::has_saved_state(ui);
     let mut state_ui = ui.new_child(UiBuilder::new().max_rect(state_rect));
     icon_menu(&mut state_ui, "arrow-back-up", "Node State", None, |ui| {
@@ -1318,6 +1332,45 @@ mod tests {
         let mut window = Window::default();
         run(vec![Command::LoadOffloadedCache(gate)], &mut editor, &mut ui_state, &mut window);
         assert_eq!(editor.pending_load_bakes(), [gate, blur]);
+    }
+
+    #[test]
+    fn modifier_groups_leave_the_state_menu_its_slot() {
+        // From the add menu's group beside the menu (102) to well past one
+        // row, off the origin as the toolbar is.
+        for tenth in 1020..=8000 {
+            let width = tenth as f32 / 10.0;
+            let area = Rect::from_min_size(Pos2::new(37.5, 610.25), Vec2::new(width, 0.0));
+            let (groups, height) = layout_modifier_groups(area);
+            let state = state_menu_rect(area);
+            assert_eq!(groups.len(), 4);
+            for group in &groups {
+                // As far from the menu as from each other, or wholly under
+                // it.
+                let beside = group.right() + 2.0 * GROUP_MARGIN <= state.left() + 1e-3;
+                assert!(beside || group.top() >= state.bottom(), "width {width}: {group:?} meets the state menu {state:?}");
+                assert!(group.bottom() + 2.0 * GROUP_MARGIN <= area.top() + height + 1e-3, "width {width}: the measured height leaves out {group:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn modifier_groups_wrap_by_the_state_menu_only_on_the_first_row() {
+        let rows = |width: f32| {
+            let (groups, _) = layout_modifier_groups(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 0.0)));
+            let mut tops: Vec<f32> = groups.iter().map(|group| group.top()).collect();
+            tops.dedup();
+            groups.iter().map(|group| tops.iter().position(|top| *top == group.top()).unwrap()).collect::<Vec<_>>()
+        };
+        // The four groups (290 with their margins), the wrap panel's
+        // margins and the menu with the groups' spacing before it: 342.
+        assert_eq!(rows(342.0), [0, 0, 0, 0]);
+        assert_eq!(rows(341.0), [0, 0, 0, 1]);
+        assert_eq!(rows(320.0), [0, 0, 0, 1]);
+        // At the property panel's least width Drop/Invert goes down with
+        // Min/Max, which share the full width under the menu.
+        assert_eq!(rows(248.0), [0, 0, 1, 1]);
+        assert_eq!(rows(150.0), [0, 1, 2, 2]);
     }
 
     #[test]
