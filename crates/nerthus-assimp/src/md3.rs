@@ -294,7 +294,7 @@ fn take_meshes(parts: Vec<Part>) -> Result<Vec<Mesh>, ImportError> {
 }
 
 /// `MD3Importer::InternReadFile` without the multi-part handling.
-fn read_single(path: &str, data: &[u8]) -> Result<Part, ImportError> {
+fn read_single(path: &str, data: &[u8], files: &FileSystem) -> Result<Part, ImportError> {
     let file_size = data.len() as u64;
     if data.len() < HEADER_SIZE {
         return fail("MD3 File is too small.");
@@ -337,11 +337,10 @@ fn read_single(path: &str, data: &[u8]) -> Result<Part, ImportError> {
     let split = path.rfind(['/', '\\']).map_or(0, |separator| separator + 1);
     let folder = &path[..split];
     let filename = path[split..].to_ascii_lowercase();
-    let file_system = FileSystem::new(path);
 
     let skin_end = filename.rfind('_').or_else(|| filename.rfind('.')).unwrap_or(filename.len());
     let skin_path = format!("{folder}{}_default.skin", &filename[..skin_end]);
-    let skins = load_skin(&file_system, &skin_path)?;
+    let skins = load_skin(files, &skin_path)?;
 
     // `ReadShader`: the scripts folder three levels up, named after the
     // model's folder, else after the file.
@@ -349,9 +348,9 @@ fn read_single(path: &str, data: &[u8]) -> Result<Part, ImportError> {
     let model_name = if folder.len() >= 2 { &folder[folder_start..folder.len() - 1] } else { "" };
     let separator = std::path::MAIN_SEPARATOR;
     let scripts = format!("{folder}..{separator}..{separator}..{separator}scripts{separator}");
-    let mut shaders = load_shader(&file_system, &format!("{scripts}{model_name}.shader"))?;
+    let mut shaders = load_shader(files, &format!("{scripts}{model_name}.shader"))?;
     if shaders.is_none() {
-        shaders = load_shader(&file_system, &format!("{scripts}{filename}.shader"))?;
+        shaders = load_shader(files, &format!("{scripts}{filename}.shader"))?;
     }
     let mut shaders = shaders.unwrap_or_default();
 
@@ -472,14 +471,26 @@ fn read_single(path: &str, data: &[u8]) -> Result<Part, ImportError> {
     Ok(Part { meshes: slots, tags })
 }
 
-/// A part loaded on its own (`BatchLoader`): the file must be there.
-fn load_part(path: &str) -> Option<Part> {
-    let data = std::fs::read(path).ok()?;
-    read_single(path, &data).ok()
+/// A part loaded on its own (`BatchLoader`, through the host file's
+/// filter): the file must be there. A part that fails to load is left
+/// out, unless its importer would have crashed or hung.
+fn load_part(path: &str, files: &FileSystem) -> Result<Option<Part>, ImportError> {
+    if !files.exists(path) {
+        return Ok(None);
+    }
+    let Some(data) = files.open(path) else {
+        return Ok(None);
+    };
+    let part_files = FileSystem::new(path, Some(files));
+    match read_single(path, &data, &part_files) {
+        Ok(part) => Ok(Some(part)),
+        Err(error) if error.ends_process() => Err(error),
+        Err(_) => Ok(None),
+    }
 }
 
 /// `ReadMultipartFile`: the joined meshes, `None` to read the file alone.
-fn read_multipart(path: &str) -> Result<Option<Vec<Mesh>>, ImportError> {
+fn read_multipart(path: &str, files: &FileSystem) -> Result<Option<Vec<Mesh>>, ImportError> {
     let split = path.rfind(['/', '\\']).map_or(0, |separator| separator + 1);
     let folder = &path[..split];
     let filename = path[split..].to_ascii_lowercase();
@@ -493,7 +504,7 @@ fn read_multipart(path: &str) -> Result<Option<Vec<Mesh>>, ImportError> {
     let names = ["lower", "upper", "head"];
     let mut parts = Vec::new();
     for name in names {
-        match load_part(&format!("{folder}{name}{suffix}.md3")) {
+        match load_part(&format!("{folder}{name}{suffix}.md3"), files)? {
             Some(part) => parts.push(part),
             None => {
                 if name == part_name {
@@ -511,10 +522,10 @@ fn read_multipart(path: &str) -> Result<Option<Vec<Mesh>>, ImportError> {
     Ok(Some(take_meshes(parts)?))
 }
 
-pub fn read(path: &str, data: &[u8]) -> Result<Scene, ImportError> {
-    if let Some(meshes) = read_multipart(path)? {
+pub fn read(path: &str, data: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
+    if let Some(meshes) = read_multipart(path, files)? {
         return Ok(Scene { meshes });
     }
-    let part = read_single(path, data)?;
+    let part = read_single(path, data, files)?;
     Ok(Scene { meshes: take_meshes(vec![part])? })
 }

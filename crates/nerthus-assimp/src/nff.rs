@@ -237,8 +237,7 @@ fn material_table_path(token: &[u8], file: &str) -> String {
 }
 
 /// The NFF2 objects into `meshes`.
-fn read_nff2(buffer: &[u8], mut position: usize, file: &str, meshes: &mut Vec<MeshInfo>) -> Result<(), ImportError> {
-    let file_system = FileSystem::new(file);
+fn read_nff2(buffer: &[u8], mut position: usize, file: &str, file_system: &FileSystem, meshes: &mut Vec<MeshInfo>) -> Result<(), ImportError> {
     let nan = f32::NAN;
     let mut line = Line::new();
     while get_next_line(buffer, &mut position, &mut line.bytes)? {
@@ -269,7 +268,7 @@ fn read_nff2(buffer: &[u8], mut position: usize, file: &str, meshes: &mut Vec<Me
             line.skip_spaces(BUFFER_SIZE);
             let token = line.word();
             if !token.is_empty() {
-                material_table = load_material_table(&file_system, &material_table_path(&token, file))?;
+                material_table = load_material_table(file_system, &material_table_path(&token, file))?;
             }
         }
 
@@ -586,7 +585,9 @@ fn read_nff(buffer: &[u8], mut position: usize) -> Result<Vec<MeshInfo>, ImportE
                 b'd' => shapes::dodecahedron(&mut mesh.vertices),
                 b'o' => shapes::octahedron(&mut mesh.vertices),
                 b't' => shapes::tetrahedron(&mut mesh.vertices),
-                _ => shapes::hexahedron(&mut mesh.vertices),
+                _ => {
+                    shapes::hexahedron(&mut mesh.vertices, false);
+                }
             }
             mesh.faces = vec![3; mesh.vertices.len() / 3];
             locked.push(mesh);
@@ -620,7 +621,7 @@ fn read_nff(buffer: &[u8], mut position: usize) -> Result<Vec<MeshInfo>, ImportE
                 continue;
             }
             let segments = shapes::integer_pow(4, tessellation);
-            shapes::cone(height, first_radius, second_radius, segments, &mut mesh.vertices)?;
+            shapes::cone(height, first_radius, second_radius, segments, false, &mut mesh.vertices)?;
             mesh.faces = vec![3; mesh.vertices.len() / 3];
             locked.push(mesh);
         } else if line.token(b"tess") {
@@ -644,13 +645,13 @@ fn read_nff(buffer: &[u8], mut position: usize) -> Result<Vec<MeshInfo>, ImportE
     Ok(simple)
 }
 
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     let mut buffer = text_file_to_buffer(bytes, false)?;
     let mut position = 0;
     let infos = if token_match(&buffer, &mut position, b"nff") {
         remove_line_comments(b"//", &mut buffer, b' ');
         let mut meshes = Vec::new();
-        read_nff2(&buffer, position, path, &mut meshes)?;
+        read_nff2(&buffer, position, path, files, &mut meshes)?;
         meshes
     } else {
         read_nff(&buffer, 0)?

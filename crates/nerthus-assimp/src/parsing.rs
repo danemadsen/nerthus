@@ -132,48 +132,23 @@ fn starts_hex_mantissa(bytes: &[u8], index: usize) -> bool {
 /// A decimal number's magnitude: digits, '.', digits (at least one
 /// digit), then an exponent if it has digits.
 fn decimal_magnitude(bytes: &[u8], start: usize) -> f64 {
-    let mut index = start;
-    let mut text = String::new();
-    while at(bytes, index).is_ascii_digit() {
-        text.push(at(bytes, index) as char);
-        index += 1;
+    match decimal_text(bytes, start) {
+        Some((text, _)) => text.parse::<f64>().unwrap_or(0.0),
+        None => 0.0,
     }
-    let mut digits = text.len();
-    if at(bytes, index) == b'.' {
-        index += 1;
-        let fraction_start = text.len();
-        text.push('.');
-        while at(bytes, index).is_ascii_digit() {
-            text.push(at(bytes, index) as char);
-            index += 1;
-        }
-        digits += text.len() - fraction_start - 1;
-    }
-    if digits == 0 {
-        return 0.0;
-    }
-    if (at(bytes, index) | 0x20) == b'e' {
-        let mut exponent_index = index + 1;
-        let mut exponent = String::from("e");
-        if matches!(at(bytes, exponent_index), b'+' | b'-') {
-            exponent.push(at(bytes, exponent_index) as char);
-            exponent_index += 1;
-        }
-        if at(bytes, exponent_index).is_ascii_digit() {
-            while at(bytes, exponent_index).is_ascii_digit() {
-                exponent.push(at(bytes, exponent_index) as char);
-                exponent_index += 1;
-            }
-            text.push_str(&exponent);
-        }
-    }
-    text.parse::<f64>().unwrap_or(0.0)
 }
 
 /// A hexadecimal number's magnitude ("0x" passed): hex digits, '.', hex
 /// digits, then a binary exponent ("p") if it has digits, rounded to
 /// nearest, ties to even.
 fn hex_magnitude(bytes: &[u8], start: usize) -> f64 {
+    let (mantissa, exponent, sticky) = hex_parts(bytes, start);
+    binary_to_f64(mantissa, exponent, sticky)
+}
+
+/// A hexadecimal number's value ("0x" passed) as a 128-bit mantissa, a
+/// binary exponent and whether nonzero digits fell below the mantissa.
+fn hex_parts(bytes: &[u8], start: usize) -> (u128, i64, bool) {
     let mut index = start;
     let mut mantissa = 0u128;
     let mut exponent = 0i64;
@@ -217,12 +192,29 @@ fn hex_magnitude(bytes: &[u8], start: usize) -> f64 {
             exponent += if exponent_negative { -value } else { value };
         }
     }
-    binary_to_f64(mantissa, exponent, sticky)
+    (mantissa, exponent, sticky)
 }
 
 /// `mantissa` × 2^`exponent` (plus a sticky bit below it) as the nearest
 /// double, ties to even.
 fn binary_to_f64(mantissa: u128, exponent: i64, sticky: bool) -> f64 {
+    round_binary(mantissa, exponent, sticky, 53, -1022, 1023)
+}
+
+/// 2^`exponent`, for exponents a double holds (subnormal ones included).
+fn power_of_two(exponent: i64) -> f64 {
+    if exponent >= -1022 {
+        f64::from_bits(((exponent + 1023) as u64) << 52)
+    } else {
+        f64::from_bits(1u64 << (exponent + 1074))
+    }
+}
+
+/// `mantissa` × 2^`exponent` (plus a sticky bit below it) rounded to the
+/// nearest value with `precision` significant bits and an exponent of at
+/// most `maximum` (subnormal below `minimum`), ties to even, as a double;
+/// infinity past the range.
+fn round_binary(mantissa: u128, exponent: i64, sticky: bool, precision: i64, minimum: i64, maximum: i64) -> f64 {
     if mantissa == 0 {
         return 0.0;
     }
@@ -230,15 +222,16 @@ fn binary_to_f64(mantissa: u128, exponent: i64, sticky: bool) -> f64 {
     let normalized = mantissa << shift;
     // The value is 1.f × 2^top, the leading bit at 127.
     let top = exponent - shift + 127;
-    if top > 1023 {
+    if top > maximum {
         return f64::INFINITY;
     }
-    // How many of the 128 bits stay (53 for a normal number, fewer below).
-    let kept = if top >= -1022 { 53 } else { 53 - (-1022 - top) };
+    // How many of the 128 bits stay (all `precision` for a normal number,
+    // fewer below).
+    let kept = if top >= minimum { precision } else { precision - (minimum - top) };
     if kept <= 0 {
         // Below half the smallest subnormal, or at most half of it.
         let half_or_more = kept == 0 && (normalized > 1 << 127 || (normalized == 1 << 127 && sticky));
-        return if half_or_more { f64::from_bits(1) } else { 0.0 };
+        return if half_or_more { power_of_two(minimum - precision + 1) } else { 0.0 };
     }
     let dropped = 128 - kept as u32;
     let mut bits = (normalized >> dropped) as u64;
@@ -248,15 +241,90 @@ fn binary_to_f64(mantissa: u128, exponent: i64, sticky: bool) -> f64 {
     if remainder > half || (remainder == half && tie_goes_up) {
         bits += 1;
     }
-    // Back to a value: `bits` × 2^(top − kept + 1), which is exact (the
-    // power lies in −1074 … 971).
-    let scale_exponent = top - kept + 1;
-    let scale = if scale_exponent >= -1022 {
-        f64::from_bits(((scale_exponent + 1023) as u64) << 52)
-    } else {
-        f64::from_bits(1u64 << (scale_exponent + 1074))
-    };
+    // Back to a value: `bits` × 2^(top − kept + 1), which is exact.
+    let scale = power_of_two(top - kept + 1);
     bits as f64 * scale
+}
+
+/// `std::stof` as Microsoft's library runs it: `strtof` after leading
+/// blanks (a decimal or hexadecimal number, "inf", "infinity" or "nan",
+/// maybe signed, correctly rounded to a float), throwing when no number
+/// starts the text or `errno` is `ERANGE`: past the largest float, or not
+/// zero but rounding to zero.
+pub(crate) fn stof(bytes: &[u8]) -> Result<f32, ImportError> {
+    let mut index = 0;
+    while is_c_space(at(bytes, index)) {
+        index += 1;
+    }
+    let negative = at(bytes, index) == b'-';
+    if matches!(at(bytes, index), b'+' | b'-') {
+        index += 1;
+    }
+    let sign = if negative { -1.0f32 } else { 1.0 };
+    if starts_with_ignore_case_at(bytes, index, b"inf") {
+        return Ok(sign * f32::INFINITY);
+    }
+    if starts_with_ignore_case_at(bytes, index, b"nan") {
+        return Ok(if negative { -f32::NAN } else { f32::NAN });
+    }
+    let (magnitude, nonzero) = if at(bytes, index) == b'0' && (at(bytes, index + 1) | 0x20) == b'x' && starts_hex_mantissa(bytes, index + 2) {
+        let (mantissa, exponent, sticky) = hex_parts(bytes, index + 2);
+        let value = round_binary(mantissa, exponent, sticky, 24, -126, 127) as f32;
+        (value, mantissa != 0 || sticky)
+    } else {
+        let Some((text, nonzero)) = decimal_text(bytes, index) else {
+            return fail("invalid stof argument");
+        };
+        (text.parse::<f32>().unwrap_or(0.0), nonzero)
+    };
+    if magnitude.is_infinite() || (magnitude == 0.0 && nonzero) {
+        return fail("stof argument out of range");
+    }
+    Ok(sign * magnitude)
+}
+
+/// A decimal number's text as `decimal_magnitude` reads it, and whether a
+/// digit of it is not zero; none without a digit.
+fn decimal_text(bytes: &[u8], start: usize) -> Option<(String, bool)> {
+    let mut index = start;
+    let mut text = String::new();
+    let mut nonzero = false;
+    let mut digits = 0;
+    while at(bytes, index).is_ascii_digit() {
+        nonzero |= at(bytes, index) != b'0';
+        text.push(at(bytes, index) as char);
+        digits += 1;
+        index += 1;
+    }
+    if at(bytes, index) == b'.' {
+        index += 1;
+        text.push('.');
+        while at(bytes, index).is_ascii_digit() {
+            nonzero |= at(bytes, index) != b'0';
+            text.push(at(bytes, index) as char);
+            digits += 1;
+            index += 1;
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+    if (at(bytes, index) | 0x20) == b'e' {
+        let mut exponent_index = index + 1;
+        let mut exponent = String::from("e");
+        if matches!(at(bytes, exponent_index), b'+' | b'-') {
+            exponent.push(at(bytes, exponent_index) as char);
+            exponent_index += 1;
+        }
+        if at(bytes, exponent_index).is_ascii_digit() {
+            while at(bytes, exponent_index).is_ascii_digit() {
+                exponent.push(at(bytes, exponent_index) as char);
+                exponent_index += 1;
+            }
+            text.push_str(&exponent);
+        }
+    }
+    Some((text, nonzero))
 }
 
 /// `CommentRemover::RemoveLineComments` over the C string: each `comment`
@@ -460,6 +528,20 @@ mod tests {
         let mut short = [0u8; 2];
         let mut index = 0;
         assert!(get_next_line(buffer, &mut index, &mut short).is_err());
+    }
+
+    #[test]
+    fn stof_rounds_once_and_throws_out_of_range() {
+        assert_eq!(stof(b" 0.1").unwrap(), 0.1f32);
+        assert_eq!(stof(b"-2e1x").unwrap(), -20.0);
+        assert_eq!(stof(b"0x1.8p1").unwrap(), 3.0);
+        assert_eq!(stof(b"1e-40").unwrap(), 1e-40f32);
+        assert!(stof(b"0x").unwrap() == 0.0);
+        assert!(stof(b"abc").is_err());
+        assert!(stof(b"1e39").is_err());
+        assert!(stof(b"1e-50").is_err());
+        assert_eq!(stof(b"0e-50").unwrap(), 0.0);
+        assert!(stof(b"-inf").unwrap().is_infinite());
     }
 
     #[test]

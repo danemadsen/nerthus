@@ -132,6 +132,11 @@ struct Parser {
     lwo3: bool,
     lxob: bool,
     unnamed: u32,
+    /// `configLayerIndex`: the one layer to load, counted from 1
+    /// (`u32::MAX` loads them all).
+    layer_index: u32,
+    /// Whether the current layer's geometry chunks are skipped.
+    skip: bool,
 }
 
 impl Parser {
@@ -893,24 +898,24 @@ impl Parser {
             }
             match kind {
                 LAYR => self.layer_chunk(length, next)?,
-                PNTS => {
+                PNTS if !self.skip => {
                     let old = self.layer().points.len() as u32;
                     self.points(length)?;
                     self.layer().point_offset = old;
                 }
-                VMAD | VMAP => {
+                VMAD | VMAP if !self.skip => {
                     let layer = self.layer();
                     let skip_vmad = kind == VMAD && layer.faces.is_empty();
                     if !skip_vmad && !layer.points.is_empty() {
                         self.vertex_map(length, kind == VMAD)?;
                     }
                 }
-                POLS => {
+                POLS if !self.skip => {
                     let old = self.layer().faces.len() as u32;
                     self.polygons(length)?;
                     self.layer().face_offset = old;
                 }
-                PTAG => {
+                PTAG if !self.skip => {
                     if !self.layer().faces.is_empty() {
                         self.polygon_tags(length)?;
                     }
@@ -937,10 +942,12 @@ impl Parser {
     }
 
     /// A `LAYR` chunk: index, pivot, name (or "Layer_N"), maybe a parent.
+    /// With one layer asked for, the others' geometry is skipped.
     fn layer_chunk(&mut self, length: u32, next: i64) -> Result<(), ImportError> {
         self.model.layers.push(Layer::new());
         validate_length(length, "LAYR", 16)?;
         let index = self.reader.u2()?;
+        self.skip = self.layer_index != u32::MAX && self.layer_index.wrapping_sub(1) != index as u32;
         self.reader.cursor += 2;
         self.floats(3)?;
         let mut name = self.reader.string(length - 16)?;
@@ -949,10 +956,12 @@ impl Parser {
             self.unnamed += 1;
         }
         let parent = if self.reader.cursor + 2 <= next { self.reader.u2()? } else { 0xFFFF };
+        let skip = self.skip;
         let layer = self.layer();
         layer.index = index;
         layer.name = name;
         layer.parent = parent;
+        layer.skip = skip;
         Ok(())
     }
 
@@ -1224,7 +1233,7 @@ fn link(referrers: &mut [u32], source: u32, target: u32) -> Result<(), ImportErr
 }
 
 /// The header and the chunks (`InternReadFile` up to the meshes).
-pub(super) fn read_chunks(bytes: &[u8]) -> Result<Model, ImportError> {
+pub(super) fn read_chunks(bytes: &[u8], layer_index: u32) -> Result<Model, ImportError> {
     let mut reader = Reader { data: bytes.to_vec(), cursor: 0 };
     let (kind, _) = reader.chunk()?;
     if kind != FORM {
@@ -1235,7 +1244,7 @@ pub(super) fn read_chunks(bytes: &[u8]) -> Result<Model, ImportError> {
     default_layer.name = b"<LWODefault>".to_vec();
     default_layer.index = 1;
     let model = Model { layers: vec![default_layer], tags: Vec::new(), surfaces: Vec::new() };
-    let mut parser = Parser { reader, model, lwo2: false, lwo3: false, lxob: false, unnamed: 0 };
+    let mut parser = Parser { reader, model, lwo2: false, lwo3: false, lxob: false, unnamed: 0, layer_index, skip: false };
     let size = bytes.len() as u32 - 12;
     match file_type {
         LWOB => parser.lwob_file(size)?,
@@ -1244,6 +1253,13 @@ pub(super) fn read_chunks(bytes: &[u8]) -> Result<Model, ImportError> {
             parser.lwo3 = file_type == LWO3;
             parser.lwo2 = file_type != LWO3;
             parser.lwo2_file(size)?;
+            // The asked-for layer and the default one, nothing else.
+            if layer_index != u32::MAX {
+                let loaded = parser.model.layers.iter().filter(|layer| !layer.skip).count();
+                if loaded != 2 {
+                    return fail("LWO2: The requested layer was not found");
+                }
+            }
         }
         _ => {
             let name = String::from_utf8_lossy(&file_type.to_be_bytes()).to_string();

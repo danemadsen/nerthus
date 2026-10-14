@@ -170,11 +170,10 @@ impl<'a> StreamBuffer<'a> {
     }
 }
 
-/// The file system an import sees: the filter, the directory stack's top
+/// The file system an import sees (the filter, with the directory stack)
 /// and the imported file's name.
 pub struct Files<'a> {
     pub system: &'a FileSystem,
-    pub directory: Option<Vec<u8>>,
     pub original_file: Vec<u8>,
 }
 
@@ -572,16 +571,15 @@ impl<'a> ObjParser<'a> {
         if name.is_empty() {
             return Ok(());
         }
-        let path = match &self.files.directory {
-            Some(directory) => {
-                let mut path = directory.clone();
-                if path.last() != Some(&b'/') {
-                    path.push(b'/');
-                }
-                path.extend_from_slice(&name);
-                path
+        let path = if self.files.system.directory_count() > 0 {
+            let mut path = self.files.system.current_directory();
+            if path.last() != Some(&b'/') {
+                path.push(b'/');
             }
-            None => name.clone(),
+            path.extend_from_slice(&name);
+            path
+        } else {
+            name.clone()
         };
         let mut contents = self.files.system.open_bytes(&path);
         if contents.is_none() {

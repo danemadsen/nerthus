@@ -274,6 +274,8 @@ pub(crate) struct Layer {
     parent: u16,
     index: u16,
     name: Vec<u8>,
+    /// Not the layer asked for: skipped when meshes are built.
+    skip: bool,
 }
 
 impl Layer {
@@ -292,6 +294,7 @@ impl Layer {
             parent: 0,
             index: 0xffff,
             name: Vec::new(),
+            skip: false,
         }
     }
 }
@@ -646,6 +649,9 @@ fn build_scene(model: &mut Model) -> Result<Scene, ImportError> {
     for layer_index in 0..model.layers.len() {
         let mesh_start = meshes.len();
         let layer = &mut model.layers[layer_index];
+        if layer.skip {
+            continue;
+        }
         if !layer.faces.is_empty() && !layer.points.is_empty() {
             let mut sorted: Vec<Vec<u32>> = vec![Vec::new(); model.surfaces.len() + 1];
             for (index, face) in layer.faces.iter().enumerate() {
@@ -713,10 +719,13 @@ fn build_scene(model: &mut Model) -> Result<Scene, ImportError> {
 }
 
 /// `LWOImporter::InternReadFile`.
-pub fn read(bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(bytes: &[u8], layer: Option<i32>) -> Result<Scene, ImportError> {
     if bytes.len() < 12 {
         return fail("LWO: The file is too small to contain the IFF header");
     }
-    let mut model = parse::read_chunks(bytes)?;
+    // `GetPropertyInteger(AI_CONFIG_IMPORT_LWO_ONE_LAYER_ONLY, UINT_MAX)`
+    // into an unsigned member.
+    let layer_index = layer.map_or(u32::MAX, |layer| layer as u32);
+    let mut model = parse::read_chunks(bytes, layer_index)?;
     build_scene(&mut model)
 }

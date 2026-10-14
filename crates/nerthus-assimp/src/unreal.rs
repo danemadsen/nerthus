@@ -102,7 +102,7 @@ fn scan_script(bytes: &[u8]) -> Result<(), ImportError> {
     Ok(())
 }
 
-pub fn read(path: &str) -> Result<Scene, ImportError> {
+pub fn read(path: &str, files: &FileSystem) -> Result<Scene, ImportError> {
     let extension = get_extension(path);
     let base = if extension == "3d" {
         let Some(underscore) = path.rfind('_') else {
@@ -118,9 +118,8 @@ pub fn read(path: &str) -> Result<Scene, ImportError> {
     let data_path = format!("{base}_d.3d");
     let animation_path = format!("{base}_a.3d");
     let script_path = format!("{base}.uc");
-    let file_system = FileSystem::new(path);
 
-    let Some(data_file) = file_system.open(&data_path) else {
+    let Some(data_file) = files.open(&data_path) else {
         return fail("UNREAL: Unable to open _d file");
     };
     let mut data_reader = StreamReader::new(&data_file, false)?;
@@ -155,7 +154,7 @@ pub fn read(path: &str) -> Result<Scene, ImportError> {
         triangles.push(Triangle { vertex, tex, texture_number });
     }
 
-    let Some(animation_file) = file_system.open(&animation_path) else {
+    let Some(animation_file) = files.open(&animation_path) else {
         return fail("UNREAL: Unable to open _a file");
     };
     let mut animation_reader = StreamReader::new(&animation_file, false)?;
@@ -172,7 +171,7 @@ pub fn read(path: &str) -> Result<Scene, ImportError> {
         vertices.push(decompress_vertex(animation_reader.get_i4()?));
     }
 
-    if let Some(script) = file_system.open(&script_path) {
+    if let Some(script) = files.open(&script_path) {
         scan_script(&script)?;
     }
 

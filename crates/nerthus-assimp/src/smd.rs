@@ -597,8 +597,7 @@ fn animation_paths(buffer: &[u8]) -> Vec<Vec<u8>> {
 
 /// `CreateOutputAnimations`' reading: the files `<name>_animation.txt`
 /// lists, relative to the file's folder, each opened and parsed.
-fn read_animation_files(path: &str) -> Result<(), ImportError> {
-    let file_system = FileSystem::new(path);
+fn read_animation_files(path: &str, file_system: &FileSystem) -> Result<(), ImportError> {
     let base = absolute_path(path.as_bytes());
     let name = complete_base_name(path.as_bytes());
     let mut list_path = base.clone();
@@ -622,7 +621,7 @@ fn read_animation_files(path: &str) -> Result<(), ImportError> {
     Ok(())
 }
 
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     let parser = Parser::read(bytes)?;
     let incomplete = parser.triangles.is_empty();
     if incomplete && parser.bones.is_empty() {
@@ -639,7 +638,7 @@ pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
             return undefined("a texture name copied past its string");
         }
     }
-    read_animation_files(path)?;
+    read_animation_files(path, files)?;
     if incomplete {
         meshes.push(skeleton::build_mesh(&nodes, root, false));
     }

@@ -298,10 +298,10 @@ enum AttributeKind {
 impl<'a> Asset<'a> {
     /// `Asset::Load` after the metadata: extensions, dictionaries, then the
     /// scene and everything it reaches.
-    fn load(path: &str, document: &'a Value, body: Option<Vec<u8>>, binary: bool) -> Result<Self, ImportError> {
+    fn load(path: &str, files: &FileSystem, document: &'a Value, body: Option<Vec<u8>>, binary: bool) -> Result<Self, ImportError> {
         let mut asset = Asset {
             directory: asset_directory(path),
-            file_system: FileSystem::new(path),
+            file_system: files.clone(),
             binary_extension: binary,
             materials_common: false,
             accessors: Dict::new("accessors"),
@@ -901,14 +901,14 @@ fn import_meshes(asset: &Asset) -> Result<Vec<scene::Mesh>, ImportError> {
 }
 
 /// `glTFImporter::InternReadFile`.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     let document = read_document(bytes)?;
     let json = parse_json(&document.json)?;
     let version = read_version(&json, document.binary)?;
     if version.first() != Some(&b'1') {
         return Ok(Scene::default());
     }
-    let asset = Asset::load(path, &json, document.body, document.binary)?;
+    let asset = Asset::load(path, files, &json, document.body, document.binary)?;
     check_embedded_textures(&asset)?;
     let meshes = import_meshes(&asset)?;
     Ok(Scene { meshes })

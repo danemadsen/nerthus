@@ -242,7 +242,10 @@ mod tests {
         let (map, meta) = read(&path).unwrap();
         assert_eq!(meta.render_intent, RenderIntent::Heightfield);
         assert_eq!(map.info.render_intent, RenderIntent::Heightfield);
-        assert_eq!(map.channel(0), &[0.0, 0.25, 0.5, 1.0]);
+        // Two floats wide, so the scan's padding zero is the lowest value it
+        // finds (square_plane_min_max), not 10.
+        let scale = 1.0f32 / 50.0;
+        assert_eq!(map.channel(0), &[10.0 * scale, 20.0 * scale, 30.0 * scale, 50.0 * scale]);
         assert_eq!(stored_range(), [10.0, 50.0]);
         set_stored_range([0.0, 1.0]);
         std::fs::write(&path, [0u8; 6]).unwrap();

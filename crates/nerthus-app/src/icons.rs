@@ -92,7 +92,8 @@ pub fn image(name: &str, size: f32, tint: Color32) -> Option<Image<'static>> {
     Some(image)
 }
 
-/// Draws the icon into `rect` (any painter the ui owns).
+/// Draws the icon into `rect` with `ui`'s painter, so it clips to `ui`'s
+/// clip rect, not to a narrower painter made from it (`painter_at`).
 pub fn paint(ui: &Ui, rect: Rect, name: &str, tint: Color32) {
     let Some(source) = source(name) else {
         return;

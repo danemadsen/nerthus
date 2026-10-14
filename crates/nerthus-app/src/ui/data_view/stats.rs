@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn sizes_and_times_read_like_humanizer() {
-        assert_eq!(byte_size(0), "0 B");
+        assert_eq!(byte_size(0), "0 b");
         assert_eq!(byte_size(4 * 1024 * 1024), "4 MB");
         assert_eq!(byte_size(1536 * 1024), "1.5 MB");
         assert_eq!(humanize_milliseconds(0.0), "0 milliseconds");

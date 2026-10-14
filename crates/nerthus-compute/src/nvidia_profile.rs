@@ -369,11 +369,10 @@ mod imp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 
-    #[cfg(not(windows))]
     #[test]
     fn there_is_no_driver_off_windows() {
         assert_eq!(enforce_optimal_settings(), Err(ProfileError::NoDriver));

@@ -44,6 +44,17 @@ impl VectorCapacity {
         }
         Ok(())
     }
+
+    /// `push_back` one element at a time until the vector is `size` long:
+    /// each full vector grows by half again.
+    pub(crate) fn push_to(&mut self, size: usize) -> Result<(), ImportError> {
+        while self.elements < size {
+            let grown = vector_growth(self.elements, self.elements + 1);
+            check_allocation(grown as u64, self.element_size)?;
+            self.elements = grown;
+        }
+        Ok(())
+    }
 }
 
 /// `_ISORT_MAX`: ranges this small are insertion sorted.

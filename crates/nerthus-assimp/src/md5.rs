@@ -1202,8 +1202,7 @@ fn open_part(file_system: &FileSystem, input_path: &str, input_bytes: &[u8], nam
 /// `MD5Importer::InternReadFile`: by the extension, the camera file, the
 /// animation file alone, or the mesh file and then the animation file,
 /// each named as the imported file up to its last '.'.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
-    let file_system = FileSystem::new(path);
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     let stem = match path.rfind('.') {
         Some(dot) => &path[..dot + 1],
         None => path,
@@ -1212,7 +1211,7 @@ pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
 
     if extension == "md5camera" {
         let camera_path = format!("{stem}md5camera");
-        let Some(camera) = open_part(&file_system, path, bytes, &camera_path) else {
+        let Some(camera) = open_part(files, path, bytes, &camera_path) else {
             return fail(format!("Failed to read MD5CAMERA file: {camera_path}"));
         };
         read_camera_file(&camera)?;
@@ -1223,7 +1222,7 @@ pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
     let mut meshes = Vec::new();
     if extension != "md5anim" {
         let mesh_path = format!("{stem}md5mesh");
-        if let Some(mesh_file) = open_part(&file_system, path, bytes, &mesh_path) {
+        if let Some(mesh_file) = open_part(files, path, bytes, &mesh_path) {
             had_mesh = true;
             meshes = read_mesh_file(&mesh_file)?;
         }
@@ -1231,7 +1230,7 @@ pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
 
     let animation_path = format!("{stem}md5anim");
     let mut animation = None;
-    if let Some(animation_file) = open_part(&file_system, path, bytes, &animation_path) {
+    if let Some(animation_file) = open_part(files, path, bytes, &animation_path) {
         animation = read_animation_file(&animation_file)?;
     }
     if !had_mesh

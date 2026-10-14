@@ -12,6 +12,9 @@ mod ddl;
 
 use ddl::{DataList, Node, Property, ROOT, Value, ValueKind};
 
+use crate::batch::{Graph, LoadedScene, SceneGraph};
+use crate::matrix::Matrix4;
+use crate::node::Node as SceneNode;
 use crate::parsing::text_file_to_buffer;
 use crate::scene::{ImportError, Mesh, PRIMITIVE_LINE, PRIMITIVE_POINT, PRIMITIVE_POLYGON, PRIMITIVE_TRIANGLE, Scene, check_allocation, fail};
 use crate::vector::Vector3;
@@ -516,9 +519,16 @@ impl Importer<'_> {
 
 /// `OpenGEXImporter::InternReadFile`.
 pub fn read(bytes: &[u8]) -> Result<Scene, ImportError> {
+    let loaded = read_graph(bytes)?;
+    Ok(Scene { meshes: loaded.meshes })
+}
+
+/// `InternReadFile`, with whether the scene got a root node: a file that
+/// does not parse leaves it without one.
+pub(crate) fn read_graph(bytes: &[u8]) -> Result<LoadedScene, ImportError> {
     let buffer = text_file_to_buffer(bytes, false)?;
     let Some(nodes) = ddl::parse(&buffer)? else {
-        return Ok(Scene::default());
+        return Ok(LoadedScene { meshes: Vec::new(), graph: Graph::Missing, animations: Some(0) });
     };
     let mut importer = Importer {
         nodes: &nodes,
@@ -529,7 +539,15 @@ pub fn read(bytes: &[u8]) -> Result<Scene, ImportError> {
         meshes: Vec::new(),
     };
     importer.handle_nodes(ROOT, 0)?;
-    Ok(Scene { meshes: importer.meshes })
+    // A file without node structures leaves the root node alone; the
+    // importer makes no animations.
+    let graph = if importer.has_current_node {
+        Graph::Unknown
+    } else {
+        let root = SceneNode::new(Vec::new(), Matrix4::IDENTITY, None);
+        Graph::Known(SceneGraph { nodes: vec![root], root: 0 })
+    };
+    Ok(LoadedScene { meshes: importer.meshes, graph, animations: Some(0) })
 }
 
 #[cfg(test)]

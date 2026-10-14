@@ -2,8 +2,12 @@
 //! only), in its float operation order (`ai_real(x)` literals are
 //! doubles rounded to floats).
 
-use crate::scene::{ImportError, check_allocation};
+use crate::scene::{ImportError, Mesh, PRIMITIVE_LINE, PRIMITIVE_POINT, PRIMITIVE_POLYGON, PRIMITIVE_TRIANGLE, check_allocation};
 use crate::vector::{Vector3, normalize, square_length};
+
+/// `sizeof(aiFace)` and `sizeof(aiVector3D)`.
+const FACE_SIZE: u64 = 16;
+const VECTOR_SIZE: u64 = 12;
 
 fn scale(vector: Vector3, factor: f32) -> Vector3 {
     [factor * vector[0], factor * vector[1], factor * vector[2]]
@@ -159,8 +163,9 @@ pub(crate) fn tetrahedron(positions: &mut Vec<Vector3>) {
     }
 }
 
-/// `MakeHexahedron` as triangles (each quad two).
-pub(crate) fn hexahedron(positions: &mut Vec<Vector3>) {
+/// `MakeHexahedron`: six quads, or each quad as two triangles. The
+/// vertices a face has.
+pub(crate) fn hexahedron(positions: &mut Vec<Vector3>, polygons: bool) -> u32 {
     let length = 1.0f32 / (1.73205080f64 as f32);
     let corners = [
         [-1.0f32, -1.0, -1.0],
@@ -175,10 +180,15 @@ pub(crate) fn hexahedron(positions: &mut Vec<Vector3>) {
     let v = corners.map(|corner| scale(corner, length));
     let quads = [[0, 3, 2, 1], [0, 1, 5, 4], [0, 4, 7, 3], [6, 5, 1, 2], [6, 2, 3, 7], [6, 7, 4, 5]];
     for q in quads {
+        if polygons {
+            positions.extend(q.iter().map(|&corner| v[corner]));
+            continue;
+        }
         for triangle in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
             positions.extend(triangle.iter().map(|&corner| v[corner]));
         }
     }
+    if polygons { 4 } else { 3 }
 }
 
 /// `MakeSphere`: an icosahedron subdivided `tessellation` times (failing
@@ -193,9 +203,66 @@ pub(crate) fn sphere(tessellation: u32, positions: &mut Vec<Vector3>) -> Result<
     Ok(())
 }
 
-/// `MakeCone` (closed): `tessellation` segments around, the wider end at
-/// -height/2 (the winding flipped when the second radius was wider).
-pub(crate) fn cone(height: f32, radius1: f32, radius2: f32, tessellation: u32, positions: &mut Vec<Vector3>) -> Result<(), ImportError> {
+/// `MakeCircle`: `tessellation` triangles around the origin in the XZ
+/// plane (none for fewer than three segments or a zero radius).
+pub(crate) fn circle(radius: f32, tessellation: u32, positions: &mut Vec<Vector3>) -> Result<(), ImportError> {
+    if tessellation < 3 || radius == 0.0 {
+        return Ok(());
+    }
+    let radius = radius.abs();
+    check_allocation(tessellation as u64 * 3, VECTOR_SIZE)?;
+    let two_pi = std::f64::consts::TAU as f32;
+    let delta = two_pi / tessellation as f32;
+    let mut s = 1.0f32;
+    let mut t = 0.0f32;
+    let mut angle = 0.0f32;
+    while angle < two_pi {
+        positions.push([s * radius, 0.0, t * radius]);
+        angle += delta;
+        s = angle.cos();
+        t = angle.sin();
+        positions.push([s * radius, 0.0, t * radius]);
+        positions.push([0.0, 0.0, 0.0]);
+    }
+    Ok(())
+}
+
+/// `MakeMesh(positions, numIndices)`: every position a vertex, and faces
+/// of `index_count` positions each, in order (a short last run left
+/// over); none without positions or with no indices per face.
+pub(crate) fn make_mesh(positions: &[Vector3], index_count: u32) -> Result<Option<Mesh>, ImportError> {
+    if positions.is_empty() || index_count == 0 {
+        return Ok(None);
+    }
+    let primitive_types = match index_count {
+        1 => PRIMITIVE_POINT,
+        2 => PRIMITIVE_LINE,
+        3 => PRIMITIVE_TRIANGLE,
+        _ => PRIMITIVE_POLYGON,
+    };
+    let face_count = positions.len() as u32 / index_count;
+    check_allocation(face_count as u64, FACE_SIZE)?;
+    let mut faces = Vec::with_capacity(face_count as usize);
+    for face in 0..face_count {
+        let first = face * index_count;
+        let corners: Vec<u32> = (first..first + index_count).collect();
+        faces.push(corners);
+    }
+    check_allocation(positions.len() as u64, VECTOR_SIZE)?;
+    let mesh = Mesh {
+        primitive_types,
+        vertex_count: positions.len(),
+        vertices: Some(positions.to_vec()),
+        faces: Some(faces),
+        ..Mesh::default()
+    };
+    Ok(Some(mesh))
+}
+
+/// `MakeCone`: `tessellation` segments around, the wider end at
+/// -height/2 (the winding flipped when the second radius was wider), and
+/// caps on the ends unless `open`.
+pub(crate) fn cone(height: f32, radius1: f32, radius2: f32, tessellation: u32, open: bool, positions: &mut Vec<Vector3>) -> Result<(), ImportError> {
     if tessellation < 3 || height == 0.0 {
         return Ok(());
     }
@@ -212,8 +279,8 @@ pub(crate) fn cone(height: f32, radius1: f32, radius2: f32, tessellation: u32, p
     if (radius1 as f64) < (radius2 - radius1) as f64 * 10e-3 {
         radius1 = 0.0;
     }
-    let per_step = 6 + 3 * if radius1 != 0.0 { 2 } else { 1 };
-    check_allocation(tessellation as u64 * per_step, 12)?;
+    let caps = if open { 0 } else { 3 * if radius1 != 0.0 { 2 } else { 1 } };
+    check_allocation(tessellation as u64 * (6 + caps), VECTOR_SIZE)?;
     let two_pi = std::f64::consts::TAU as f32;
     let delta = two_pi / tessellation as f32;
     let mut s = 1.0f32;
@@ -228,13 +295,15 @@ pub(crate) fn cone(height: f32, radius1: f32, radius2: f32, tessellation: u32, p
         let v3 = [s2 * radius2, half_height, t2 * radius2];
         let v4 = [s2 * radius1, -half_height, t2 * radius1];
         positions.extend_from_slice(&[v1, v2, v3, v4, v1, v3]);
-        positions.push([s * radius2, half_height, t * radius2]);
-        positions.push([s2 * radius2, half_height, t2 * radius2]);
-        positions.push([0.0, half_height, 0.0]);
-        if radius1 != 0.0 {
-            positions.push([s * radius1, -half_height, t * radius1]);
-            positions.push([s2 * radius1, -half_height, t2 * radius1]);
-            positions.push([0.0, -half_height, 0.0]);
+        if !open {
+            positions.push([s * radius2, half_height, t * radius2]);
+            positions.push([s2 * radius2, half_height, t2 * radius2]);
+            positions.push([0.0, half_height, 0.0]);
+            if radius1 != 0.0 {
+                positions.push([s * radius1, -half_height, t * radius1]);
+                positions.push([s2 * radius1, -half_height, t2 * radius1]);
+                positions.push([0.0, -half_height, 0.0]);
+            }
         }
         s = s2;
         t = t2;

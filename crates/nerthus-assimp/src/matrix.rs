@@ -176,6 +176,42 @@ impl Matrix4 {
         m[10] = cy * cx;
     }
 
+    /// `RotationX` (`cosf`/`sinf`).
+    pub fn rotation_x(angle: f32) -> Matrix4 {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let mut matrix = Matrix4::IDENTITY;
+        matrix.0[5] = cos;
+        matrix.0[10] = cos;
+        matrix.0[9] = sin;
+        matrix.0[6] = -sin;
+        matrix
+    }
+
+    /// `RotationY` (`cosf`/`sinf`).
+    pub fn rotation_y(angle: f32) -> Matrix4 {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let mut matrix = Matrix4::IDENTITY;
+        matrix.0[0] = cos;
+        matrix.0[10] = cos;
+        matrix.0[2] = sin;
+        matrix.0[8] = -sin;
+        matrix
+    }
+
+    /// `RotationZ` (`cosf`/`sinf`).
+    pub fn rotation_z(angle: f32) -> Matrix4 {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let mut matrix = Matrix4::IDENTITY;
+        matrix.0[0] = cos;
+        matrix.0[5] = cos;
+        matrix.0[4] = sin;
+        matrix.0[1] = -sin;
+        matrix
+    }
+
     /// `Rotation(angle, axis)` (`cosf`/`sinf`).
     pub fn rotation(angle: f32, axis: Vector3) -> Matrix4 {
         let c = angle.cos();

@@ -96,6 +96,16 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
+impl ImportError {
+    /// Whether the native code would have crashed or hung rather than
+    /// thrown: undefined behaviour and endless loops end the whole
+    /// process, so such a failure in a file a scene loads as one of its
+    /// objects fails the scene too.
+    pub fn ends_process(&self) -> bool {
+        self.0.starts_with("undefined behaviour") || self.0.starts_with("endless loop")
+    }
+}
+
 /// Shorthand for an import failure.
 pub fn fail<T>(message: impl Into<String>) -> Result<T, ImportError> {
     Err(ImportError(message.into()))

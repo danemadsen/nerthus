@@ -309,8 +309,10 @@ impl Parser {
         }
     }
 
-    /// `strconv_attribute_impl<true>::parse_wconv`.
-    fn attribute_value(&self, mut cursor: usize, quote: u8) -> Parse<(Vec<u8>, usize)> {
+    /// `strconv_attribute_impl<true>::parse_wconv`: the value and the
+    /// position after its quote (none at the end of the text, where the
+    /// value is as far as it went).
+    fn attribute_value(&self, mut cursor: usize, quote: u8) -> (Vec<u8>, Option<usize>) {
         let mut output = Vec::new();
         loop {
             let byte = self.at(cursor);
@@ -320,7 +322,7 @@ impl Parser {
                 continue;
             }
             if byte == quote {
-                return Ok((output, cursor + 1));
+                return (output, Some(cursor + 1));
             }
             if is(byte, CT_SPACE) {
                 output.push(b' ');
@@ -331,7 +333,7 @@ impl Parser {
             } else if byte == b'&' {
                 cursor = self.escape(cursor, &mut output);
             } else if byte == 0 {
-                return Err(XmlError);
+                return (output, None);
             } else {
                 output.push(byte);
                 cursor += 1;
@@ -479,7 +481,9 @@ impl Parser {
     }
 
     /// The attribute list of an element (or declaration) up to '>' or "/>";
-    /// returns the position after it and whether the element closed.
+    /// returns the position after it and whether the element closed. Each
+    /// attribute is the node's from its name on (pugixml appends it then),
+    /// so one that fails keeps its value as far as it went.
     fn attributes(&self, node: &mut Node, mut cursor: usize) -> Parse<(usize, bool)> {
         loop {
             cursor = self.skip_whitespace(cursor);
@@ -498,20 +502,25 @@ impl Parser {
                     cursor += 1;
                 }
                 if terminator != b'=' {
+                    node.attributes.push((name, Vec::new()));
                     return Err(XmlError);
                 }
                 cursor = self.skip_whitespace(cursor);
                 let quote = self.at(cursor);
                 if quote != b'"' && quote != b'\'' {
+                    node.attributes.push((name, Vec::new()));
                     return Err(XmlError);
                 }
-                let (mut value, after) = self.attribute_value(cursor + 1, quote)?;
+                let (mut value, after) = self.attribute_value(cursor + 1, quote);
                 truncate_at_nul(&mut value);
+                node.attributes.push((name, value));
+                let Some(after) = after else {
+                    return Err(XmlError);
+                };
                 cursor = after;
                 if is(self.at(cursor), CT_START_SYMBOL) {
                     return Err(XmlError);
                 }
-                node.attributes.push((name, value));
             } else if byte == b'/' {
                 cursor += 1;
                 if self.at(cursor) == b'>' {
@@ -526,10 +535,10 @@ impl Parser {
         }
     }
 
-    /// `parse_tree` from `cursor` into the document, as a stack of open
-    /// nodes.
-    fn tree(&mut self, document: &mut Node) -> Parse<()> {
-        let mut stack: Vec<Node> = Vec::new();
+    /// `parse_tree` from `cursor` into the document, with the open nodes
+    /// on `stack` (an element whose start tag fails is left there too, as
+    /// pugixml has it in the tree from its name on).
+    fn tree(&mut self, document: &mut Node, stack: &mut Vec<Node>) -> Parse<()> {
         let mut cursor = 0usize;
         // UTF-8 BOM.
         if self.at(0) == 0xEF && self.at(1) == 0xBB && self.at(2) == 0xBF {
@@ -559,20 +568,28 @@ impl Parser {
                         if terminator == b'>' {
                             stack.push(element);
                         } else if is(terminator, CT_SPACE) {
-                            let (after, closed) = self.attributes(&mut element, cursor)?;
+                            let (after, closed) = match self.attributes(&mut element, cursor) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    stack.push(element);
+                                    return Err(error);
+                                }
+                            };
                             cursor = after;
                             if closed {
-                                append(&mut stack, document, element);
+                                append(stack, document, element);
                             } else {
                                 stack.push(element);
                             }
                         } else if terminator == b'/' {
                             if self.at(cursor) != b'>' {
+                                stack.push(element);
                                 return Err(XmlError);
                             }
                             cursor += 1;
-                            append(&mut stack, document, element);
+                            append(stack, document, element);
                         } else {
+                            stack.push(element);
                             return Err(XmlError);
                         }
                     } else if byte == b'/' {
@@ -580,17 +597,23 @@ impl Parser {
                         let Some(open) = stack.pop() else {
                             return Err(XmlError);
                         };
+                        // (On an error the element stays in the tree, as
+                        // pugixml built it in place.)
                         let mut name_index = 0usize;
+                        let mut matches = true;
                         while is(self.at(cursor), CT_SYMBOL) {
                             if open.name.get(name_index) != Some(&self.at(cursor)) {
-                                return Err(XmlError);
+                                matches = false;
+                                break;
                             }
                             cursor += 1;
                             name_index += 1;
                         }
-                        if name_index != open.name.len() {
+                        if !matches || name_index != open.name.len() {
+                            append(stack, document, open);
                             return Err(XmlError);
                         }
+                        append(stack, document, open);
                         cursor = self.skip_whitespace(cursor);
                         if self.at(cursor) == 0 {
                             return Err(XmlError);
@@ -599,7 +622,6 @@ impl Parser {
                             return Err(XmlError);
                         }
                         cursor += 1;
-                        append(&mut stack, document, open);
                     } else if byte == b'?' {
                         cursor += 1;
                         let target_start = cursor;
@@ -626,7 +648,7 @@ impl Parser {
                                 return Err(XmlError);
                             }
                             cursor += 1;
-                            append(&mut stack, document, node);
+                            append(stack, document, node);
                         } else if is(terminator, CT_SPACE) {
                             cursor = self.skip_whitespace(cursor);
                             let value_start = cursor;
@@ -644,14 +666,14 @@ impl Parser {
                                 let (after, closed) = self.attributes(&mut node, value_start)?;
                                 cursor = after;
                                 if closed {
-                                    append(&mut stack, document, node);
+                                    append(stack, document, node);
                                 } else {
                                     stack.push(node);
                                 }
                             } else {
                                 node.value = self.buffer[value_start..cursor].to_vec();
                                 cursor += 2;
-                                append(&mut stack, document, node);
+                                append(stack, document, node);
                             }
                         } else {
                             return Err(XmlError);
@@ -666,7 +688,7 @@ impl Parser {
                             let (value, after) = self.comment(cursor + 1)?;
                             let mut node = Node::new(NodeKind::Comment);
                             node.value = value;
-                            append(&mut stack, document, node);
+                            append(stack, document, node);
                             cursor = after;
                         } else if self.at(cursor) == b'[' {
                             let opening = b"CDATA[";
@@ -679,7 +701,7 @@ impl Parser {
                             let (value, after) = self.cdata(cursor + 1)?;
                             let mut node = Node::new(NodeKind::Cdata);
                             node.value = value;
-                            append(&mut stack, document, node);
+                            append(stack, document, node);
                             cursor = after;
                         } else if self.buffer.get(cursor..cursor + 7) == Some(b"DOCTYPE".as_slice()) {
                             let start = cursor - 2;
@@ -691,7 +713,7 @@ impl Parser {
                             mark = self.skip_whitespace(mark).min(close);
                             let mut node = Node::new(NodeKind::Doctype);
                             node.value = self.buffer[mark..close].to_vec();
-                            append(&mut stack, document, node);
+                            append(stack, document, node);
                             cursor = close + 1;
                         } else {
                             return Err(XmlError);
@@ -712,7 +734,7 @@ impl Parser {
                     truncate_at_nul(&mut value);
                     let mut node = Node::new(NodeKind::Pcdata);
                     node.value = value;
-                    append(&mut stack, document, node);
+                    append(stack, document, node);
                     // At the end, or a '<' with nothing after it: stop. Else
                     // the loop takes the tag at the '<'.
                     let Some(tag) = tag else {
@@ -743,16 +765,36 @@ impl Parser {
 /// plus a NUL: the document node, or an error when parsing fails or no
 /// element was found.
 pub fn parse(bytes: &[u8]) -> Result<Node, XmlError> {
+    let (document, complete) = parse_document(bytes);
+    if !complete || !document.children.iter().any(Node::is_element) {
+        return Err(XmlError);
+    }
+    Ok(document)
+}
+
+/// The document pugixml leaves after a parse, failed or not (a caller that
+/// ignores the result reads it): what was parsed, the elements still open
+/// in place where they opened.
+pub fn parse_partial(bytes: &[u8]) -> Node {
+    parse_document(bytes).0
+}
+
+/// The document and whether it parsed.
+fn parse_document(bytes: &[u8]) -> (Node, bool) {
     let mut data = bytes.to_vec();
     data.push(0);
     let buffer = convert_to_utf8(&data);
     let mut parser = Parser { buffer };
     let mut document = Node::new(NodeKind::Document);
-    parser.tree(&mut document)?;
-    if !document.children.iter().any(Node::is_element) {
-        return Err(XmlError);
+    let mut stack = Vec::new();
+    let complete = parser.tree(&mut document, &mut stack).is_ok();
+    while let Some(open) = stack.pop() {
+        match stack.last_mut() {
+            Some(parent) => parent.children.push(open),
+            None => document.children.push(open),
+        }
     }
-    Ok(document)
+    (document, complete)
 }
 
 /// pugixml's `string_to_integer<unsigned int>`.
@@ -816,6 +858,17 @@ pub(crate) fn as_int(value: &[u8]) -> i32 {
 /// `xml_attribute::as_uint()`.
 pub(crate) fn as_uint(value: &[u8]) -> u32 {
     string_to_integer(value, 0, u32::MAX)
+}
+
+/// `xml_attribute::as_float()`: `strtod`, as a float.
+pub(crate) fn as_float(value: &[u8]) -> f32 {
+    crate::parsing::strtod(value) as f32
+}
+
+/// `xml_attribute::as_bool()`: whether the first character is '1', 't',
+/// 'T', 'y' or 'Y'.
+pub(crate) fn as_bool(value: &[u8]) -> bool {
+    matches!(value.first(), Some(b'1' | b't' | b'T' | b'y' | b'Y'))
 }
 
 /// A pugixml string: everything up to the first NUL.

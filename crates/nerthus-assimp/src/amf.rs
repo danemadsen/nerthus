@@ -11,7 +11,7 @@
 //! from the `<texmap>`'s own text (its `<utex1>` … children only have to
 //! be there).
 
-use crate::parsing::{atoi, strtod, trim};
+use crate::parsing::{atoi, trim};
 use crate::scene::{ImportError, Mesh, PRIMITIVE_TRIANGLE, Scene, check_allocation, fail};
 use crate::xml::{self, Node as XmlNode};
 
@@ -39,11 +39,6 @@ fn undefined<T>(what: &str) -> Result<T, ImportError> {
 
 fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-/// pugixml's `as_float`: `strtod`, as a float.
-fn as_float(text: &[u8]) -> f32 {
-    strtod(text) as f32
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,7 +268,7 @@ impl Parser {
                 b"z" => 2,
                 _ => continue,
             };
-            coordinate[axis] = as_float(child.text());
+            coordinate[axis] = xml::as_float(child.text());
         }
         let element = self.create(Kind::Coordinates, Vec::new(), Payload::Coordinates(coordinate));
         self.enter(element);
@@ -352,7 +347,7 @@ impl Parser {
             };
             if let Some(channel) = channel {
                 read[channel] = true;
-                color[channel] = as_float(child.text());
+                color[channel] = xml::as_float(child.text());
             }
             if !read[3] {
                 color[3] = 1.0;
@@ -455,7 +450,7 @@ impl Parser {
         if !old_names {
             let texmap = self.create(Kind::TexMap, Vec::new(), Payload::None);
             self.enter(texmap);
-            let own = as_float(node.text());
+            let own = xml::as_float(node.text());
             for child in &node.children {
                 let (flag, corner, axis) = match child.name() {
                     b"utex1" => (0, 0, 0),
@@ -483,7 +478,7 @@ impl Parser {
                     _ => continue,
                 };
                 read[flag] = true;
-                coordinates[corner][axis] = as_float(value);
+                coordinates[corner][axis] = xml::as_float(value);
             }
         }
         if read.iter().any(|&flag| !flag) {

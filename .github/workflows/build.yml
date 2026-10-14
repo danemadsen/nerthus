@@ -1,0 +1,108 @@
+# Builds the editor (nerthus) and the command-line builder (nerthus-build)
+# for release on Linux, macOS and Windows, and uploads each platform's
+# binaries as an artifact of the run.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - README.md
+      - LICENSE
+  # Actions › Build › Run workflow builds any branch.
+  workflow_dispatch:
+
+# A newer push replaces a build still running for the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+          - platform: macos-arm64
+            os: macos-latest
+          - platform: windows-x86_64
+            os: windows-latest
+
+    steps:
+      # Git on the Windows image checks text out with CRLF line endings. The
+      # build embeds the docs and example projects, so keep them as committed.
+      - name: Keep line endings as committed
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      # Headers for ALSA (audio) and udev (gamepads). Wayland and X11 are
+      # loaded at run time, so they need nothing here.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Only builds of main save the cache; builds of other branches start
+      # from main's.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # A tar keeps the executables executable, which zipped artifacts don't;
+      # Windows gets a zip.
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          package="nerthus-${GITHUB_SHA::7}-${{ matrix.platform }}"
+          extension=""
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            extension=".exe"
+          fi
+
+          mkdir -p "$package/licenses"
+          cp "target/release/nerthus$extension" "target/release/nerthus-build$extension" "$package/"
+          cp README.md LICENSE "$package/"
+          # The licences of the fonts, icons and documentation built into the
+          # editor.
+          cp crates/nerthus-app/assets/fonts/roboto-license.txt "$package/licenses/"
+          cp crates/nerthus-app/assets/fonts/roboto-mono-license.txt "$package/licenses/"
+          cp crates/nerthus-app/assets/icons/tabler-license.txt "$package/licenses/"
+          cp crates/nerthus-app/assets/docs/LICENSE.txt "$package/licenses/docs-license.txt"
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            archive="$package.zip"
+            7z a -tzip "$archive" "$package"
+          else
+            archive="$package.tar.gz"
+            tar -czf "$archive" "$package"
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.archive }}
+          # Uploaded as it is, named after the archive.
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

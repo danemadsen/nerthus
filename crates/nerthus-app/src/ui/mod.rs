@@ -385,12 +385,7 @@ impl UiState {
             "start-dialog" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::StartDialog)),
             "examples" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::OpenExamples)),
             "export-macro" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::ExportMacro)),
-            "save-question" => {
-                let text = "There are unsaved changes in the current terrain. Do you want to save the current terrain before proceeding? ";
-                let yes = Command::File(crate::files::FileCommand::SaveFirst);
-                let no = Command::File(crate::files::FileCommand::DiscardChanges);
-                self.prompt = Some(prompt::Prompt::yes_no_cancel("Save terrain?", text, yes, no));
-            }
+            "save-question" => self.prompt = Some(file_commands::save_question()),
             "screenshot" => self.screenshot_at_launch = Some(detail.parse().unwrap_or(1)),
             _ if graph_commands::opens_at_launch(panel) => self.graph_at_launch = Some(show.to_string()),
             _ => {}

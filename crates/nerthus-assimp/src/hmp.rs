@@ -232,13 +232,12 @@ fn read_terrain(buffer: &Buffer, skins: &mut Skins, version: u32) -> Result<Scen
 }
 
 /// `HMPImporter::InternReadFile`.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     if bytes.len() < 50 {
         return fail("HMP File is too small.");
     }
     let buffer = Buffer::new(bytes, false);
-    let files = FileSystem::new(path);
-    let mut skins = Skins::new(&files);
+    let mut skins = Skins::new(files);
     let magic = &bytes[..4];
     let is = |forward: &[u8; 4]| {
         let mut backward = *forward;

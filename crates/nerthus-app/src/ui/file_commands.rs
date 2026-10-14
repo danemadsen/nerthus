@@ -148,10 +148,7 @@ fn advance(editor: &mut Editor, ui_state: &mut UiState) {
         return;
     }
     if !pending.save_answered && needs_save_question(&pending.action, editor) {
-        let text = "There are unsaved changes in the current terrain. Do you want to save the current terrain before proceeding? ";
-        let yes = Command::File(FileCommand::SaveFirst);
-        let no = Command::File(FileCommand::DiscardChanges);
-        ui_state.prompt = Some(Prompt::yes_no_cancel("Save terrain?", text, yes, no));
+        ui_state.prompt = Some(save_question());
         return;
     }
     if asks_building_after && building && !pending.building_answered {
@@ -160,6 +157,17 @@ fn advance(editor: &mut Editor, ui_state: &mut UiState) {
     }
     editor.files.pending = None;
     perform(pending.action, editor);
+}
+
+/// The save question (`MboxFull(…, YesNoCancel, TaskDialogIcon.Warning)`):
+/// Yes saves first, No goes on without saving.
+pub fn save_question() -> Prompt {
+    let text = "There are unsaved changes in the current terrain. Do you want to save the current terrain before proceeding? ";
+    let yes = Command::File(FileCommand::SaveFirst);
+    let no = Command::File(FileCommand::DiscardChanges);
+    let mut question = Prompt::yes_no_cancel("Save terrain?", text, yes, no);
+    question.warning = true;
+    question
 }
 
 /// `SavePrompt`'s condition (unsaved changes and something to undo), or

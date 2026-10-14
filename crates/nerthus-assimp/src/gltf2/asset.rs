@@ -501,10 +501,10 @@ fn asset_directory(path: &str) -> String {
 
 impl<'a> Asset<'a> {
     /// `Asset::Load` after the document is read.
-    pub fn load(path: &str, document: &'a Value, body: Option<Vec<u8>>, binary: bool) -> Result<Self, ImportError> {
+    pub fn load(path: &str, files: &FileSystem, document: &'a Value, body: Option<Vec<u8>>, binary: bool) -> Result<Self, ImportError> {
         let mut asset = Asset {
             directory: asset_directory(path),
-            file_system: FileSystem::new(path),
+            file_system: files.clone(),
             extensions: ExtensionsUsed::default(),
             accessors: Dict::new("accessors"),
             animations: Dict::new("animations"),

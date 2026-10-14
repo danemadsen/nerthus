@@ -7,7 +7,7 @@ mod preprocess;
 mod sort_by_primitive_type;
 mod triangulate;
 
-use crate::scene::{ImportError, Scene};
+use crate::scene::{ImportError, Mesh, Scene};
 
 /// `Exporter::Export`'s steps for an exporter that enforces
 /// JoinIdenticalVertices, Triangulate and SortByPType (glTF 2): the same
@@ -38,6 +38,14 @@ fn check_face_indices(scene: &Scene) -> Result<(), ImportError> {
         }
     }
     Ok(())
+}
+
+/// `ScenePreprocessor` alone: what `ReadFile` runs for an import that
+/// asks for no steps (a file a scene loads as one of its objects).
+pub(crate) fn preprocess_meshes(meshes: &mut [Mesh]) {
+    for mesh in meshes {
+        preprocess::process_mesh(mesh);
+    }
 }
 
 pub fn run(scene: &mut Scene) -> Result<(), ImportError> {

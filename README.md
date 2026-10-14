@@ -116,11 +116,9 @@ These parts of Gaea 2.0 are not in Nerthus yet.
   - Other formats ImageMagick reads, such as TGA and PNM, go through a
     general-purpose decoder rather than ImageMagick's, so their pixels can
     differ.
-- Some mesh formats in the Object node. Gaea's Assimp also reads LightWave
-  scenes (`.lws`, `.mot`), Irrlicht scenes (`.irr`), Ogre meshes (`.mesh`,
-  `.mesh.xml`), Blender files (`.blend`), IFC and STEP files, X3D files and
-  glTF 1 files compressed with Open3DGC when their path is typed or dropped
-  in.
+- Some mesh formats in the Object node. Gaea's Assimp also reads Blender
+  files (`.blend`), IFC and STEP files, and glTF 1 files compressed with
+  Open3DGC when their path is typed or dropped in.
 
 ### Left out on purpose
 

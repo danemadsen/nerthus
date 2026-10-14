@@ -483,13 +483,12 @@ fn read_mdl345(buffer: &Buffer, skins: &mut Skins, version: u32) -> Result<Scene
 }
 
 /// `MDLImporter::InternReadFile`: the subformat by the magic word.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     if bytes.len() < SMALLEST_FILE {
         return fail("MDL File is too small.");
     }
     let buffer = Buffer::new(bytes, true);
-    let files = FileSystem::new(path);
-    let mut skins = Skins::new(&files);
+    let mut skins = Skins::new(files);
     let magic = &bytes[..4];
     let is = |forward: &[u8; 4]| {
         let mut backward = *forward;
@@ -518,7 +517,7 @@ pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
         if is(b"IDSQ") {
             return fail("Impossible to properly load a model from an MDL sequence file.");
         }
-        return half_life::read(path, &buffer, &files);
+        return half_life::read(path, &buffer, files);
     }
     fail(format!("Unknown MDL subformat {path}."))
 }

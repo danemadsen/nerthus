@@ -14,6 +14,7 @@ use asset::{
     MODE_TRIANGLE_FAN, MODE_TRIANGLE_STRIP, MODE_TRIANGLES, PATH_ROTATION, PATH_SCALE, PATH_TRANSLATION, PATH_WEIGHTS, component_size,
 };
 
+use crate::io::FileSystem;
 use crate::scene::{
     ImportError, MAX_COLOR_SETS, MAX_TEXTURE_COORDS, Mesh, PRIMITIVE_LINE, PRIMITIVE_POINT, PRIMITIVE_TRIANGLE, Scene, fail,
 };
@@ -495,10 +496,10 @@ fn check_animations(asset: &Asset) -> Result<(), ImportError> {
 }
 
 /// `glTF2Importer::InternReadFile` for the meshes.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], files: &FileSystem) -> Result<Scene, ImportError> {
     let document = asset::read_document(bytes)?;
     let json = asset::parse_json(&document.json)?;
-    let asset = Asset::load(path, &json, document.body, document.binary)?;
+    let asset = Asset::load(path, files, &json, document.body, document.binary)?;
 
     let (meshes, remapping_tables) = import_meshes(&asset)?;
 

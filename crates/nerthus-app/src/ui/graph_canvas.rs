@@ -753,6 +753,12 @@ fn group_frame(editor: &Editor, tab: usize) -> GroupFrame {
 }
 
 pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState, commands: &mut Vec<Command>) {
+    // Everything the graph draws or hit-tests keeps to its rectangle:
+    // icons and rename boxes drawn through `ui` clip there as the painter
+    // does, and a node, group or note panned past the edge takes no
+    // clicks beyond it.
+    let outer_clip = ui.clip_rect();
+    ui.shrink_clip_rect(rect);
     state.load_views(editor);
     state.follow_restored_views(editor);
     state.rect = rect;
@@ -868,6 +874,7 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
     rename_overlay(ui, editor, state, &layouts, origin, commands);
     graph_groups::rename_overlay(ui, editor, state, &frame.groups, origin);
     crate::ui::graph_popups::show(ui, editor, state, commands);
+    ui.set_clip_rect(outer_clip);
 
     // Remember the view for saving.
     let view = state.view();
@@ -2587,5 +2594,68 @@ mod tests {
         let shown: Vec<&str> = layout.inputs.iter().filter(|port| !port.hidden).map(|port| port.name.as_str()).collect();
         assert_eq!(shown, vec!["In", COLLAPSED_PORT]);
         assert_eq!(layout.rect.height(), COMPACT_HEIGHT);
+    }
+
+    /// The graph below the 3D view, as the editor lays them out: the
+    /// view's widgets come before the graph's.
+    const GRAPH: Rect = Rect::from_min_max(Pos2::new(200.0, 300.0), Pos2::new(1100.0, 750.0));
+    const VIEW_ABOVE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1200.0, 300.0));
+
+    /// One frame of the graph at `GRAPH` with these events: the shapes
+    /// painted, and whether the view above the graph was clicked.
+    fn frame_below_view(context: &egui::Context, editor: &mut Editor, state: &mut GraphState, events: Vec<egui::Event>) -> (Vec<egui::epaint::ClippedShape>, bool) {
+        let input = egui::RawInput { screen_rect: Some(SCREEN), events, ..Default::default() };
+        let mut commands = Vec::new();
+        let mut view_clicked = false;
+        let mut output = context.run_ui(input, |ui| {
+            let view = ui.interact(VIEW_ABOVE, egui::Id::new("view-above"), Sense::click());
+            view_clicked = view.clicked();
+            show(ui, GRAPH, editor, state, &mut commands);
+        });
+        let shapes = std::mem::take(&mut output.shapes);
+        output.drop_without_applying_deltas();
+        (shapes, view_clicked)
+    }
+
+    #[test]
+    fn elements_panned_past_the_edge_stay_inside_the_graph() {
+        let mut editor = Editor::new(Document::new());
+        let mut state = GraphState::default();
+        let context = themed_context();
+        egui_extras::install_image_loaders(&context);
+        frame_below_view(&context, &mut editor, &mut state, Vec::new());
+
+        // A node with its icon above the graph's top edge; a locked group
+        // and an icon note with theirs left of its left edge.
+        let view = state.view();
+        let canvas_at = |screen: Pos2| {
+            let point = view.to_canvas(GRAPH.min, screen);
+            [point.x, point.y]
+        };
+        let node_corner = Pos2::new(GRAPH.left() + 300.0, GRAPH.top() - 40.0);
+        let node = editor.document.add_node("Mountain", canvas_at(node_corner)).unwrap();
+        let group_corner = Pos2::new(GRAPH.left() - 100.0, GRAPH.top() + 100.0);
+        let group = editor.document.add_group(&[], canvas_at(group_corner), [300.0, 200.0], 0);
+        editor.document.set_group_locked(group, true);
+        let note_corner = Pos2::new(GRAPH.left() - 40.0, GRAPH.top() + 250.0);
+        let note = editor.document.add_note(canvas_at(note_corner), 0);
+        editor.document.toggle_note_type(note);
+
+        // Nothing shows outside the graph.
+        let (shapes, _) = frame_below_view(&context, &mut editor, &mut state, Vec::new());
+        for clipped in &shapes {
+            let bounds = clipped.shape.visual_bounding_rect();
+            let shown = clipped.clip_rect.intersect(bounds);
+            assert!(!shown.is_positive() || GRAPH.contains_rect(shown), "{shown:?} shows outside the graph");
+        }
+
+        // A click on the node's hidden part is the view's.
+        let hidden_part = node_corner + Vec2::new(100.0, 20.0);
+        let button = |pressed: bool| egui::Event::PointerButton { pos: hidden_part, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame_below_view(&context, &mut editor, &mut state, vec![egui::Event::PointerMoved(hidden_part)]);
+        frame_below_view(&context, &mut editor, &mut state, vec![button(true)]);
+        let (_, view_clicked) = frame_below_view(&context, &mut editor, &mut state, vec![button(false)]);
+        assert!(view_clicked);
+        assert!(!editor.selection.contains(&node));
     }
 }

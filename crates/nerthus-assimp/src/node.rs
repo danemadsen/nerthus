@@ -3,6 +3,7 @@
 
 use crate::matrix::Matrix4;
 
+#[derive(Clone)]
 pub(crate) struct Node {
     pub name: Vec<u8>,
     pub transform: Matrix4,

@@ -117,7 +117,10 @@ impl<'a> StreamReader<'a> {
     /// `CopyAndAdvance`: the next `size` bytes.
     pub fn copy_and_advance(&mut self, size: usize) -> Result<&'a [u8], ImportError> {
         let start = self.current;
-        self.set_ptr(start + size as i64)?;
+        self.set_ptr(start.wrapping_add(size as i64))?;
+        if start < 0 {
+            return fail("undefined behaviour: a read before the file");
+        }
         Ok(&self.buffer[start as usize..start as usize + size])
     }
 

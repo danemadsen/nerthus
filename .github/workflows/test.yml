@@ -1,0 +1,76 @@
+# Runs the workspace's tests on Linux, macOS and Windows.
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - README.md
+      - LICENSE
+  pull_request:
+    paths-ignore:
+      - README.md
+      - LICENSE
+  workflow_dispatch:
+
+# A newer push replaces a run still going for the same branch or pull
+# request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+          - platform: macos-arm64
+            os: macos-latest
+          - platform: windows-x86_64
+            os: windows-latest
+
+    steps:
+      # Git on the Windows image checks text out with CRLF line endings. The
+      # build embeds the docs, example projects and data files, so keep them
+      # as committed.
+      - name: Keep line endings as committed
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      # Headers for ALSA (audio) and udev (gamepads). Wayland and X11 are
+      # loaded at run time, so they need nothing here.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Only runs on main save the cache; pull requests start from main's. A
+      # run whose tests fail still leaves a build worth keeping.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Build tests
+        run: cargo test --workspace --locked --no-run
+
+      - name: Run tests
+        run: cargo test --workspace --locked --no-fail-fast

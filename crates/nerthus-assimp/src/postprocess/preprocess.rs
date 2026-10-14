@@ -16,7 +16,7 @@ pub fn process_scene(scene: &mut Scene) {
 /// their unused components zeroed (a 3D set whose third components are all
 /// zero becomes 2D); a mesh without primitive types gets them from its
 /// faces; bitangents are derived when only normals and tangents exist.
-fn process_mesh(mesh: &mut Mesh) {
+pub(super) fn process_mesh(mesh: &mut Mesh) {
     for set in 0..MAX_TEXTURE_COORDS {
         let Some(coordinates) = mesh.texture_coords[set].as_mut() else {
             mesh.uv_components[set] = 0;

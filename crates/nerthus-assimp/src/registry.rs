@@ -5,25 +5,49 @@
 //! whose `CanRead` accepts the file, else the first importer of all whose
 //! `CanRead` does.
 
+use std::cell::RefCell;
+
+use crate::batch::{ImporterState, LoadedScene};
+use crate::io::FileSystem;
 use crate::scene::{ImportError, Scene, fail};
+
+/// What a scene asks of the importer of a file it loads as one of its
+/// objects (a load request's `BatchLoader::PropertyMap`, and its steps).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ImportProperties {
+    /// `AI_CONFIG_IMPORT_LWO_ONE_LAYER_ONLY` as an integer: the one layer
+    /// to load, counted from 1.
+    pub lwo_layer: Option<i32>,
+    /// `AI_CONFIG_PP_RVC_FLAGS`, which comes with the
+    /// `aiProcess_RemoveComponent` step.
+    pub remove_components: Option<i32>,
+}
 
 /// The file being imported, read whole.
 pub(crate) struct FileInput<'a> {
     pub path: &'a str,
     pub bytes: &'a [u8],
+    /// The filter `BaseImporter::ReadFile` reads other files through.
+    pub files: FileSystem,
+    pub properties: &'a ImportProperties,
+    /// The importer's state from its earlier imports.
+    pub state: &'a RefCell<ImporterState>,
 }
 
 type CanRead = fn(&FileInput) -> Result<bool, ImportError>;
 type Read = fn(&FileInput) -> Result<Scene, ImportError>;
+type ReadGraph = fn(&FileInput) -> Result<LoadedScene, ImportError>;
 
 /// One importer: its `aiImporterDesc` name and extensions, `CanRead`
 /// (always asked with `checkSig`, as `ReadFile` asks), and the port of its
-/// `InternReadFile` where there is one.
+/// `InternReadFile` where there is one. The scene formats' ports also keep
+/// the node graph, which a scene that loads them as objects may need.
 pub(crate) struct Importer {
     pub name: &'static str,
     pub extensions: &'static [&'static str],
     pub can_read: CanRead,
     pub read: Option<Read>,
+    pub read_graph: Option<ReadGraph>,
 }
 
 /// `AI_MAKE_MAGIC`: the first byte most significant.
@@ -370,7 +394,7 @@ fn can_read_iqm(input: &FileInput) -> Result<bool, ImportError> {
 }
 
 fn read_obj(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::obj::read(input.path, input.bytes)
+    crate::obj::read(input.path, input.bytes, &input.files)
 }
 
 fn read_collada(input: &FileInput) -> Result<Scene, ImportError> {
@@ -382,11 +406,11 @@ fn read_fbx(input: &FileInput) -> Result<Scene, ImportError> {
 }
 
 fn read_gltf1(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::gltf1::read(input.path, input.bytes)
+    crate::gltf1::read(input.path, input.bytes, &input.files)
 }
 
 fn read_gltf2(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::gltf2::read(input.path, input.bytes)
+    crate::gltf2::read(input.path, input.bytes, &input.files)
 }
 
 fn read_stl(input: &FileInput) -> Result<Scene, ImportError> {
@@ -422,7 +446,7 @@ fn read_iqm(input: &FileInput) -> Result<Scene, ImportError> {
 }
 
 fn read_unreal(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::unreal::read(input.path)
+    crate::unreal::read(input.path, &input.files)
 }
 
 fn read_q3d(input: &FileInput) -> Result<Scene, ImportError> {
@@ -474,19 +498,19 @@ fn read_dxf(input: &FileInput) -> Result<Scene, ImportError> {
 }
 
 fn read_smd(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::smd::read(input.path, input.bytes)
+    crate::smd::read(input.path, input.bytes, &input.files)
 }
 
 fn read_lwo(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::lwo::read(input.bytes)
+    crate::lwo::read(input.bytes, input.properties.lwo_layer)
 }
 
 fn read_mdl(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::mdl::read(input.path, input.bytes)
+    crate::mdl::read(input.path, input.bytes, &input.files)
 }
 
 fn read_hmp(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::hmp::read(input.path, input.bytes)
+    crate::hmp::read(input.path, input.bytes, &input.files)
 }
 
 fn read_opengex(input: &FileInput) -> Result<Scene, ImportError> {
@@ -518,11 +542,11 @@ fn read_cob(input: &FileInput) -> Result<Scene, ImportError> {
 }
 
 fn read_md5(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::md5::read(input.path, input.bytes)
+    crate::md5::read(input.path, input.bytes, &input.files)
 }
 
 fn read_md3(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::md3::read(input.path, input.bytes)
+    crate::md3::read(input.path, input.bytes, &input.files)
 }
 
 fn read_ac3d(input: &FileInput) -> Result<Scene, ImportError> {
@@ -530,7 +554,35 @@ fn read_ac3d(input: &FileInput) -> Result<Scene, ImportError> {
 }
 
 fn read_nff(input: &FileInput) -> Result<Scene, ImportError> {
-    crate::nff::read(input.path, input.bytes)
+    crate::nff::read(input.path, input.bytes, &input.files)
+}
+
+fn read_opengex_graph(input: &FileInput) -> Result<LoadedScene, ImportError> {
+    crate::opengex::read_graph(input.bytes)
+}
+
+fn read_irr(input: &FileInput) -> Result<Scene, ImportError> {
+    let loaded = crate::irr::read_graph(input)?;
+    Ok(Scene { meshes: loaded.meshes })
+}
+
+fn read_x3d(input: &FileInput) -> Result<Scene, ImportError> {
+    let loaded = crate::x3d::read_graph(input)?;
+    Ok(Scene { meshes: loaded.meshes })
+}
+
+fn read_ogre(input: &FileInput) -> Result<Scene, ImportError> {
+    let loaded = crate::ogre::read_graph(input.path, input.bytes, &input.files)?;
+    Ok(Scene { meshes: loaded.meshes })
+}
+
+fn read_ogre_graph(input: &FileInput) -> Result<LoadedScene, ImportError> {
+    crate::ogre::read_graph(input.path, input.bytes, &input.files)
+}
+
+fn read_lws(input: &FileInput) -> Result<Scene, ImportError> {
+    let loaded = crate::lws::read_graph(input)?;
+    Ok(Scene { meshes: loaded.meshes })
 }
 
 fn read_q3bsp(input: &FileInput) -> Result<Scene, ImportError> {
@@ -539,10 +591,13 @@ fn read_q3bsp(input: &FileInput) -> Result<Scene, ImportError> {
 
 macro_rules! importer {
     ($name:expr, [$($extension:expr),*], $can_read:expr) => {
-        Importer { name: $name, extensions: &[$($extension),*], can_read: $can_read, read: None }
+        Importer { name: $name, extensions: &[$($extension),*], can_read: $can_read, read: None, read_graph: None }
     };
     ($name:expr, [$($extension:expr),*], $can_read:expr, $read:expr) => {
-        Importer { name: $name, extensions: &[$($extension),*], can_read: $can_read, read: Some($read) }
+        Importer { name: $name, extensions: &[$($extension),*], can_read: $can_read, read: Some($read), read_graph: None }
+    };
+    ($name:expr, [$($extension:expr),*], $can_read:expr, $read:expr, $read_graph:expr) => {
+        Importer { name: $name, extensions: &[$($extension),*], can_read: $can_read, read: Some($read), read_graph: Some($read_graph) }
     };
 }
 
@@ -571,16 +626,16 @@ pub(crate) static IMPORTERS: [Importer; 48] = [
     importer!("AC3D Importer", ["ac", "acc", "ac3d"], can_read_ac3d, read_ac3d),
     importer!("BVH Importer (MoCap)", ["bvh"], can_read_bvh, read_bvh),
     importer!("Irrlicht Mesh Reader", ["xml", "irrmesh"], can_read_irrmesh, read_irrmesh),
-    importer!("Irrlicht Scene Reader", ["irr", "xml"], can_read_irr),
+    importer!("Irrlicht Scene Reader", ["irr", "xml"], can_read_irr, read_irr, crate::irr::read_graph),
     importer!("Quick3D Importer", ["q3o", "q3s"], can_read_q3d, read_q3d),
     importer!("BlitzBasic 3D Importer", ["b3d"], can_read_b3d, read_b3d),
     importer!("Collada Importer", ["dae", "xml", "zae"], can_read_collada, read_collada),
     importer!("Terragen Heightmap Importer", ["ter"], can_read_terragen, read_terragen),
     importer!("CharacterStudio Motion Importer (MoCap)", ["csm"], can_read_csm, read_csm),
     importer!("Unreal Mesh Importer", ["3d", "uc"], can_read_unreal, read_unreal),
-    importer!("LightWave Scene Importer", ["lws", "mot"], can_read_lws),
-    importer!("Ogre3D Mesh Importer", ["mesh", "mesh.xml"], can_read_ogre),
-    importer!("Open Game Engine Exchange", ["ogex"], can_read_opengex, read_opengex),
+    importer!("LightWave Scene Importer", ["lws", "mot"], can_read_lws, read_lws, crate::lws::read_graph),
+    importer!("Ogre3D Mesh Importer", ["mesh", "mesh.xml"], can_read_ogre, read_ogre, read_ogre_graph),
+    importer!("Open Game Engine Exchange", ["ogex"], can_read_opengex, read_opengex, read_opengex_graph),
     importer!("Milkshape 3D Importer", ["ms3d"], can_read_ms3d, read_ms3d),
     importer!("TrueSpace Object Importer", ["cob", "scn"], can_read_cob, read_cob),
     importer!("Blender 3D Importer (http://www.blender3d.org)", ["blend"], can_read_blender),
@@ -593,7 +648,7 @@ pub(crate) static IMPORTERS: [Importer; 48] = [
     importer!("glTF Importer", ["gltf", "glb"], can_read_gltf1, read_gltf1),
     importer!("glTF2 Importer", ["gltf", "glb", "vrm"], can_read_gltf2, read_gltf2),
     importer!("3mf Importer", ["3mf"], can_read_3mf, read_3mf),
-    importer!("Extensible 3D(X3D) Importer", ["x3d", "x3db"], can_read_x3d),
+    importer!("Extensible 3D(X3D) Importer", ["x3d", "x3db"], can_read_x3d, read_x3d, crate::x3d::read_graph),
     importer!("MMD Importer", ["pmx"], can_read_mmd, read_mmd),
     importer!("Inter-Quake Model Importer", ["iqm"], can_read_iqm, read_iqm),
 ];

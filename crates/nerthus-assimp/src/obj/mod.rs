@@ -18,21 +18,24 @@ const MIN_FILE_SIZE: usize = 16;
 const MAX_VERTICES: u32 = 0x7fff_ffff;
 
 /// `ObjFileImporter::InternReadFile`.
-pub fn read(path: &str, bytes: &[u8]) -> Result<Scene, ImportError> {
+pub fn read(path: &str, bytes: &[u8], system: &FileSystem) -> Result<Scene, ImportError> {
     if bytes.len() < MIN_FILE_SIZE {
         return fail("OBJ-file is too small.");
     }
-    let system = FileSystem::new(path);
-    // The importer pushes the file's folder (when not empty) for the
-    // material library lookup.
+    // The file's folder (when not empty) goes on the directory stack the
+    // material library is looked up through, and comes off it (or what is
+    // on top) after an import that does not fail.
     let path_bytes = path.as_bytes();
-    let directory = match path_bytes.iter().rposition(|&byte| byte == b'\\' || byte == b'/') {
-        Some(position) if position > 0 => Some(path_bytes[..position].to_vec()),
-        _ => None,
-    };
-    let files = Files { system: &system, directory, original_file: path_bytes.to_vec() };
+    if let Some(position) = path_bytes.iter().rposition(|&byte| byte == b'\\' || byte == b'/') {
+        system.push_directory(&path_bytes[..position]);
+    }
+    let files = Files { system, original_file: path_bytes.to_vec() };
     let model = ObjParser::parse(bytes, files)?;
-    create_data(&model)
+    let scene = create_data(&model)?;
+    if system.directory_count() > 0 {
+        system.pop_directory();
+    }
+    Ok(scene)
 }
 
 /// `CreateDataFromImport`: a mesh per object mesh with faces, or one
