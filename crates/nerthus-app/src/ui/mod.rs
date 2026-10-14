@@ -3,9 +3,10 @@
 //! the left (five parts) and the property area on the right (one part),
 //! with splitters between them.
 
-mod alert;
+pub(crate) mod alert;
 mod artifact_explorer;
 pub mod batch_build;
+mod bound_variable;
 mod build_settings;
 mod build_window;
 mod colour_picker;
@@ -23,6 +24,7 @@ mod file_commands;
 pub mod file_dialogs;
 mod file_windows;
 pub mod floating_viewport;
+mod formulas;
 mod gizmos;
 mod gradient_editor;
 mod graph_area;
@@ -39,6 +41,8 @@ mod math_editor;
 mod memory_dialogs;
 mod menus;
 mod mixer_layers;
+mod modifier_list;
+mod nahimic_warning;
 mod node_states;
 mod note_editor;
 pub mod onboard;
@@ -50,6 +54,7 @@ mod progress_window;
 mod prompt;
 mod property_area;
 mod regions;
+pub(crate) mod slider_popups;
 mod statistics_window;
 mod status_bar;
 mod syntax_box;
@@ -61,6 +66,8 @@ mod variable_dialog;
 pub mod viewport_2d;
 mod viewport_area;
 mod widgets;
+
+pub(crate) use data_view::stats::byte_size;
 
 use std::panic::AssertUnwindSafe;
 
@@ -148,8 +155,13 @@ pub struct UiState {
     pub docs: Option<docs_window::DocsWindow>,
     pub updates: crate::updates::Updates,
     pub onboard: Option<onboard::Onboard>,
+    /// The Nahimic warning, while it shows.
+    pub nahimic_warning: Option<nahimic_warning::NahimicWarning>,
     pub onboard_at_launch: bool,
     pub check_updates_at_launch: bool,
+    /// What's New shows by itself if this version has not shown it yet,
+    /// once the first-run setup is answered (`VersionFirstRun`).
+    pub whats_new_at_launch: bool,
     /// `--show` of a window that needs the editor to open.
     tools_at_launch: Vec<tool_commands::ToolCommand>,
     commands_at_launch: Vec<Command>,
@@ -166,6 +178,9 @@ pub struct UiState {
     screenshot_at_launch: Option<u32>,
     /// `--show region:<name>`: the region previewed once the project is in.
     region_at_launch: Option<String>,
+    /// `--show slider-popup:<property>:<along>`: the shown node's slider for
+    /// that property right-clicked that share along, once the preview is in.
+    right_click_at_launch: Option<String>,
     /// `--show` of a graph menu or search, opened once the graph is laid
     /// out (`graph_commands::open_at_launch`).
     graph_at_launch: Option<String>,
@@ -216,8 +231,10 @@ impl Default for UiState {
             docs: None,
             updates: crate::updates::Updates::default(),
             onboard: None,
+            nahimic_warning: None,
             onboard_at_launch: false,
             check_updates_at_launch: false,
+            whats_new_at_launch: false,
             tools_at_launch: Vec::new(),
             commands_at_launch: Vec::new(),
             floating_commands: Vec::new(),
@@ -226,6 +243,7 @@ impl Default for UiState {
             navigation_hint_until: None,
             screenshot_at_launch: None,
             region_at_launch: None,
+            right_click_at_launch: None,
             graph_at_launch: None,
             document_serial: 0,
             styled: false,
@@ -276,14 +294,17 @@ impl UiState {
     /// (resolution, build, tiles, nodes, script, terrain, regions),
     /// `data-view` with an optional `:tab` (terrain, build, stats, vars),
     /// `options` with an optional `:page` (`compute`, `data-view`, …),
-    /// `lighting`, `region:<name>` (that region previewed), `screenshot`
+    /// `lighting`, `region:<name>` (that region previewed),
+    /// `slider-popup:<property>:<along>` (the shown node's slider for the
+    /// property right-clicked that share along it), `screenshot`
     /// with an optional `:scale` (F9 once the view has rendered), Tools'
     /// and Help's windows (`console`, `artifacts`, `diagnostics`,
     /// `shortcuts`, `whats-new` with an optional `:notes`, `about`,
     /// `docs` with an optional `:<page>[#heading]`, `docs-search:<words>`,
     /// `updates`, or `updates:sample` for a made-up newer release), the
-    /// first-run setup on a page (`onboard:preferences`), or one of the
-    /// graph's menus
+    /// first-run setup on a page (`onboard:preferences`), the Nahimic
+    /// warning and its "Nahimic Detected!" (`nahimic`, or `nahimic:quiet`
+    /// for those alone), or one of the graph's menus
     /// (`graph_commands::open_at_launch`).
     pub fn open_at_launch(&mut self, show: &str) {
         let (panel, detail) = show.split_once(':').unwrap_or((show, ""));
@@ -318,6 +339,9 @@ impl UiState {
             "diagnostics" => self.diagnostics = Some(diagnostics_window::DiagnosticsWindow::open()),
             "shortcuts" => self.help.shortcuts = true,
             "whats-new" => self.help.whats_new = Some(if detail == "notes" { 2 } else { 0 }),
+            // As if Nahimic was found running: the warning, and "Nahimic
+            // Detected!" (`nahimic:quiet` without the warning).
+            "nahimic" => crate::nahimic::pretend_detected(detail != "quiet"),
             "about" => self.help.about = true,
             "docs" => {
                 let target = if detail.is_empty() { crate::docs::HOME } else { detail };
@@ -344,6 +368,7 @@ impl UiState {
                 }
             }
             "command-line" => self.commands_at_launch.push(Command::ShowBuildCommandLine),
+            "bake-selected" => self.commands_at_launch.push(Command::BakeSelected),
             "statistics" => self.commands_at_launch.push(Command::ShowBuildStatistics),
             "flat" => self.commands_at_launch.push(Command::ToggleFlatView),
             "floating" => self.commands_at_launch.push(Command::SetViewportFloating(true)),
@@ -356,6 +381,7 @@ impl UiState {
                 self.alert = Some(alert::Alert::new("Orphan Variables Detected", text, alert::AlertKind::Warning).staying());
             }
             "region" => self.region_at_launch = Some(detail.to_string()),
+            "slider-popup" => self.right_click_at_launch = Some(detail.to_string()),
             "start-dialog" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::StartDialog)),
             "examples" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::OpenExamples)),
             "export-macro" => self.commands_at_launch.push(Command::File(crate::files::FileCommand::ExportMacro)),
@@ -460,6 +486,7 @@ fn draw_editor(
     // `UIScaler`: the whole shell scales by `UiScale`.
     ctx.set_zoom_factor(editor.user.options.ui_scale());
     theme::set_settings(ctx, editor.user.options.interface_settings());
+    formulas::publish(ctx, editor);
     if ui_state.document_serial != editor.document_serial {
         ui_state.reset_views();
         // The project opens on the graph tab it was saved showing.
@@ -519,6 +546,11 @@ fn draw_editor(
     graph_area::show(&mut root, layout.graph, editor, ui_state, &mut pending);
     editor.graph_region = physical_region(ui_state.graph.rect, ctx.pixels_per_point());
     let properties_rect = layout.properties.shrink(AREA_MARGIN);
+    if editor.rendered()
+        && let Some(request) = ui_state.right_click_at_launch.take()
+    {
+        property_area::right_click_at_launch(ctx, &request);
+    }
     property_area::show(&mut root, properties_rect, editor, &mut pending);
     tool_commands::forget_add_modifiers(ctx);
     // The Constructor, whose previews need the maps feeding its node.

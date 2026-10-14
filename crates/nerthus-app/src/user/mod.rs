@@ -23,6 +23,8 @@ pub use usage::UsageStats;
 const OPTIONS_FILE: &str = "user.options";
 const PREFERENCES_FILE: &str = nerthus_engine::paths::PREFERENCES_FILE;
 const RECENT_FILE: &str = "recent-files.mru";
+/// A proxy address for the session, over the preferences' own.
+const PROXY_FILE: &str = "proxy.txt";
 /// `MRUList`'s default length (`MRU_TOR`).
 const RECENT_LIMIT: usize = 9;
 
@@ -59,25 +61,22 @@ impl User {
         }
     }
 
-    /// `User.LoadOptions` and the preferences: the saved files, or
-    /// the defaults for any that are missing or unreadable.
-    pub fn load() -> Self {
+    /// `App.LoadPreferences`: the saved options and preferences (the
+    /// defaults for any that are missing or unreadable), with
+    /// `proxy.txt`'s address as the proxy; or in Safe Mode
+    /// (`--safe-mode`) the defaults, written over the saved ones only once
+    /// something changes.
+    pub fn load(safe_mode: bool) -> Self {
         let Some(folder) = data_folder() else {
             log::warn!("no home folder: settings will not be saved");
             return Self::in_memory();
         };
-        let options_path = folder.join(OPTIONS_FILE);
-        let preferences_path = folder.join(PREFERENCES_FILE);
-        let mut options = read_json(&options_path).map(|saved| UserOptions::from_json(&saved)).unwrap_or_default();
-        let mut preferences = read_json(&preferences_path).map(|saved| Preferences::from_json(&saved)).unwrap_or_default();
-        // A first run writes the files; a file that is there but
-        // unreadable stays until something changes.
-        if !options_path.exists() {
-            options.mark_changed();
-        }
-        if !preferences_path.exists() {
-            preferences.mark_changed();
-        }
+        let (options, preferences) = if safe_mode {
+            log::warn!("SAFE MODE: User initiated Safe Mode.");
+            (UserOptions::new(), Preferences::new())
+        } else {
+            read_settings(&folder)
+        };
         let recent = RecentFiles::load(folder.join(RECENT_FILE));
         let locations = Locations::load(folder.join(locations::LOCATIONS_FILE));
         let usage = UsageStats::load(folder.join(usage::USAGE_FILE));
@@ -98,6 +97,13 @@ impl User {
         }
     }
 
+    /// `--proxy`: the proxy turned on with this address, and saved.
+    pub fn set_proxy(&mut self, address: &str) {
+        log::info!("Setting proxy by CLI to {address}");
+        self.preferences.set_member("Locations", "UseProxy", serde_json::json!(true));
+        self.preferences.set_member("Locations", "Proxy", serde_json::json!(address));
+    }
+
     /// `MRU_TOR.AddItem`: a project opened or saved, kept on disk at once.
     pub fn add_recent(&mut self, project: &Path) {
         self.recent.add(project);
@@ -106,6 +112,27 @@ impl User {
         };
         write_file(&folder, RECENT_FILE, &self.recent.to_text());
     }
+}
+
+/// The options and preferences saved in the folder, the defaults for a
+/// file that is missing or unreadable. A first run writes the files; a
+/// file that is there but unreadable stays until something changes.
+/// `proxy.txt` sets the proxy's address for the session.
+fn read_settings(folder: &Path) -> (UserOptions, Preferences) {
+    let options_path = folder.join(OPTIONS_FILE);
+    let preferences_path = folder.join(PREFERENCES_FILE);
+    let mut options = read_json(&options_path).map(|saved| UserOptions::from_json(&saved)).unwrap_or_default();
+    let mut preferences = read_json(&preferences_path).map(|saved| Preferences::from_json(&saved)).unwrap_or_default();
+    if !options_path.exists() {
+        options.mark_changed();
+    }
+    if !preferences_path.exists() {
+        preferences.mark_changed();
+    }
+    if let Ok(address) = std::fs::read_to_string(folder.join(PROXY_FILE)) {
+        preferences.set_session_proxy(address.trim());
+    }
+    (options, preferences)
 }
 
 /// A settings file's JSON, or nothing (logged) when it is missing or bad.
@@ -211,5 +238,31 @@ mod tests {
         // Unchanged preferences are not written.
         assert!(!folder.join(PREFERENCES_FILE).exists());
         let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn proxy_text_sets_the_address_without_saving_it() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
+        let folder = std::env::temp_dir().join(format!("nerthus-proxy-{nanos}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(OPTIONS_FILE), UserOptions::new().to_json()).unwrap();
+        std::fs::write(folder.join(PREFERENCES_FILE), Preferences::new().to_json()).unwrap();
+        std::fs::write(folder.join(PROXY_FILE), "http://proxy:8080\r\n").unwrap();
+
+        let (options, preferences) = read_settings(&folder);
+        assert_eq!(preferences.member("Locations", "Proxy"), serde_json::json!("http://proxy:8080"));
+        assert_eq!(preferences.member("Locations", "UseProxy"), serde_json::json!(false));
+        assert!(!preferences.changed());
+        assert!(!options.changed());
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn the_proxy_option_turns_the_proxy_on_and_saves_it() {
+        let mut user = User::in_memory();
+        user.set_proxy("http://proxy:8080");
+        assert_eq!(user.preferences.member("Locations", "Proxy"), serde_json::json!("http://proxy:8080"));
+        assert_eq!(user.preferences.member("Locations", "UseProxy"), serde_json::json!(true));
+        assert!(user.preferences.changed());
     }
 }

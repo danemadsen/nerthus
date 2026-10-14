@@ -271,15 +271,19 @@ fn monitor_count() -> (usize, Option<usize>) {
     (count, (primary != usize::MAX).then_some(primary))
 }
 
-/// Counts the monitors for General's "Start Nerthus on".
-pub fn count_monitors(monitors: bevy::prelude::Query<(bevy::prelude::Entity, Option<&bevy::window::PrimaryMonitor>), bevy::prelude::With<bevy::window::Monitor>>) {
-    let mut count = 0;
+/// Counts the monitors for General's "Start Nerthus on", numbered in the
+/// order the system lists them (the window opens on one by that number).
+pub fn count_monitors(
+    monitors: bevy::prelude::Query<(bevy::prelude::Entity, Option<&bevy::window::PrimaryMonitor>), bevy::prelude::With<bevy::window::Monitor>>,
+    listed: Option<bevy::prelude::Res<bevy::winit::WinitMonitors>>,
+) {
+    let count = monitors.iter().count();
     let mut primary = usize::MAX;
-    for (index, (_, is_primary)) in monitors.iter().enumerate() {
-        count += 1;
-        if is_primary.is_some() {
-            primary = index;
-        }
+    let primary_entity = monitors.iter().find(|(_, is_primary)| is_primary.is_some()).map(|(entity, _)| entity);
+    if let (Some(listed), Some(entity)) = (listed, primary_entity) {
+        let handle = listed.find_entity(entity);
+        let position = (0..count).position(|index| listed.nth(index) == handle);
+        primary = position.unwrap_or(usize::MAX);
     }
     MONITORS.store(count, std::sync::atomic::Ordering::Relaxed);
     PRIMARY_MONITOR.store(primary, std::sync::atomic::Ordering::Relaxed);

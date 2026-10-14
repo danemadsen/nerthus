@@ -13,7 +13,7 @@ use anyhow::{bail, Context, Result};
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::{Options, Tree};
 
-use crate::pixel_cache::{CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel};
 
 /// `DefaultResolution` and `DefaultSVGDensity`.
 const DEFAULT_RESOLUTION: f32 = 72.0;
@@ -57,5 +57,5 @@ pub fn read(path: &Path) -> Result<PixelCache> {
         data.extend([over(pixel[0]), over(pixel[1]), over(pixel[2]), 65535.0]);
     }
     let channels = vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue, PixelChannel::Alpha];
-    Ok(PixelCache { width, height, channels, data, colorspace: CacheColorspace::SRgb, gamma: DEFAULT_GAMMA })
+    Ok(PixelCache::new(width, height, channels, data, CacheColorspace::SRgb, DEFAULT_GAMMA))
 }

@@ -31,7 +31,7 @@ This creates a variable based on this property. If it is a float (decimal) value
 
 Once you have one or more variables defined, you can open the Property Binding menu and bind the property to any variable. You can also unbind a property the same way.
 
-Once a property is bound, the normal Slider or other control will be replaced with a Variable control. You will see the name of the variable and the current value. You can click the value to edit it but note that it will also change the Variable's value and affect any other property bound to this variable.
+Once a property is bound, the normal Slider or other control will be replaced with a Variable control. You will see the name of the variable and the current value. You can click the value to edit it but note that it will also change the Variable's value and affect any other property bound to this variable. Double-click the control to open the variables in the Data View.
 
 ### Unbind a Property
 

@@ -15,6 +15,7 @@ use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::data_view::{toolbar, toolbar_divider, toolbar_row};
 use crate::ui::editors::{dropdown_box, palette_color, range_slider, slider, toggle, RangeSpec, SliderSpec};
+use crate::ui::slider_popups::{self, BoxWidth, TypingLook};
 use crate::ui::widgets::{icon_button, icon_menu, icon_toggle, menu_caption, menu_item, menu_separator};
 
 /// `Create Variable`'s entries: header, icon (`Accent-Muted-Teal`).
@@ -516,7 +517,8 @@ fn variable_editor(ui: &mut Ui, editor: &mut Editor, key: &str, variable: &Varia
                 VariableValue::Float2(pair) => *pair,
                 _ => [0.0, 1.0],
             };
-            let spec = RangeSpec { min: float(&min_value), max: float(&max_value), integer: false, inset: Some(0.0) };
+            let mut spec = RangeSpec::linear(float(&min_value), float(&max_value));
+            spec.inset = Some(0.0);
             let changed = frame.show(ui, |ui| range_slider(ui, id, &variable.name, low as f64, high as f64, &spec, color)).inner;
             if let Some((low, high)) = changed {
                 let value = VariableValue::Float2([low as f32, high as f32]);
@@ -652,7 +654,7 @@ fn unbound_row(ui: &mut Ui, editor: &mut Editor, key: &str, variable: &Variable,
         let on_name = pointer.x - rect.left() < 100.0;
         let typing = if on_name { Some(RowTyping::Name(key.to_string())) } else { (!decoration).then(|| RowTyping::Value(variable.value.to_text())) };
         if let Some(typing) = typing {
-            ui.data_mut(|data| data.insert_temp(typing_id, typing));
+            open_row_typing(ui.ctx(), typing_id, typing);
         }
     }
     if let Some(typed) = row_typing(ui, typing_id, rect) {
@@ -685,42 +687,50 @@ enum RowTyping {
 }
 
 /// The row's `EditablePopup` (monospace 16): over the name 48 in and 96
-/// wide, over the value 112 in and as wide as the row less 128, closing as
-/// [`crate::ui::widgets::popup_outcome`] says. `Some` once committed
+/// wide, over the value 112 in and as wide as the row less 128, starting
+/// from what `typing` holds.
+fn open_row_typing(ctx: &egui::Context, typing_id: egui::Id, typing: RowTyping) {
+    let (field, text) = match typing {
+        RowTyping::Name(text) => (RowField::Name, text),
+        RowTyping::Value(text) => (RowField::Value, text),
+    };
+    ctx.data_mut(|data| data.insert_temp(typing_id.with("field"), field));
+    slider_popups::open_typing(ctx, typing_id, text);
+}
+
+/// Which of a row's two texts its box is typing.
+#[derive(Clone, Copy, Debug)]
+enum RowField {
+    Name,
+    Value,
+}
+
+/// The row's typing box while it shows; `Some` once its text is taken
 /// (`EditablePopup_EditSuccess`).
 fn row_typing(ui: &mut Ui, typing_id: egui::Id, row: Rect) -> Option<RowTyping> {
-    let mut typing: RowTyping = ui.data(|data| data.get_temp(typing_id))?;
-    let (offset, width) = match typing {
-        RowTyping::Name(_) => (48.0, 96.0),
-        RowTyping::Value(_) => (112.0, (row.width() - 128.0).max(64.0)),
+    let field_id = typing_id.with("field");
+    let field: RowField = ui.data(|data| data.get_temp(field_id))?;
+    // In the popup's own units.
+    let (offset, width) = match field {
+        RowField::Name => (48.0, 96.0),
+        RowField::Value => (112.0, (row.width() - 128.0).max(64.0)),
     };
-    let top_left = Pos2::new(row.left() + offset, row.top());
-    let area = egui::Area::new(typing_id.with("area")).fixed_pos(top_left).order(egui::Order::Foreground);
-    let shown = area.show(ui.ctx(), |ui| {
-        let mut frame = egui::Frame::new();
-        frame.fill = theme::TEXTBOX_BACKGROUND;
-        frame.stroke = Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER);
-        frame.corner_radius = egui::CornerRadius::same(2);
-        frame.show(ui, |ui| {
-            let text = match &mut typing {
-                RowTyping::Name(text) | RowTyping::Value(text) => text,
-            };
-            let mut edit = egui::TextEdit::singleline(text);
-            edit = edit.font(theme::monospace(16.0));
-            edit = edit.desired_width(width - 8.0);
-            edit = edit.frame(egui::Frame::NONE);
-            let edit_response = ui.add(edit);
-            edit_response.request_focus();
-            edit_response
-        })
-    });
-    let edit_response = shown.inner.inner;
-    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
-        ui.data_mut(|data| data.insert_temp(typing_id, typing));
-        return None;
+    let popup_scale = slider_popups::popup_scale(ui.ctx());
+    let look = TypingLook {
+        top_left: Pos2::new(row.left() + offset * popup_scale, row.top()),
+        width: BoxWidth::Fixed(width * popup_scale),
+        font: slider_popups::value_font(),
     };
-    ui.data_mut(|data| data.remove::<RowTyping>(typing_id));
-    accepted.then_some(typing)
+    let taken = slider_popups::typing_box(ui, typing_id, &look);
+    if !slider_popups::typing_open(ui.ctx(), typing_id) {
+        ui.data_mut(|data| data.remove::<RowField>(field_id));
+    }
+    let text = taken?;
+    let typed = match field {
+        RowField::Name => RowTyping::Name(text),
+        RowField::Value => RowTyping::Value(text),
+    };
+    Some(typed)
 }
 
 /// `GetIconFromVar`.
@@ -843,6 +853,32 @@ fn confirm_delete_all(ui: &mut Ui, editor: &mut Editor, state: &mut VariablesSta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One frame of a row's typing box with these events.
+    fn typing_frame(context: &egui::Context, typing_id: egui::Id, events: Vec<egui::Event>) -> Option<RowTyping> {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let mut typed = None;
+        let output = context.run_ui(input, |ui| {
+            let row = Rect::from_min_size(Pos2::new(0.0, 40.0), Vec2::new(300.0, 32.0));
+            typed = row_typing(ui, typing_id, row);
+        });
+        output.drop_without_applying_deltas();
+        typed
+    }
+
+    #[test]
+    fn a_value_typed_over_a_row_is_taken_with_enter() {
+        let context = egui::Context::default();
+        let typing_id = egui::Id::new("row-typing-test");
+        open_row_typing(&context, typing_id, RowTyping::Value("0.5".to_string()));
+        assert!(typing_frame(&context, typing_id, Vec::new()).is_none());
+        let typed = egui::Event::Text("7".to_string());
+        assert!(typing_frame(&context, typing_id, vec![typed]).is_none());
+        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let taken = typing_frame(&context, typing_id, vec![enter]);
+        assert!(matches!(&taken, Some(RowTyping::Value(text)) if text.ends_with('7')), "{taken:?}");
+    }
 
     fn keys(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| name.to_string()).collect()

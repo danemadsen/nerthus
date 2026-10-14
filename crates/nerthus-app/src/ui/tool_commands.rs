@@ -13,8 +13,10 @@ use crate::ui::console_window::{self, ConsoleWindow};
 use crate::ui::diagnostics_window::{self, DiagnosticsRequest, DiagnosticsWindow};
 use crate::ui::docs_window::{self, DocsWindow};
 use crate::ui::help_windows::{self, UpdateDialog};
+use crate::ui::nahimic_warning::{self, NahimicWarning};
 use crate::ui::onboard::{self, Onboard};
 use crate::ui::prompt::Prompt;
+use crate::ui::status_bar;
 use crate::ui::UiState;
 use crate::updates::{DownloadOutcome, ProxySettings};
 use crate::user::Preferences;
@@ -52,6 +54,9 @@ pub enum ToolCommand {
     /// cancellation is reset.
     CancelPreviewBuild,
     ResetCancellation,
+    /// "Nahimic Detected!" on the Start dialog or the status bar: the
+    /// Nahimic warning.
+    ShowNahimicWarning,
 }
 
 /// M asks the property area to open its Add Modifiers menu, as a flag in
@@ -128,6 +133,11 @@ pub fn run(command: ToolCommand, editor: &mut Editor, ui_state: &mut UiState) {
         ToolCommand::ResetCancellation => {
             log::info!("Manual reset of Cancellation Token.");
             editor.cancel_build = false;
+        }
+        ToolCommand::ShowNahimicWarning => {
+            if ui_state.nahimic_warning.is_none() {
+                ui_state.nahimic_warning = Some(NahimicWarning::default());
+            }
         }
     }
 }
@@ -214,9 +224,10 @@ pub fn shortcuts(ctx: &egui::Context, pending: &mut Vec<Command>) {
     }
 }
 
-/// The first frame's work: the first-run setup, and the update check made
-/// at start.
+/// The first frame's work: the memory readout's colour noted, the
+/// first-run setup, and the update check made at start.
 pub fn start(editor: &Editor, ui_state: &mut UiState) {
+    status_bar::note_eco_mark();
     if ui_state.onboard_at_launch {
         ui_state.onboard = Some(Onboard::open(editor.compute.cpu_only));
     }
@@ -229,7 +240,7 @@ pub fn start(editor: &Editor, ui_state: &mut UiState) {
 /// Whether a window that keeps the editor's keys to itself is up (the
 /// modal dialogs).
 pub fn modal_open(ui_state: &UiState) -> bool {
-    ui_state.onboard.is_some() || ui_state.artifact_explorer.is_some() || ui_state.help.any_open()
+    ui_state.onboard.is_some() || ui_state.artifact_explorer.is_some() || ui_state.help.any_open() || ui_state.nahimic_warning.is_some()
 }
 
 /// Draws the windows open, and an update check's answer once it is in.
@@ -239,6 +250,17 @@ pub fn show_windows(ctx: &egui::Context, editor: &mut Editor, ui_state: &mut UiS
     let mut settings_reset = false;
     for command in ui_state.take_tools_at_launch() {
         run(command, editor, ui_state);
+    }
+    if ui_state.whats_new_at_launch && ui_state.onboard.is_none() {
+        ui_state.whats_new_at_launch = false;
+        if help_windows::version_first_run() {
+            ui_state.help.whats_new = Some(0);
+            ui_state.help.whats_new_first_run = true;
+        }
+    }
+    // The check made as Nerthus starts found Nahimic's service running.
+    if crate::nahimic::take_warning_request() && ui_state.nahimic_warning.is_none() {
+        ui_state.nahimic_warning = Some(NahimicWarning::default());
     }
     if let Some(answer) = ui_state.updates.poll() {
         ui_state.help.update = Some(UpdateDialog::new(answer));
@@ -281,6 +303,11 @@ pub fn show_windows(ctx: &egui::Context, editor: &mut Editor, ui_state: &mut UiS
         && !onboard::show(ctx, editor, setup, &mut ui_state.file_dialogs)
     {
         ui_state.onboard = None;
+    }
+    if let Some(warning) = ui_state.nahimic_warning.as_mut()
+        && !nahimic_warning::show(ctx, warning)
+    {
+        ui_state.nahimic_warning = None;
     }
     settings_reset
 }

@@ -4,11 +4,21 @@
 //! — which the node reads raw.
 
 mod bc7_tables;
+pub(crate) mod blob;
+pub mod bmp;
 pub mod dds;
 pub mod dng;
 pub mod emf;
+pub mod exr;
+pub mod gif;
+pub mod hdr;
+mod exr_dwa;
+pub mod jpeg;
 pub mod jp2;
 pub mod miff;
 pub mod psd;
+pub mod sgi;
 pub mod svg;
+pub mod tiff;
 pub mod webp;
+pub(crate) mod xz;

@@ -6,16 +6,18 @@
 
 use egui::{Align, Color32, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use nerthus_engine::json::f32_value;
-use nerthus_engine::{Catalogue, ParameterSpec};
+use nerthus_engine::{Catalogue, ParameterSpec, StateOverride};
 use serde_json::Value;
 
 use crate::editor::{DialogRequest, Editor};
 use crate::icons;
 use crate::node_ui::node_ui;
 use crate::theme;
+use crate::ui::bound_variable::{self, Bound};
 use crate::ui::commands::Command;
 use crate::ui::editors::{self, palette_color, Edit, EditorContext};
 use crate::ui::graph_canvas::{node_color, node_icon};
+use crate::ui::modifier_list::modifier_list;
 use crate::ui::node_states::{self, StateAction};
 use crate::ui::tool_commands::ToolCommand;
 use crate::ui::widgets::{check_item, icon_menu, icon_menu_sized, link_button, menu_caption, menu_item, menu_item_enabled, menu_separator, submenu, toolbar_background};
@@ -37,6 +39,13 @@ const GROUP_MARGIN: f32 = 4.0;
 const MODIFIER_BUTTON: f32 = 24.0;
 /// `btnAddModifier`: 32 by 24.
 const ADD_BUTTON_WIDTH: f32 = 32.0;
+/// The Gate's and a baked node's panels, remembered apart from the
+/// parameters' groups.
+const GATE_PANEL_KEY: usize = usize::MAX - 1;
+const BAKED_PANEL_KEY: usize = usize::MAX - 2;
+/// Their buttons' padding and margin (16 across, 8 down).
+const PANEL_BUTTON_PADDING: f32 = 8.0;
+const PANEL_BUTTON_MARGIN: Vec2 = Vec2::new(16.0, 8.0);
 
 /// The modifier toggles: icon, tooltip, modifier type, their gaps (left
 /// margins in `ModifierStack`) and accent (`Accent-Muted-Green`, else the
@@ -480,7 +489,8 @@ fn parameter_groups<'a>(spec: &'a nerthus_engine::NodeSpec) -> (Vec<ParameterGro
 }
 
 /// The parameters in their group panels, then the modifiers; applies the
-/// edits made.
+/// edits made. A Gate shows its bake panel instead, and a baked node its
+/// own (`EditorBase.GenerateControls`).
 fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, commands: &mut Vec<Command>) {
     let Some(node) = editor.document.node(node_id) else {
         return;
@@ -489,14 +499,31 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
         ui.label("Unknown node type");
         return;
     };
+    ui.spacing_mut().item_spacing = Vec2::ZERO;
+    let state = StateOverride::of(node);
+    if node.type_name == "Gate" {
+        gate_panel(ui, node_id, state, commands);
+        return;
+    }
+    if state == StateOverride::Baked {
+        baked_panel(ui, node_id, commands);
+        return;
+    }
     let asset = &editor.document.project.assets[0];
     let rules = node_ui(node, &asset.terrain.nodes, &asset.automation);
     let values = node.values.clone();
     let (groups, last_color_flip) = parameter_groups(spec);
+    // What terrain-mark sliders mark: the node's own output as last built.
+    let terrain_range = editor.status(node_id).range.map(|(lowest, highest)| (lowest as f64, highest as f64));
+    // What a bound parameter's expression of its variable is worked out
+    // against.
+    let expression_context = nerthus_engine::automation::ExpressionContext {
+        resolution: nerthus_engine::Resolution::square(editor.preview_resolution),
+        terrain_height: asset.terrain.height,
+    };
     let mut edits: Vec<(String, Edit)> = Vec::new();
     // Each seed box's id, for the seeds its dice draws.
     let mut seed_boxes: std::collections::HashMap<String, egui::Id> = std::collections::HashMap::new();
-    ui.spacing_mut().item_spacing = Vec2::ZERO;
     for group in &groups {
         group_panel(ui, (node_id, group.key), &group.title, group.expanded, |ui| {
             for (parameter, color) in &group.entries {
@@ -511,7 +538,33 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 let value = computed.or_else(|| values.get(&parameter.name).cloned()).unwrap_or(Value::Null);
                 let id = ui.id().with(("parameter", node_id, &parameter.name));
                 let enabled = parameter.enabled && rules.enabled(&parameter.name);
-                let context = EditorContext { color: *color, default: spec.defaults.get(&parameter.name), values: Some(&values), area_width };
+                let context = EditorContext {
+                    color: *color,
+                    default: spec.defaults.get(&parameter.name),
+                    values: Some(&values),
+                    area_width,
+                    terrain_range,
+                };
+                take_launch_right_click(ui.ctx(), &parameter.name, id);
+                // A bound parameter shows its variable, whatever its own
+                // editor would be (`EditorControlFactory.GetControl` asks
+                // first).
+                let binding = asset.automation.bindings.iter().find(|binding| binding.node == node_id && binding.property == parameter.name);
+                if let Some(binding) = binding {
+                    let bound = Bound {
+                        node: node_id,
+                        parameter,
+                        key: &binding.variable,
+                        automation: &asset.automation,
+                        context: &expression_context,
+                    };
+                    let tooltip = bound_variable::tooltip(parameter, &binding.variable);
+                    let bind_type = bind_type(&asset.automation, node_id, &parameter.name);
+                    let automated = Automated::of(&asset.automation, node_id, &parameter.name);
+                    let edit = editor_row(ui, enabled, Some(&tooltip), bind_type, &automated, |ui| bound_variable::bound_variable(ui, id, &bound));
+                    edits.push((parameter.name.clone(), edit));
+                    continue;
+                }
                 // Labels stand alone (`EditorLabel`, `ComputedString`).
                 let is_label = parameter.value_type == nerthus_engine::ValueType::Byte || parameter.kind == "ComputedString";
                 if is_label {
@@ -548,7 +601,15 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
     let modifier_edits = modifier_list(ui, node, node_id, last_color_flip, area_width);
     ui.add_space(16.0);
 
-    for (index, name, edit) in modifier_edits {
+    if let Some((place, shift)) = modifier_edits.close {
+        commands.push(Command::RemoveModifier { node: node_id, place, ask: !shift });
+    }
+    if let Some((from, to)) = modifier_edits.moved
+        && editor.document.move_modifier(node_id, from, to)
+    {
+        editor.changed();
+    }
+    for (index, name, edit) in modifier_edits.edits {
         let Some(modifier) = editor.document.node(node_id).and_then(|data| data.modifiers.get(index)) else {
             continue;
         };
@@ -579,6 +640,27 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
                 }
             }
             Edit::Command => commands.push(Command::NodeAction(name)),
+            Edit::BoundText(text) => {
+                // `VariableEditor.EditablePopup_EditSuccess`: the text must
+                // make a value of the parameter's type.
+                let bindings = &editor.document.automation().bindings;
+                let binding = bindings.iter().find(|binding| binding.node == node_id && binding.property == name);
+                let key = binding.map(|binding| binding.variable.clone());
+                let converts = spec.parameter(&name).is_some_and(|parameter| bound_variable::converts(parameter, &text));
+                match key {
+                    Some(key) if converts => {
+                        editor.document.set_variable_text(&key, &text);
+                        editor.changed();
+                    }
+                    Some(_) => {
+                        let caption = "Invalid value".to_string();
+                        let text = "The value was not valid for this property.".to_string();
+                        commands.push(Command::ShowMessage { caption, text });
+                    }
+                    None => {}
+                }
+            }
+            Edit::ShowVariables => commands.push(Command::ShowDataTab(crate::ui::data_view::DataTab::Vars)),
             Edit::ShowDocs(target) => commands.push(Command::Tools(ToolCommand::ShowDocs(target.to_string()))),
             Edit::AddInput => {
                 if editor.document.add_input(node_id) {
@@ -630,6 +712,81 @@ fn parameters(ui: &mut Ui, editor: &mut Editor, node_id: i32, area_width: f32, c
     }
 }
 
+fn launch_right_click_id() -> egui::Id {
+    egui::Id::new("right-click-at-launch")
+}
+
+/// `--show slider-popup:<property>:<along>`: the shown node's slider for
+/// the property is right-clicked that share along its width (0.5 if not
+/// given) when it next draws.
+pub fn right_click_at_launch(ctx: &egui::Context, request: &str) {
+    let (property, along) = request.split_once(':').unwrap_or((request, "0.5"));
+    let along: f32 = along.parse().unwrap_or(0.5);
+    ctx.data_mut(|data| data.insert_temp(launch_right_click_id(), (property.to_string(), along)));
+}
+
+/// Hands a launch right-click to the slider `id` when it is for `property`.
+fn take_launch_right_click(ctx: &egui::Context, property: &str, id: egui::Id) {
+    let request: Option<(String, f32)> = ctx.data(|data| data.get_temp(launch_right_click_id()));
+    if let Some((wanted, along)) = request
+        && wanted.eq_ignore_ascii_case(property)
+    {
+        ctx.data_mut(|data| data.remove::<(String, f32)>(launch_right_click_id()));
+        crate::ui::slider_popups::request_right_click(ctx, id, along);
+    }
+}
+
+/// `CreateBakeNodeUI`: a Gate shows a "Gate Node" panel and nothing else:
+/// Bake Node, or Unbake Node once it is baked.
+fn gate_panel(ui: &mut Ui, node_id: i32, state: StateOverride, commands: &mut Vec<Command>) {
+    group_panel(ui, (node_id, GATE_PANEL_KEY), "Gate Node", true, |ui| match state {
+        StateOverride::None => {
+            if panel_button(ui, "Bake Node") {
+                commands.push(Command::BakeSelected);
+            }
+        }
+        StateOverride::Baked => {
+            if panel_button(ui, "Unbake Node") {
+                commands.push(Command::UnbakeNode(node_id));
+            }
+        }
+        StateOverride::Bypassed => {}
+    });
+}
+
+/// `CreateBakedUI`: a baked node shows a "Baked Node" panel in place of
+/// its parameters and modifiers, with Load Offloaded Cache.
+fn baked_panel(ui: &mut Ui, node_id: i32, commands: &mut Vec<Command>) {
+    group_panel(ui, (node_id, BAKED_PANEL_KEY), "Baked Node", true, |ui| {
+        if panel_button(ui, "Load Offloaded Cache") {
+            commands.push(Command::LoadOffloadedCache(node_id));
+        }
+    });
+}
+
+/// A panel's `Button` (padding 8, margin 16, 8, 16, 8), as wide as the
+/// panel: `Button-Background` (darker under the pointer and while
+/// pressed) in a 1px `Button-Border`, corners of 2.
+fn panel_button(ui: &mut Ui, text: &str) -> bool {
+    let galley = ui.painter().layout_no_wrap(text.to_string(), theme::interface(12.0), theme::LABEL_DEFAULT);
+    let height = galley.size().y + 2.0 * PANEL_BUTTON_PADDING + 2.0 * PANEL_BUTTON_MARGIN.y;
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    let button = row.shrink2(PANEL_BUTTON_MARGIN);
+    let response = ui.interact(button, ui.id().with(("panel-button", text)), Sense::click());
+    let fill = if response.is_pointer_button_down_on() {
+        theme::BUTTON_PRESSED
+    } else if response.hovered() {
+        theme::BUTTON_HOVER
+    } else {
+        theme::BUTTON_BACKGROUND
+    };
+    ui.painter().rect_filled(button, 2.0, fill);
+    ui.painter().rect_stroke(button, 2.0, Stroke::new(1.0, theme::BUTTON_BORDER), StrokeKind::Inside);
+    let text_position = button.center() - galley.size() / 2.0;
+    ui.painter().galley(text_position, galley, theme::LABEL_DEFAULT);
+    response.clicked()
+}
+
 /// `Convert.ToInt32(float)`: the nearest integer, halves to even; `None`
 /// where .NET throws (out of range, NaN).
 fn convert_to_int32(value: f32) -> Option<i32> {
@@ -666,101 +823,6 @@ fn editor_row(ui: &mut Ui, enabled: bool, help: Option<&str>, bind_type: BindTyp
         row.response.on_hover_text(help);
     }
     row.inner
-}
-
-/// The node's modifiers (`EditorBase.CreateModifiers`, `ModifierListBox`),
-/// in `Order`: each in a cladding box (`ModifierBorder`, padding 16, 4),
-/// its name when it has no UI, otherwise its editors (`Tag="modifier"`:
-/// no inset, 20 high after the first). Colours restart at the first of the
-/// palette the parameters left, which moves on after each modifier with
-/// editors (`ParamsY` for 0, else `ParamsX`).
-fn modifier_list(ui: &mut Ui, node: &nerthus_engine::NodeData, node_id: i32, color_flip: usize, area_width: f32) -> Vec<(usize, String, Edit)> {
-    use nerthus_engine::editing::{has_ui, modifier_name, modifier_order};
-    let mut edits = Vec::new();
-    let mut ordered: Vec<(usize, &nerthus_engine::ModifierData)> = node.modifiers.iter().enumerate().collect();
-    ordered.sort_by_key(|(_, modifier)| modifier_order(modifier));
-    if ordered.is_empty() {
-        return edits;
-    }
-    let count = ordered.len();
-    let mut made = 0usize;
-    let mut color_flip = color_flip;
-    let mut frame_outer = egui::Frame::new();
-    frame_outer.inner_margin = egui::Margin::same(4);
-    frame_outer.show(ui, |ui| {
-        for (position, (index, modifier)) in ordered.into_iter().enumerate() {
-            let top = if position == 0 { 4 } else { 0 };
-            let bottom = if position + 1 == count { 4 } else { 0 };
-            let mut frame = egui::Frame::new();
-            frame.fill = theme::PANEL_CLADDING;
-            frame.corner_radius = egui::CornerRadius { nw: top, ne: top, sw: bottom, se: bottom };
-            frame.inner_margin = egui::Margin { left: 16, right: 16, top: 4, bottom: 4 };
-            let shown = frame.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                let spec = Catalogue::get().modifier(&modifier.type_name);
-                let parameters = spec.map(|spec| spec.parameters.as_slice()).unwrap_or_default();
-                if !has_ui(modifier) || parameters.is_empty() {
-                    let title = nerthus_engine::humanize::humanize_title(modifier_name(modifier));
-                    let text = RichText::new(title).font(theme::interface(11.0)).color(theme::ICON_DEFAULT);
-                    ui.add_space(2.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.label(text);
-                    });
-                    ui.add_space(2.0);
-                    return;
-                }
-                let palette = if color_flip == 0 { 0 } else { 1 };
-                for (parameter_index, parameter) in parameters.iter().enumerate() {
-                    let color = palette_color(palette, made % 8);
-                    made += 1;
-                    let default = spec.and_then(|spec| spec.defaults.get(&parameter.name));
-                    let value = modifier.values.get(&parameter.name).cloned().or(default.cloned()).unwrap_or(Value::Null);
-                    let id = ui.id().with(("modifier", node_id, index, &parameter.name));
-                    let context = EditorContext { color, default, values: None, area_width };
-                    // Each editor has a 2px margin.
-                    let mut cell = egui::Frame::new();
-                    cell.inner_margin = egui::Margin::same(2);
-                    let edit = cell
-                        .show(ui, |ui| {
-                            if matches!(parameter.value_type, nerthus_engine::ValueType::Float | nerthus_engine::ValueType::Double | nerthus_engine::ValueType::Int) && !parameter.is_seed() {
-                                modifier_slider(ui, id, parameter, &value, &context, parameter_index == 0)
-                            } else {
-                                editors::parameter(ui, id, parameter, &value, &context)
-                            }
-                        })
-                        .inner;
-                    edits.push((index, parameter.name.clone(), edit));
-                }
-                color_flip = (color_flip + 1) % 3;
-            });
-            // `ModifierBorder`'s hover outline.
-            if shown.response.hovered() {
-                let outline = Stroke::new(1.5, Color32::from_rgba_unmultiplied(0xa2, 0xc5, 0xd2, 0x66));
-                ui.painter().rect_stroke(shown.response.rect, frame.corner_radius, outline, StrokeKind::Inside);
-            }
-        }
-    });
-    edits
-}
-
-/// A slider in a modifier (`Tag="modifier"`): no inset; after the first,
-/// 20 high.
-fn modifier_slider(ui: &mut Ui, id: egui::Id, parameter: &ParameterSpec, value: &Value, context: &EditorContext, first: bool) -> Edit {
-    let integer = parameter.value_type == nerthus_engine::ValueType::Int;
-    let mut spec = editors::SliderSpec::of(parameter, context.default, integer);
-    spec.inset = Some(0.0);
-    if !first {
-        spec.height = Some(20.0);
-    }
-    let current = value.as_f64().unwrap_or(0.0);
-    let label = parameter.display_name();
-    match editors::slider(ui, id, &label, current, &spec, context.color) {
-        Some(new_value) if integer => Edit::Set(serde_json::json!(new_value.round_ties_even() as i64)),
-        Some(new_value) if parameter.value_type == nerthus_engine::ValueType::Float => Edit::Set(f32_value(new_value as f32)),
-        Some(new_value) => Edit::Set(serde_json::json!(new_value)),
-        None => Edit::None,
-    }
 }
 
 /// Parameters with a `[CustomEditor]`: the SatelliteMap library list, the curve
@@ -1174,6 +1236,89 @@ fn state_items(ui: &mut Ui, has_node: bool, saved_state: bool, commands: &mut Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::Document;
+    use crate::ui::commands::run;
+    use crate::ui::UiState;
+    use bevy::prelude::Window;
+    use serde_json::json;
+
+    #[test]
+    fn a_modifier_close_button_asks_unless_shift_is_held() {
+        let mut document = Document::new();
+        let perlin = document.add_node("Perlin", [26000.0, 26000.0]).unwrap();
+        document.toggle_modifier(perlin, "Blur");
+        document.toggle_modifier(perlin, "Invert");
+        let mut editor = Editor::new(document);
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::RemoveModifier { node: perlin, place: 0, ask: true }], &mut editor, &mut ui_state, &mut window);
+        let question = ui_state.prompt.take().expect("it asks first");
+        assert_eq!(question.caption, "Delete Modifier?");
+        assert_eq!(question.text, "Are you sure you want to delete this modifier?");
+        assert_eq!(editor.document.node(perlin).unwrap().modifiers.len(), 2);
+        run(vec![question.yes.expect("Yes removes it")], &mut editor, &mut ui_state, &mut window);
+        let left: Vec<String> = editor.document.node(perlin).unwrap().modifiers.iter().map(|modifier| modifier.type_name.clone()).collect();
+        assert_eq!(left, ["Invert"]);
+        // Shift held: straight away.
+        run(vec![Command::RemoveModifier { node: perlin, place: 0, ask: false }], &mut editor, &mut ui_state, &mut window);
+        assert!(ui_state.prompt.is_none());
+        assert!(editor.document.node(perlin).unwrap().modifiers.is_empty());
+    }
+
+    /// Mountain, then a baked Gate, then a baked Blur.
+    fn baked_chain() -> (Editor, i32, i32) {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let gate = document.add_node("Gate", [26300.0, 26000.0]).unwrap();
+        let blur = document.add_node("Blur", [26600.0, 26000.0]).unwrap();
+        document.connect(mountain, "Out", gate, "In");
+        document.connect(gate, "Out", blur, "In");
+        document.set_member(gate, "StateOverride", json!("Baked"), "Bake", true);
+        document.set_member(blur, "StateOverride", json!("Baked"), "Bake", true);
+        let mut editor = Editor::new(document);
+        editor.select(Some(gate));
+        (editor, gate, blur)
+    }
+
+    #[test]
+    fn the_gate_panel_unbakes_after_asking_and_leaves_the_file_unsaved() {
+        let (mut editor, gate, blur) = baked_chain();
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::UnbakeNode(gate)], &mut editor, &mut ui_state, &mut window);
+        let question = ui_state.prompt.take().expect("it asks first");
+        assert_eq!(question.caption, "Unbake Node?");
+        assert_eq!(question.text, "Are you sure you want to unbake this node?\n\nAny baked child nodes will also be unbaked.");
+        assert_eq!(question.yes, Some(Command::UnbakeNodeConfirmed(gate)));
+        run(vec![Command::UnbakeNodeConfirmed(gate)], &mut editor, &mut ui_state, &mut window);
+        for node in [gate, blur] {
+            let data = editor.document.node(node).unwrap();
+            assert_eq!(StateOverride::of(data), StateOverride::None);
+        }
+        assert!(editor.document.dirty);
+        assert!(editor.dialog.is_none(), "no save is asked for");
+    }
+
+    #[test]
+    fn a_region_preview_keeps_a_gate_baked() {
+        let (mut editor, gate, _) = baked_chain();
+        editor.preview_region = Some("Region 1".to_string());
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::UnbakeNode(gate)], &mut editor, &mut ui_state, &mut window);
+        let refusal = ui_state.prompt.take().expect("it refuses");
+        assert_eq!(refusal.caption, "Unbaking Critical Node");
+        assert_eq!(refusal.yes, None);
+    }
+
+    #[test]
+    fn load_offloaded_cache_reads_the_node_and_its_baked_descendants() {
+        let (mut editor, gate, blur) = baked_chain();
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::LoadOffloadedCache(gate)], &mut editor, &mut ui_state, &mut window);
+        assert_eq!(editor.pending_load_bakes(), [gate, blur]);
+    }
 
     #[test]
     fn groups_cycle_palettes_like_editor_base() {

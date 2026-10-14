@@ -147,6 +147,30 @@ impl Document {
         }
     }
 
+    /// The variable a renamed node offers to rename after itself: when
+    /// exactly one variable is bound to the node, its key and the node's
+    /// name, or `Name_Id` when another variable has that name. None when
+    /// the variable already has the name, or when `Name_Id` is taken too
+    /// (the rename would replace that variable).
+    pub fn bound_variable_rename(&self, node: i32) -> Option<(String, String)> {
+        let name = self.node(node)?.name.clone();
+        let automation = self.automation();
+        let mut bindings = automation.bindings.iter().filter(|binding| binding.node == node);
+        let binding = bindings.next()?;
+        if bindings.next().is_some() {
+            return None;
+        }
+        let key = binding.variable.clone();
+        if key == name || !automation.variables.contains_key(&key) {
+            return None;
+        }
+        let target = if automation.variables.contains_key(&name) { format!("{name}_{node}") } else { name };
+        if automation.variables.contains_key(&target) {
+            return None;
+        }
+        Some((key, target))
+    }
+
     /// A name typed over a row's label (`EditablePopup_EditSuccess`):
     /// "Variable X renamed to Y".
     pub fn rename_variable(&mut self, key: &str, name: &str) {
@@ -233,6 +257,34 @@ mod tests {
         set_variable_member(&mut members, "Order", json!(3));
         let order: Vec<&str> = members.keys().map(String::as_str).collect();
         assert_eq!(order, ["Order", "Name", "Value", "Type", "Min", "Max", "ExtraData"]);
+    }
+
+    #[test]
+    fn a_renamed_node_offers_its_one_variable_its_name() {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [0.0, 0.0]).unwrap();
+        assert_eq!(document.bound_variable_rename(mountain), None);
+        document.bind_new_variable(mountain, "Height");
+        document.rename(mountain, "Peak");
+        assert_eq!(document.bound_variable_rename(mountain), Some(("Height".to_string(), "Peak".to_string())));
+
+        // Another variable has the name: `Name_Id`, unless that is taken too.
+        let other = document.add_variable("Float");
+        document.rename_variable(&other, "Peak");
+        let fallback = format!("Peak_{mountain}");
+        assert_eq!(document.bound_variable_rename(mountain), Some(("Height".to_string(), fallback.clone())));
+        let another = document.add_variable("Float");
+        document.rename_variable(&another, &fallback);
+        assert_eq!(document.bound_variable_rename(mountain), None);
+
+        // Named after the node already: nothing to offer.
+        document.rename(mountain, "Height");
+        assert_eq!(document.bound_variable_rename(mountain), None);
+        // Two variables bound: nothing either.
+        document.rename(mountain, "Crest");
+        assert!(document.bound_variable_rename(mountain).is_some());
+        document.bind_new_variable(mountain, "Scale");
+        assert_eq!(document.bound_variable_rename(mountain), None);
     }
 
     #[test]

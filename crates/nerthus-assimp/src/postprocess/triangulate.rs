@@ -4,7 +4,7 @@
 //! triangle rotated where needed so its first index differs from the
 //! previous polygon's ("NGON encoding").
 
-use crate::scene::{Mesh, PRIMITIVE_NGON_ENCODING, PRIMITIVE_POLYGON, PRIMITIVE_TRIANGLE};
+use crate::scene::{ImportError, Mesh, PRIMITIVE_NGON_ENCODING, PRIMITIVE_POLYGON, PRIMITIVE_TRIANGLE, fail};
 use crate::vector::{dot, normalize, normalize_2d, sub};
 
 /// `AI_MATH_PI_F` (3.1415926538f, which is π in single precision).
@@ -199,20 +199,20 @@ fn clip_ears(vertices: &[[f32; 3]], face: &[u32]) -> Vec<[u32; 3]> {
     triangles
 }
 
-pub fn triangulate_mesh(mesh: &mut Mesh) {
+pub fn triangulate_mesh(mesh: &mut Mesh) -> Result<(), ImportError> {
     let Some(faces) = mesh.faces.as_ref() else {
-        return;
+        return Ok(());
     };
     if mesh.primitive_types == 0 {
         if faces.iter().all(|face| face.len() == 3) {
-            return;
+            return Ok(());
         }
     } else if mesh.primitive_types & PRIMITIVE_POLYGON == 0 {
-        return;
+        return Ok(());
     }
     let output_count: usize = faces.iter().map(|face| if face.len() <= 3 { 1 } else { face.len() - 2 }).sum();
     if output_count == faces.len() {
-        return;
+        return Ok(());
     }
     mesh.primitive_types |= PRIMITIVE_TRIANGLE;
     mesh.primitive_types &= !PRIMITIVE_POLYGON;
@@ -230,6 +230,11 @@ pub fn triangulate_mesh(mesh: &mut Mesh) {
             output.push(copy);
             continue;
         }
+        // Larger faces read their corners' positions (a mesh without any
+        // has a null array).
+        if face.iter().any(|&index| index as usize >= vertices.len()) {
+            return fail("undefined behaviour: a polygon's corner past the positions");
+        }
         if face.len() == 4 {
             let start = quad_start(vertices, face);
             let mut first = vec![face[start], face[(start + 1) % 4], face[(start + 2) % 4]];
@@ -246,4 +251,5 @@ pub fn triangulate_mesh(mesh: &mut Mesh) {
         }
     }
     mesh.faces = Some(output);
+    Ok(())
 }

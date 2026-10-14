@@ -45,6 +45,13 @@ glam = "0.33.2"
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 roxmltree = "0.21.1"
 flate2 = "1.1.10"
+# zlib's own inflate state machine (flate2 runs on miniz_oxide), for zip
+# entries read the way minizip reads them.
+zlib-rs = "0.6.8"
+bzip2 = "0.6.1"
+lzma-rs = "0.3.0"
+crc = "3.4.0"
+crc32fast = "1.5.2"
 base64 = "0.23.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "tga", "hdr", "webp"] }
 # JPEG 2000 through openjp2, the Rust port of OpenJPEG (the decoder

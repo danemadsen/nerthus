@@ -5,7 +5,9 @@
 //! or deflated (a zlib stream in length-prefixed chunks). Samples turn into
 //! quanta as `ImportQuantumPixels` does: 8 bits ×257, 16 bits as they are,
 //! 32 bits ÷65537, floats ×65535; other depths `ScaleAnyToQuantum`.
-//! BZip and LZMA pixels, CMYK and multispectral images are not read.
+//! Pixels may also come as BZip2 or LZMA (xz) streams, and images may be
+//! CMYK (a black sample after blue), Lab or XYZ. Multispectral images and
+//! other colorspaces are not read.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -13,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::pixel_cache::{CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, ImageType, PixelCache, PixelChannel, DEFAULT_GAMMA};
 
 /// The header's keywords (keys lowercased), and where the data starts.
 struct Header {
@@ -261,9 +263,13 @@ pub fn decode(bytes: &[u8]) -> Result<PixelCache> {
         "rgb" => CacheColorspace::Rgb,
         "gray" => CacheColorspace::Gray,
         "lineargray" => CacheColorspace::LinearGray,
+        "cmyk" => CacheColorspace::Cmyk,
+        "lab" | "cielab" => CacheColorspace::Lab,
+        "xyz" => CacheColorspace::Xyz,
         other => bail!("MIFF images in the {other} colorspace are not supported"),
     };
     let gray = matches!(colorspace, CacheColorspace::Gray | CacheColorspace::LinearGray);
+    let cmyk = colorspace == CacheColorspace::Cmyk;
     let alpha_trait = header.get("alpha-trait").map(|trait_name| !trait_name.eq_ignore_ascii_case("undefined"));
     let matte = header.get("matte").map(|matte| matte.eq_ignore_ascii_case("true"));
     let alpha = alpha_trait.or(matte).unwrap_or(false);
@@ -324,6 +330,8 @@ pub fn decode(bytes: &[u8]) -> Result<PixelCache> {
         vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue, PixelChannel::Index]
     } else if gray {
         vec![PixelChannel::Gray]
+    } else if cmyk {
+        vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue, PixelChannel::Black]
     } else {
         vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue]
     };
@@ -331,7 +339,7 @@ pub fn decode(bytes: &[u8]) -> Result<PixelCache> {
         channels.insert(channels.len() - usize::from(pseudo), PixelChannel::Alpha);
     }
     // Samples a pixel holds in the file (`packet_size` / depth).
-    let samples_per_pixel = if pseudo || gray { 1 } else { 3 } + usize::from(alpha);
+    let samples_per_pixel = if pseudo || gray { 1 } else { 3 } + usize::from(alpha) + usize::from(cmyk);
     let packet_size = samples_per_pixel * depth / 8;
     let row_bytes = (samples_per_pixel * depth * width).div_ceil(8);
 
@@ -340,7 +348,22 @@ pub fn decode(bytes: &[u8]) -> Result<PixelCache> {
     match compression.as_str() {
         "none" => {
             let pixels = data_bytes.get(..row_bytes * height).context("UnableToReadImageData")?;
-            import_rows(pixels, row_bytes, width, height, depth, format, little_endian, pseudo, gray, alpha, &colormap, &mut data)?;
+            import_rows(pixels, row_bytes, width, height, depth, format, little_endian, pseudo, gray, cmyk, alpha, &colormap, &mut data)?;
+        }
+        "bzip" => {
+            let version = header.get("version").and_then(|text| text.trim().parse::<f64>().ok()).unwrap_or(0.0);
+            let stream = if version != 0.0 { join_chunks(data_bytes) } else { data_bytes.to_vec() };
+            let mut unpacked = vec![0u8; row_bytes * height];
+            let mut decoder = bzip2::read::BzDecoder::new(stream.as_slice());
+            decoder.read_exact(&mut unpacked).context("UnableToReadImageData")?;
+            import_rows(&unpacked, row_bytes, width, height, depth, format, little_endian, pseudo, gray, cmyk, alpha, &colormap, &mut data)?;
+        }
+        "lzma" => {
+            // `lzma_auto_decoder`: an xz stream, or the older LZMA format.
+            let stream = join_chunks(data_bytes);
+            let unpacked = super::xz::decompress_auto(&stream).context("UnableToReadImageData")?;
+            let pixels = unpacked.get(..row_bytes * height).context("UnableToReadImageData")?;
+            import_rows(pixels, row_bytes, width, height, depth, format, little_endian, pseudo, gray, cmyk, alpha, &colormap, &mut data)?;
         }
         "zip" | "lzw" => {
             let version = header.get("version").and_then(|text| text.trim().parse::<f64>().ok()).unwrap_or(0.0);
@@ -348,14 +371,29 @@ pub fn decode(bytes: &[u8]) -> Result<PixelCache> {
             let mut inflated = vec![0u8; row_bytes * height];
             let mut decoder = flate2::read::ZlibDecoder::new(stream.as_slice());
             decoder.read_exact(&mut inflated).context("UnableToReadImageData")?;
-            import_rows(&inflated, row_bytes, width, height, depth, format, little_endian, pseudo, gray, alpha, &colormap, &mut data)?;
+            import_rows(&inflated, row_bytes, width, height, depth, format, little_endian, pseudo, gray, cmyk, alpha, &colormap, &mut data)?;
         }
         "rle" | "runlengthencoded" => {
-            read_rle(data_bytes, packet_size, width, height, depth, pseudo, gray, alpha, &colormap, &mut data)?;
+            read_rle(data_bytes, packet_size, width, height, depth, pseudo, gray, cmyk, alpha, &colormap, &mut data)?;
         }
         other => bail!("MIFF pixels compressed with {other} are not supported"),
     }
-    Ok(PixelCache { width, height, channels, data, colorspace, gamma })
+    // `SetQuantumImageType` with the quantum type the pixels were read as.
+    let image_type = if pseudo {
+        ImageType::Palette
+    } else if gray && raw_depth == 1 {
+        ImageType::Bilevel
+    } else if gray {
+        ImageType::Grayscale
+    } else if cmyk {
+        ImageType::ColorSeparation
+    } else {
+        ImageType::TrueColor
+    };
+    let mut cache = PixelCache::new(width, height, channels, data, colorspace, gamma);
+    cache.image_type = image_type;
+    cache.colormap = colormap.iter().map(|entry| [entry[0] as f64, entry[1] as f64, entry[2] as f64, 65535.0]).collect();
+    Ok(cache)
 }
 
 /// A version-1 deflated MIFF's chunks (a big-endian length each), joined.
@@ -376,7 +414,7 @@ fn join_chunks(bytes: &[u8]) -> Vec<u8> {
 /// `ImportQuantumPixels` for each row: grey, RGB or an index, then alpha;
 /// an index brings its colormap colour (`SetPixelViaPixelInfo`).
 #[allow(clippy::too_many_arguments)]
-fn import_rows(pixels: &[u8], row_bytes: usize, width: usize, height: usize, depth: usize, format: Format, little_endian: bool, pseudo: bool, gray: bool, alpha: bool, colormap: &[[f32; 3]], data: &mut Vec<f32>) -> Result<()> {
+fn import_rows(pixels: &[u8], row_bytes: usize, width: usize, height: usize, depth: usize, format: Format, little_endian: bool, pseudo: bool, gray: bool, cmyk: bool, alpha: bool, colormap: &[[f32; 3]], data: &mut Vec<f32>) -> Result<()> {
     for y in 0..height {
         let row = &pixels[y * row_bytes..(y + 1) * row_bytes];
         let mut samples = Samples::new(row, depth, format, little_endian);
@@ -398,7 +436,7 @@ fn import_rows(pixels: &[u8], row_bytes: usize, width: usize, height: usize, dep
                 data.push(index as f32);
                 continue;
             }
-            let colours = if gray { 1 } else { 3 };
+            let colours = if gray { 1 } else { 3 } + usize::from(cmyk);
             for _ in 0..colours {
                 data.push(samples.quantum()?);
             }
@@ -416,7 +454,7 @@ fn import_rows(pixels: &[u8], row_bytes: usize, width: usize, height: usize, dep
 /// index sets only the index channel (its colours stay black, as IM leaves
 /// them).
 #[allow(clippy::too_many_arguments)]
-fn read_rle(bytes: &[u8], packet_size: usize, width: usize, height: usize, depth: usize, pseudo: bool, gray: bool, alpha: bool, colormap: &[[f32; 3]], data: &mut Vec<f32>) -> Result<()> {
+fn read_rle(bytes: &[u8], packet_size: usize, width: usize, height: usize, depth: usize, pseudo: bool, gray: bool, cmyk: bool, alpha: bool, colormap: &[[f32; 3]], data: &mut Vec<f32>) -> Result<()> {
     let read_sample = |packet: &[u8], offset: &mut usize| -> f32 {
         let value = match depth {
             8 => {
@@ -468,6 +506,9 @@ fn read_rle(bytes: &[u8], packet_size: usize, width: usize, height: usize, depth
                     } else {
                         pixel.push(first);
                         pixel.push(read_sample(packet, &mut offset));
+                        pixel.push(read_sample(packet, &mut offset));
+                    }
+                    if cmyk {
                         pixel.push(read_sample(packet, &mut offset));
                     }
                     if alpha {

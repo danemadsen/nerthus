@@ -25,11 +25,13 @@ Some nodes may have unique controls specific to them.
 
 ### Editing Values
 
-Click or drag a slider to set its value; hold **Shift** while dragging to snap to its ticks. To type a value instead, double-click the slider, type a number, and press **Enter** (or **Tab**) to keep it or **Esc** to cancel. Clicking elsewhere keeps it only when Options › Node › **Accept values when clicking outside of editable field** is on.
+Click or drag a slider to set its value; hold **Shift** while dragging to snap to its ticks. To type a value instead, right-click the number at the slider's right end, type, and press **Enter** (or **Tab**) to keep it or **Esc** to cancel. Clicking elsewhere keeps it only when Options › Node › **Accept values when clicking outside of editable field** is on.
+
+What you type can be a formula. It can use the project's variables (by name), `Resolution` (the resolution nodes build at), `PX` (the width of one pixel, `1 / Resolution`), and `m()`, `cm()` and `km()`, which turn a height in metres into the terrain's 0 to 1 heights. For example, `m(250)` on a height slider is 250 metres. A value outside the slider's range is held to it.
 
 ### Nudge Bar
 
-Right-click a slider for the nudge bar: nine buttons that change the value by set steps. A tenth of the slider's range is its large step, and a hundredth its small one.
+Right-click anywhere else on a slider for the nudge bar: nine buttons that change the value by set steps, and a box (when the slider is wide enough) where you can type a value or a formula and press **Enter**. A tenth of the slider's range is its large step, and a hundredth its small one. The bar closes when the pointer leaves it.
 
 | Button  | Description                                  |
 | ------- | -------------------------------------------- |
@@ -42,6 +44,10 @@ Right-click a slider for the nudge bar: nine buttons that change the value by se
 | Up 1    | Increases by a small step.                   |
 | Up 10   | Increases by a large step.                   |
 | Max     | Uses the highest allowed value.              |
+
+### Range Sliders
+
+A range slider has two ends. Drag either end, or hold **Shift** and drag to move the whole range. Right-click the left fifth of the slider to type the low value, or the right fifth to type the high value. Right-click in between for the nudge bar of the nearer end; on a range, its large step is a hundredth of the range and its small step a thousandth, and **Default** puts the whole range back. The high end never goes below the low one.
 
 ### Seeds
 

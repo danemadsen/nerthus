@@ -292,7 +292,8 @@ fn layer_editor(ui: &mut Ui, id: Id, layer: &Value, label: &str, key: &str, colo
         let ranged = matches!(source.as_str(), "Height" | "Slope" | "Both");
         let mixed = source == "Both";
         let (range_name, falloff_name) = if mixed { ("Height Range", "Height Falloff") } else { ("Range", "Falloff") };
-        let range_spec = RangeSpec { min: 0.0, max: 1.0, integer: false, inset: Some(0.0) };
+        let mut range_spec = RangeSpec::linear(0.0, 1.0);
+        range_spec.inset = Some(0.0);
         let mut falloff_spec = SliderSpec::linear(0.0001, 1.0);
         falloff_spec.inset = Some(0.0);
         falloff_spec.height = Some(22.0);

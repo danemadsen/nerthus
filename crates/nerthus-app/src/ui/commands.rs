@@ -6,12 +6,12 @@ use bevy::prelude::Window;
 use serde_json::Value;
 
 use crate::document::DeleteRequest;
-use crate::editor::{DialogRequest, Editor, RenderMode};
+use crate::editor::{BakeRefusal, DialogRequest, Editor, RenderMode};
 use crate::export_build::{BuildChoice, BuildStart};
 use crate::viewport_render::{MaskEnhancement, MaskGradient, ViewportLighting};
 use crate::ui::build_settings::{BuildSettingsState, SettingsTab};
 use crate::ui::build_window::BuildConfirm;
-use crate::ui::data_view::DataTab;
+use crate::ui::data_view::{DataTab, FilterCriteria};
 use crate::ui::graph_commands::GraphCommand;
 use crate::ui::options_window::{OptionsState, OptionsTab};
 use crate::ui::prompt::Prompt;
@@ -78,6 +78,17 @@ pub enum Command {
     NodeAction(String),
     /// A modifier toolbar toggle or Add Modifiers entry.
     ToggleModifier(&'static str),
+    /// A modifier's close button: the modifier at that place in the list
+    /// goes, after "Delete Modifier?" unless Shift was held.
+    RemoveModifier { node: i32, place: usize, ask: bool },
+    /// The Gate's Unbake Node (`PropertyArea.Editor_CommandExecuted`):
+    /// asked first, then the node and its baked descendants unbake (the
+    /// file is not saved).
+    UnbakeNode(i32),
+    UnbakeNodeConfirmed(i32),
+    /// A baked node's Load Offloaded Cache: its bake and its baked
+    /// descendants' read back from disk.
+    LoadOffloadedCache(i32),
     AddNote,
     NewGraphTab,
     RenameGraphTab(usize, String),
@@ -155,6 +166,9 @@ pub enum Command {
     /// The memory warning's Yes: the bake goes ahead (with Bake Selected's
     /// progress window when `selected`).
     BakeAnyway { nodes: Vec<i32>, selected: bool },
+    /// "Cannot Start Baking"'s Filter Bypassed nodes: the Data View
+    /// filtered to the bypassed nodes.
+    FilterBypassedNodes,
     ForceLoadBakedCache,
     UnbakeSelected,
     UnbakeSelectedConfirmed,
@@ -474,6 +488,29 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
                 editor.changed();
             }
         }
+        Command::RemoveModifier { node, place, ask: true } => {
+            let text = "Are you sure you want to delete this modifier?";
+            let confirmed = Command::RemoveModifier { node, place, ask: false };
+            ui_state.prompt = Some(Prompt::new("Delete Modifier?", text, confirmed));
+        }
+        Command::RemoveModifier { node, place, ask: false } => {
+            if editor.document.remove_modifier_at(node, place) {
+                editor.changed();
+            }
+        }
+        Command::UnbakeNode(node) => {
+            // `O.ShowRegionUnbakeWarning`: a region preview needs its
+            // critical bakes.
+            if editor.region_needs_bakes(Some(node)) {
+                let caption = "Unbaking Critical Node";
+                ui_state.prompt = Some(Prompt::message(caption, crate::editor::REGION_UNBAKE_WARNING));
+            } else {
+                let text = "Are you sure you want to unbake this node?\n\nAny baked child nodes will also be unbaked.";
+                ui_state.prompt = Some(Prompt::new("Unbake Node?", text, Command::UnbakeNodeConfirmed(node)));
+            }
+        }
+        Command::UnbakeNodeConfirmed(node) => editor.unbake_node(node),
+        Command::LoadOffloadedCache(node) => editor.load_offloaded_cache(node),
         Command::WindowMinimize => window.set_minimized(true),
         Command::WindowMaximize => {
             ui_state.maximized = !ui_state.maximized;
@@ -599,7 +636,10 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
         Command::OpenBuildFolder => editor.open_build_folder(),
         Command::OpenFolder(folder) => crate::export_build::open_folder(&folder),
         Command::BakeSelected => {
-            if let Some(node) = editor.prepare_bake_selected() {
+            let refusal = editor.active_node().and_then(|node| editor.bake_selected_refusal(node));
+            if let Some(refusal) = refusal {
+                ui_state.prompt = Some(bake_refusal_prompt(refusal));
+            } else if let Some(node) = editor.prepare_bake_selected() {
                 match crate::ui::memory_dialogs::bake_memory_warning(editor, node) {
                     Some(mut warning) => {
                         warning.yes = Some(Command::BakeAnyway { nodes: vec![node], selected: true });
@@ -609,9 +649,16 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
                 }
             }
         }
+        // The nodes' chains are checked before the question.
         Command::BakeRequiredNodes => {
-            let text = "Are you sure you want to bake all nodes that require baking?";
-            ui_state.prompt = Some(Prompt::new("Bake required nodes?", text, Command::BakeRequiredNodesConfirmed));
+            let nodes = nerthus_export::bake::required_nodes(editor.document.terrain());
+            match editor.bake_chain_refusal(&nodes) {
+                Some(refusal) => ui_state.prompt = Some(bake_refusal_prompt(refusal)),
+                None => {
+                    let text = "Are you sure you want to bake all nodes that require baking?";
+                    ui_state.prompt = Some(Prompt::new("Bake required nodes?", text, Command::BakeRequiredNodesConfirmed));
+                }
+            }
         }
         Command::BakeRequiredNodesConfirmed => {
             if let Some(nodes) = editor.prepare_bake_required() {
@@ -628,6 +675,7 @@ fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window
             }
         }
         Command::BakeAnyway { nodes, selected } => start_bake(editor, ui_state, nodes, selected),
+        Command::FilterBypassedNodes => ui_state.data_view.terrain.filter = FilterCriteria::Bypassed,
         Command::ForceLoadBakedCache => editor.load_baked_cache(),
         Command::UnbakeSelected => {
             let text = "Are you sure you want to unbake this node?\n\nAny baked child nodes will also be unbaked.File will be saved after unbake.";
@@ -947,11 +995,97 @@ fn run_build(editor: &mut Editor, ui_state: &mut UiState, close: bool) {
     }
 }
 
+/// A refused bake's message box. The bypassed nodes' is a task dialog
+/// whose own button filters the Data View to them.
+fn bake_refusal_prompt(refusal: BakeRefusal) -> Prompt {
+    match refusal {
+        BakeRefusal::BypassedChain => Prompt::with_button(refusal.caption(), refusal.text(), "Filter Bypassed nodes", Command::FilterBypassedNodes),
+        BakeRefusal::MacroNode | BakeRefusal::MacroInChain => Prompt::message(refusal.caption(), refusal.text()),
+    }
+}
+
 /// A bake started; Bake Selected's has its progress window
 /// (`BakeSelectedNode`'s).
 fn start_bake(editor: &mut Editor, ui_state: &mut UiState, nodes: Vec<i32>, selected: bool) {
     editor.start_bake(nodes);
     if selected && editor.baking {
         ui_state.bake_progress = crate::ui::memory_dialogs::bake_progress(editor);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::document::Document;
+
+    #[test]
+    fn a_bypassed_node_upstream_offers_to_filter_the_data_view() {
+        let mut document = Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let blur = document.add_node("Blur", [26300.0, 26000.0]).unwrap();
+        document.connect(mountain, "Out", blur, "In");
+        document.set_member(mountain, "StateOverride", json!("Bypassed"), "Bypass", true);
+        let mut editor = Editor::new(document);
+        editor.select(Some(blur));
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::BakeSelected], &mut editor, &mut ui_state, &mut window);
+
+        let refusal = ui_state.prompt.take().expect("the bake is refused");
+        assert_eq!(refusal.caption, "Cannot Start Baking");
+        assert_eq!(refusal.text, "Some nodes required for baking are currently bypassed. Please enable those nodes and try again.");
+        assert_eq!((refusal.yes_text.as_str(), refusal.no_text.as_str()), ("Filter Bypassed nodes", "Close"));
+        assert_eq!(refusal.no, None);
+        assert!(!editor.baking);
+
+        // The button leaves only the bypassed node at full strength.
+        let filter = refusal.yes.expect("the button runs a command");
+        run(vec![filter], &mut editor, &mut ui_state, &mut window);
+        assert_eq!(ui_state.data_view.terrain.filter, FilterCriteria::Bypassed);
+        let dimmed = crate::ui::data_view::dimmed_nodes(&editor, ui_state.data_view.terrain.filter);
+        assert_eq!(dimmed, HashSet::from([blur]));
+    }
+
+    #[test]
+    fn bake_required_nodes_checks_the_chains_before_asking() {
+        let mut document = Document::new();
+        let macro_node = document.add_node("Macro", [26000.0, 26000.0]).unwrap();
+        let mountain = document.add_node("Mountain", [26000.0, 26400.0]).unwrap();
+        let gate = document.add_node("Gate", [26300.0, 26000.0]).unwrap();
+        document.connect(macro_node, "Out", gate, "In");
+        let mut editor = Editor::new(document);
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::BakeRequiredNodes], &mut editor, &mut ui_state, &mut window);
+        let refusal = ui_state.prompt.take().expect("the bake is refused");
+        assert_eq!(refusal.caption, "Macro Detected in Bake Chain");
+        assert_eq!(refusal.text, "This node depends on a Macro and cannot be baked.");
+        assert_eq!(refusal.yes, None);
+
+        // Fed by the Mountain instead, the question comes.
+        editor.document.connect(mountain, "Out", gate, "In");
+        run(vec![Command::BakeRequiredNodes], &mut editor, &mut ui_state, &mut window);
+        let question = ui_state.prompt.take().expect("the question comes");
+        assert_eq!(question.caption, "Bake required nodes?");
+        assert_eq!(question.yes, Some(Command::BakeRequiredNodesConfirmed));
+    }
+
+    #[test]
+    fn a_macro_is_not_baked_itself() {
+        let mut document = Document::new();
+        let macro_node = document.add_node("Macro", [26000.0, 26000.0]).unwrap();
+        let mut editor = Editor::new(document);
+        editor.select(Some(macro_node));
+        let mut ui_state = UiState::default();
+        let mut window = Window::default();
+        run(vec![Command::BakeSelected], &mut editor, &mut ui_state, &mut window);
+        let refusal = ui_state.prompt.take().expect("the bake is refused");
+        assert_eq!(refusal.caption, "Cannot bake macro node");
+        assert_eq!(refusal.text, "Selected node is a Macro and cannot be baked.");
+        assert_eq!(refusal.yes, None);
     }
 }

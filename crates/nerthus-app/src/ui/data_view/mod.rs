@@ -17,7 +17,7 @@ use crate::ui::commands::Command;
 use crate::ui::graph_canvas::GraphState;
 use crate::ui::widgets::toolbar_background;
 
-pub use terrain::dimmed_nodes;
+pub use terrain::{dimmed_nodes, FilterCriteria};
 
 /// `DataViewColumn` while open: `1.05*` beside the graph's `5*`, at least
 /// 340 wide.

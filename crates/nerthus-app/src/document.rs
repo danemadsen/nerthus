@@ -24,12 +24,14 @@ mod links;
 mod node_ops;
 mod notes;
 mod macro_ports;
+mod modifiers;
 mod portals;
 mod state;
 mod variables;
 
 pub use clipboard::NodeClipboard;
 pub use deleting::DeleteRequest;
+pub use modifiers::PINNED_ORDER;
 pub use groups::{GroupData, GROUP_ICONS, GROUP_MIN_SIZE};
 pub use links::{grid_inputs, grid_outputs, PortalState};
 pub use node_ops::{CombineKind, Layout};
@@ -554,15 +556,20 @@ impl Document {
         }
     }
 
-    pub fn rename(&mut self, node: i32, name: &str) {
-        let unchanged = self.node(node).is_none_or(|current| current.name == name);
-        if unchanged {
-            return;
+    /// Returns whether the name changed.
+    pub fn rename(&mut self, node: i32, name: &str) -> bool {
+        let Some(current) = self.node(node) else {
+            return false;
+        };
+        if current.name == name {
+            return false;
         }
-        self.checkpoint("Rename");
+        let label = format!("Node renamed: {} renamed to {name}.", current.name);
+        self.checkpoint(label);
         if let Some(target) = self.project.terrain_mut().nodes.get_mut(&node) {
             target.name = name.to_string();
         }
+        true
     }
 
     /// Moves nodes; `checkpoint` is false while a drag is under way.
@@ -1459,6 +1466,18 @@ impl Document {
         for id in exporting {
             self.rename_duplicate_export(id);
         }
+    }
+
+    /// A renamed node's export file renamed with it ("Update Save
+    /// Definition"). It has no undo step of its own: undoing the node's
+    /// rename puts the file name back too.
+    pub fn rename_export_file(&mut self, id: i32, filename: &str) {
+        let Some(settings) = self.export_settings(id) else {
+            return;
+        };
+        let renamed = ExportSettings { filename: filename.to_string(), ..settings };
+        self.set_export_settings(id, Some(renamed));
+        self.dirty = true;
     }
 
     /// Changes one node's export settings.

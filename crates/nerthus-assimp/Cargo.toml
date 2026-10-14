@@ -9,3 +9,4 @@ license.workspace = true
 [dependencies]
 chrono.workspace = true
 flate2.workspace = true
+zlib-rs.workspace = true

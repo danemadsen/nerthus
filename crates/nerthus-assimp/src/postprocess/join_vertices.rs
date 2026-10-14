@@ -10,7 +10,7 @@
 //! first, so near-equal vertices whose hashes merely share a bucket merge
 //! too.
 
-use crate::scene::{MAX_COLOR_SETS, MAX_TEXTURE_COORDS, Mesh};
+use crate::scene::{ImportError, MAX_COLOR_SETS, MAX_TEXTURE_COORDS, Mesh, fail};
 
 /// `epsilon * epsilon` with `epsilon = 1e-5f`.
 const SQUARE_EPSILON: f32 = 1e-5 * 1e-5;
@@ -123,9 +123,9 @@ fn hash_position(position: [f32; 3]) -> u64 {
     seed
 }
 
-pub fn process_mesh(mesh: &mut Mesh) {
+pub fn process_mesh(mesh: &mut Mesh) -> Result<(), ImportError> {
     if !mesh.has_positions() || !mesh.has_faces() {
-        return;
+        return Ok(());
     }
     let vertex_count = mesh.vertex_count;
     let faces = mesh.faces.as_ref().unwrap();
@@ -136,6 +136,23 @@ pub fn process_mesh(mesh: &mut Mesh) {
         }
     }
 
+    // Every stream read for the used vertices must hold them (a shorter
+    // one is read past its end).
+    let mut shortest = usize::MAX;
+    let streams_3 = [&mesh.vertices, &mesh.normals, &mesh.tangents, &mesh.bitangents];
+    for values in streams_3.into_iter().flatten() {
+        shortest = shortest.min(values.len());
+    }
+    for values in mesh.texture_coords.iter().map_while(Option::as_ref) {
+        shortest = shortest.min(values.len());
+    }
+    for values in mesh.colors.iter().map_while(Option::as_ref) {
+        shortest = shortest.min(values.len());
+    }
+    if used.iter().rposition(|&is_used| is_used).is_some_and(|highest| highest >= shortest) {
+        return fail("undefined behaviour: a vertex stream shorter than the vertices used");
+    }
+
     let uv_channels = mesh.uv_channel_count();
     let color_channels = mesh.color_channel_count();
     let bucket_count = vertex_count.next_power_of_two().max(8);
@@ -144,6 +161,9 @@ pub fn process_mesh(mesh: &mut Mesh) {
     let mut buckets: Vec<Vec<(Vertex, u32)>> = vec![Vec::new(); bucket_count];
     let mut unique = Vec::with_capacity(vertex_count);
     let mut replace = vec![u32::MAX; vertex_count];
+    // Whether a vertex became a unique one (rather than joining one, or
+    // going unused).
+    let mut kept = vec![false; vertex_count];
     for index in 0..vertex_count {
         if !used[index] {
             continue;
@@ -157,6 +177,7 @@ pub fn process_mesh(mesh: &mut Mesh) {
                 let new_index = unique.len() as u32;
                 bucket.push((vertex, new_index));
                 replace[index] = new_index;
+                kept[index] = true;
                 unique.push(index);
             }
         }
@@ -185,4 +206,23 @@ pub fn process_mesh(mesh: &mut Mesh) {
             *index = replace[*index as usize];
         }
     }
+
+    // A bone keeps the weights of vertices that became unique ones (all of
+    // its old weights when none did). A weight past the vertices reads
+    // past the replacement table.
+    for bone in &mut mesh.bones {
+        let mut weights = Vec::with_capacity(bone.len());
+        for &vertex in bone.iter() {
+            let Some(&is_kept) = kept.get(vertex as usize) else {
+                return fail("undefined behaviour: a bone weight past the vertices");
+            };
+            if is_kept {
+                weights.push(replace[vertex as usize]);
+            }
+        }
+        if !weights.is_empty() {
+            *bone = weights;
+        }
+    }
+    Ok(())
 }

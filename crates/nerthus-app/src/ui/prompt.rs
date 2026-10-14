@@ -1,7 +1,8 @@
 //! The message boxes: with Yes and No (`MBox(text, caption,
 //! MessageBoxButton.YesNo)`, the command Yes runs), with Yes, No and
-//! Cancel (`MboxFull(…, YesNoCancel)`, the save question), or with OK
-//! (`MessageBox.Show`). A task dialog's footer shows under the buttons.
+//! Cancel (`MboxFull(…, YesNoCancel)`, the save question), with OK
+//! (`MessageBox.Show`), or with a task dialog's own button and Close. A
+//! task dialog's footer shows under the buttons.
 
 use egui::{Align, Layout, RichText};
 
@@ -25,21 +26,48 @@ pub struct Prompt {
     pub cancel: bool,
     /// The task dialog's footer (`MBox`'s footnote).
     pub footnote: Option<String>,
+    /// What the Yes and No buttons say.
+    pub yes_text: String,
+    pub no_text: String,
 }
 
 impl Prompt {
     pub fn new(caption: &str, text: &str, yes: Command) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: None, dismissed: None, cancel: false, footnote: None }
+        let mut prompt = Self::message(caption, text);
+        prompt.yes = Some(yes);
+        prompt
     }
 
     pub fn message(caption: &str, text: &str) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: None, no: None, dismissed: None, cancel: false, footnote: None }
+        Self {
+            caption: caption.to_string(),
+            text: text.to_string(),
+            yes: None,
+            no: None,
+            dismissed: None,
+            cancel: false,
+            footnote: None,
+            yes_text: "Yes".to_string(),
+            no_text: "No".to_string(),
+        }
     }
 
     /// Yes, No and Cancel, each with its own command but Cancel (which
     /// only closes the box).
     pub fn yes_no_cancel(caption: &str, text: &str, yes: Command, no: Command) -> Self {
-        Self { caption: caption.to_string(), text: text.to_string(), yes: Some(yes), no: Some(no), dismissed: None, cancel: true, footnote: None }
+        let mut prompt = Self::new(caption, text, yes);
+        prompt.no = Some(no);
+        prompt.cancel = true;
+        prompt
+    }
+
+    /// A task dialog with a button of its own, which runs `command`, and
+    /// Close.
+    pub fn with_button(caption: &str, text: &str, button: &str, command: Command) -> Self {
+        let mut prompt = Self::new(caption, text, command);
+        prompt.yes_text = button.to_string();
+        prompt.no_text = "Close".to_string();
+        prompt
     }
 }
 
@@ -69,10 +97,10 @@ pub fn show(ctx: &egui::Context, ui_state: &mut UiState, commands: &mut Vec<Comm
             if prompt.cancel && ui.button("Cancel").clicked() {
                 answer = Some(Answer::Cancel);
             }
-            if ui.button("No").clicked() {
+            if ui.button(prompt.no_text.as_str()).clicked() {
                 answer = Some(Answer::No);
             }
-            if ui.button("Yes").clicked() {
+            if ui.button(prompt.yes_text.as_str()).clicked() {
                 answer = Some(Answer::Yes);
             }
         });

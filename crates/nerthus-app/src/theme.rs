@@ -391,6 +391,8 @@ pub struct InterfaceSettings {
     pub seed_sliders: bool,
     /// `StackedSatelliteMaps`: palette lists show one strip a row.
     pub stacked_palettes: bool,
+    /// `DisableAnimations`: fades jump to their end.
+    pub disable_animations: bool,
 }
 
 impl Default for InterfaceSettings {
@@ -402,6 +404,7 @@ impl Default for InterfaceSettings {
             accept_on_lost_focus: false,
             seed_sliders: false,
             stacked_palettes: false,
+            disable_animations: false,
         }
     }
 }

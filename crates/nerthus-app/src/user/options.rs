@@ -210,6 +210,12 @@ impl UserOptions {
         self.set("UiScale", json!(rounded));
     }
 
+    /// `Monitor`: the monitor Nerthus starts on (General's "Start Nerthus
+    /// on"), -1 for the primary one.
+    pub fn monitor(&self) -> i64 {
+        self.number("Monitor") as i64
+    }
+
     /// `GizmoType`: gizmos in the 3D view as well as the 2D one (`3D + 2D
     /// Viewport`).
     pub fn gizmos_in_3d(&self) -> bool {
@@ -496,6 +502,7 @@ impl UserOptions {
             accept_on_lost_focus: self.accept_on_lost_focus(),
             seed_sliders: self.slider_seed(),
             stacked_palettes: self.stacked_satellite_maps(),
+            disable_animations: self.disable_animations(),
         }
     }
 }

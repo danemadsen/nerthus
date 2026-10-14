@@ -124,6 +124,7 @@ pub fn run(command: FileCommand, editor: &mut Editor, ui_state: &mut UiState) {
             editor.document.delete_orphans();
             editor.changed();
         }
+        FileCommand::DeleteObsoleteBakes(folder) => files::delete_obsolete_bakes(editor, &folder),
     }
 }
 
@@ -281,8 +282,8 @@ fn export_macro_checked(editor: &mut Editor) {
 }
 
 /// What the interface does each frame for files: commands from outside it
-/// run, a message waiting shows when no other is open, and a tab an
-/// import added comes into view.
+/// run, a message waiting shows when no other is open, a tab an import
+/// added comes into view, and an alert raised shows.
 pub fn take_requests(editor: &mut Editor, ui_state: &mut UiState, commands: &mut Vec<Command>) {
     for request in std::mem::take(&mut editor.files.requests) {
         commands.push(Command::File(request));
@@ -301,5 +302,8 @@ pub fn take_requests(editor: &mut Editor, ui_state: &mut UiState, commands: &mut
         if frame {
             ui_state.graph.zoom_request = Some(ZoomRequest::Extents);
         }
+    }
+    if let Some(alert) = editor.files.alert.take() {
+        ui_state.alert = Some(alert);
     }
 }

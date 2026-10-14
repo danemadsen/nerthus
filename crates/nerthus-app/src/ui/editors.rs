@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::icons;
 use crate::theme;
+use crate::ui::slider_popups::{self, BoxWidth, Nudge, NudgeLook, RangeEnd, TypingLook};
 
 /// While a slider holds its default, its shading, thumb and value show at
 /// this opacity (`SliderX.AnimateSlider`).
@@ -17,8 +18,11 @@ const DEFAULT_OPACITY: f32 = 0.4;
 const THUMB_WIDTH: f32 = 6.0;
 /// The line of an option's 11-point text.
 const OPTION_LINE: f32 = 15.0;
-/// `NudgeButton`.
-const NUDGE_BUTTON: Vec2 = Vec2::new(28.0, 24.0);
+/// A slider's typing box: no narrower than this (`MinWidth`).
+const SLIDER_TYPING_MIN_WIDTH: f32 = 64.0;
+/// A range slider's typing boxes: this wide in the editor's points (`48 *
+/// UiScale` in the popup's own units).
+const RANGE_TYPING_WIDTH: f32 = 48.0;
 /// The largest seed (`ParameterAttribute(Parameters.Seed)`'s `Max`).
 const SEED_MAX: f64 = 65535.0;
 
@@ -64,6 +68,11 @@ pub enum Edit {
     Command,
     /// Open the documentation at this page (Help with Automation).
     ShowDocs(&'static str),
+    /// A bound parameter's variable given this text
+    /// (`VariableEditor.EditablePopup_EditSuccess`).
+    BoundText(String),
+    /// A bound parameter double-clicked: the Data View's variables.
+    ShowVariables,
 }
 
 /// What shapes an editor besides its value.
@@ -78,6 +87,9 @@ pub struct EditorContext<'a> {
     /// `O.PropertyArea.ActualWidth`: enums get option bars only when the
     /// property area is wider than 300.
     pub area_width: f32,
+    /// The lowest and highest value of the shown node's main output
+    /// (`B.GetTerrainRange`), which terrain-mark sliders mark.
+    pub terrain_range: Option<(f64, f64)>,
 }
 
 /// Draws the control for one parameter.
@@ -87,7 +99,8 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
     match spec.value_type {
         ValueType::Float | ValueType::Double => {
             let current = value.as_f64().unwrap_or(0.0);
-            let slider_spec = SliderSpec::of(spec, context.default, false);
+            let mut slider_spec = SliderSpec::of(spec, context.default, false);
+            slider_spec.terrain_range = context.terrain_range;
             match slider(ui, id, label, current, &slider_spec, context.color) {
                 Some(new_value) if spec.value_type == ValueType::Float => Edit::Set(f32_value(new_value as f32)),
                 Some(new_value) => Edit::Set(json!(new_value)),
@@ -144,7 +157,9 @@ pub fn parameter(ui: &mut Ui, id: Id, spec: &ParameterSpec, value: &Value, conte
             let high = value.get("Y").and_then(Value::as_f64).unwrap_or(0.0);
             let (min, max) = range_of(spec, 0.0, 1.0);
             let integer = spec.value_type == ValueType::Int2;
-            let range = RangeSpec { min, max, integer, inset: None };
+            let mut range = RangeSpec::linear(min, max);
+            range.integer = integer;
+            range.default = context.default.and_then(range_pair);
             // `Parameters.RangeClipper` gets a palette range slider.
             let look = if spec.kind == "RangeClipper" {
                 RangeLook::Palette(range_palette(ui.ctx(), context.values))
@@ -185,6 +200,13 @@ pub(crate) fn range_of(spec: &ParameterSpec, default_min: f64, default_max: f64)
     if max > min { (min, max) } else { (default_min, default_max) }
 }
 
+/// A saved range (`Float2`, `Int2`): its low and high values.
+pub(crate) fn range_pair(value: &Value) -> Option<(f64, f64)> {
+    let low = value.get("X").and_then(Value::as_f64)?;
+    let high = value.get("Y").and_then(Value::as_f64)?;
+    Some((low, high))
+}
+
 /// Tick marks along a slider's bar (`SliderX.TickType`, integer steps).
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Ticks {
@@ -198,6 +220,9 @@ pub enum Ticks {
     Degrees360,
     /// 0, 30, 45, 60 and 90.
     Degrees90,
+    /// The shown node's lowest and highest heights
+    /// (`SetupTerrainMarks`: Snow's Snow Line, Trees' Snowline).
+    TerrainMarks,
 }
 
 /// How a `SliderX` maps and shows its value.
@@ -217,6 +242,11 @@ pub struct SliderSpec {
     /// `Slider.MinHeight`).
     pub inset: Option<f32>,
     pub height: Option<f32>,
+    /// What `Ticks::TerrainMarks` marks: the shown node's lowest and
+    /// highest heights, once it has been built.
+    pub terrain_range: Option<(f64, f64)>,
+    /// `Tag="modifier"`: a borderless bar with smaller corners.
+    pub modifier: bool,
 }
 
 impl SliderSpec {
@@ -231,6 +261,8 @@ impl SliderSpec {
             ticks: Ticks::None,
             inset: None,
             height: None,
+            terrain_range: None,
+            modifier: false,
         }
     }
 
@@ -248,6 +280,7 @@ impl SliderSpec {
             match tick_type {
                 Some("Degrees360") => Ticks::Degrees360,
                 Some("Degrees90") => Ticks::Degrees90,
+                Some("TerrainMarks") => Ticks::TerrainMarks,
                 _ if integer && max < 100.0 => Ticks::Steps,
                 _ => Ticks::None,
             }
@@ -307,6 +340,14 @@ impl SliderSpec {
             Ticks::Degrees360 => at_values(&[0.0, 90.0, 180.0, 270.0]),
             Ticks::Degrees90 => at_values(&[0.0, 30.0, 45.0, 60.0, 90.0]),
             Ticks::Curve => curve_ticks(self.min as f32, self.max as f32, self.curve as f32, 50),
+            // Marks on or past the ends are left to the ends' own.
+            Ticks::TerrainMarks => {
+                let Some((lowest, highest)) = self.terrain_range else {
+                    return Vec::new();
+                };
+                let inside: Vec<f64> = [lowest, highest].into_iter().filter(|value| *value > self.min && *value < self.max).collect();
+                at_values(&inside)
+            }
         }
     }
 
@@ -414,76 +455,75 @@ fn irregular_tick_values(min: f32, max: f32, max_ticks: usize) -> Vec<f64> {
     values
 }
 
-/// Commands of the slider's right-click bar (`NudgePopup`), in its order.
-#[derive(Clone, Copy, PartialEq)]
-enum Nudge {
-    Half,
-    Double,
-    Min,
-    Down10,
-    Down1,
-    Default,
-    Up1,
-    Up10,
-    Max,
-}
-
-const NUDGES: [(Nudge, &str, &str); 9] = [
-    (Nudge::Half, "math-1-divide-2", "Half"),
-    (Nudge::Double, "multiplier-2x", "Double"),
-    (Nudge::Min, "arrow-bar-to-left", "Min"),
-    (Nudge::Down10, "chevrons-left", "Down 10"),
-    (Nudge::Down1, "chevron-left", "Down 1"),
-    (Nudge::Default, "rotate-360", "Default"),
-    (Nudge::Up1, "chevron-right", "Up 1"),
-    (Nudge::Up10, "chevrons-right", "Up 10"),
-    (Nudge::Max, "arrow-bar-to-right", "Max"),
-];
-
-/// `NudgePopup_CommandClicked`.
+/// `NudgePopup_CommandClicked`, in single precision as the slider keeps
+/// its value: Down 10 and Up 10 step a tenth of the range, Down 1 and
+/// Up 1 a hundredth, and the result is held to the range (`SetValue`).
 fn nudged(nudge: Nudge, value: f64, spec: &SliderSpec) -> f64 {
-    let tenth = (spec.max - spec.min) / 10.0;
+    let value = value as f32;
+    let min = spec.min as f32;
+    let max = spec.max as f32;
+    let tenth = (max - min) / 10.0;
     let new_value = match nudge {
-        Nudge::Half => value / 2.0,
+        Nudge::Half => value * 0.5,
         Nudge::Double => value * 2.0,
-        Nudge::Min => spec.min,
+        Nudge::Min => min,
         Nudge::Down10 => value - tenth,
         Nudge::Down1 => value - tenth / 10.0,
-        Nudge::Default => spec.default.unwrap_or(value),
+        Nudge::Default => spec.default.map_or(value, |default| default as f32),
         Nudge::Up1 => value + tenth / 10.0,
         Nudge::Up10 => value + tenth,
-        Nudge::Max => spec.max,
+        Nudge::Max => max,
     };
-    let clamped = new_value.clamp(spec.min, spec.max);
+    let clamped = new_value.clamp(min, max) as f64;
     if spec.integer { clamped.round_ties_even() } else { clamped }
+}
+
+/// `EditablePopup_EditSuccess`: the typed text worked out as a formula
+/// (the project's variables, `Resolution`, `PX`, `m()`…) and held to the
+/// range; nothing when it does not work out. A formula that comes to NaN
+/// changes nothing either.
+fn typed_value(ctx: &egui::Context, text: &str, spec: &SliderSpec) -> Option<f64> {
+    let number = crate::ui::formulas::evaluate(ctx, text)?;
+    if number.is_nan() {
+        return None;
+    }
+    let clamped = number.clamp(spec.min as f32, spec.max as f32) as f64;
+    Some(if spec.integer { clamped.round_ties_even() } else { clamped })
 }
 
 /// `SliderX`: a bar with the name on the left and the value on the right,
 /// both in the accent; the part up to the value is shaded and a thin bar
-/// marks it. Click or drag to set (Shift snaps to the ticks), double-click
-/// to type, right-click for the nudge bar.
+/// marks it. Click or drag to set (Shift snaps to the ticks). A
+/// right-click on the value opens a box to type a value or a formula in;
+/// anywhere else, the nudge bar.
 pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, color: Color32) -> Option<f64> {
     let sizes = theme::sizes(ui.ctx());
     let width = ui.available_width();
     let height = spec.height.unwrap_or(sizes.slider_height);
     let inset = spec.inset.unwrap_or(sizes.slider_inset);
     let (row, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // The whole control takes right-clicks, its padding too.
+    let row_response = ui.interact(row, id.with("slider-row"), Sense::click());
     let content = Rect::from_min_max(Pos2::new(row.left() + inset, row.top()), row.max);
     let response = ui.interact(content, id.with("slider"), Sense::click_and_drag());
     let enabled = ui.is_enabled();
+    let nudge_id = id.with("nudge");
+    let typing_id = id.with("typing");
     // `SliderEditor_IsEnabledChanged`: a disabled slider shows at half.
     let control_opacity = if enabled { 1.0 } else { 0.5 };
     let is_default = spec.default.is_some_and(|default| (value - default).abs() < 1e-5);
     let value_opacity = control_opacity * if is_default { DEFAULT_OPACITY } else { 1.0 };
 
     // `border`: the bar's frame, a pixel over the control above and below,
-    // outlined `Slider.BorderStroke.Thickness` wide.
+    // outlined `Slider.BorderStroke.Thickness` wide (in a modifier,
+    // corners of 2 and no outline).
     let border = content.expand2(Vec2::new(0.0, 1.0));
+    let corner = if spec.modifier { 2.0 } else { 4.0 };
     let painter = ui.painter();
-    painter.rect_filled(border, 4.0, theme::SLIDER_BACKGROUND.gamma_multiply(control_opacity));
-    if sizes.slider_border > 0.0 {
+    painter.rect_filled(border, corner, theme::SLIDER_BACKGROUND.gamma_multiply(control_opacity));
+    if sizes.slider_border > 0.0 && !spec.modifier {
         let outline = Stroke::new(sizes.slider_border, theme::SLIDER_BORDER.gamma_multiply(control_opacity));
-        painter.rect_stroke(border, 4.0, outline, StrokeKind::Inside);
+        painter.rect_stroke(border, corner, outline, StrokeKind::Inside);
     }
 
     // `_slider` (margin 3.5, 1): the shading up to the thumb (margin
@@ -523,7 +563,8 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     // `_displayName` (margin 10, -1, 8, 0) and `_valueDisplay` (18 high,
     // margin 0, 3, 10, 1, monospace 13).
     // The value keeps its room; the name gets what is left, trimmed, and
-    // nothing leaves the bar.
+    // nothing leaves the bar. The name hides while the nudge bar shows
+    // (`NudgePopup_Opened`).
     let text_painter = painter.with_clip_rect(content);
     let shown = spec.format(value, settings.precise_values);
     let shown_color = color.gamma_multiply(value_opacity);
@@ -531,27 +572,69 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     let value_box_top = content.top() + 3.0 + (content.height() - 4.0 - 18.0) / 2.0;
     let value_rect = Rect::from_min_size(Pos2::new(content.right() - 10.0 - value_galley.size().x, value_box_top), Vec2::new(value_galley.size().x, 18.0));
     text_painter.galley(value_rect.min, value_galley, shown_color);
-    let label_color = color.gamma_multiply(control_opacity);
-    let label_left = content.left() + 10.0;
-    let label_room = value_rect.left() - 8.0 - label_left;
-    let label_galley = fitted_line(ui, label, theme::interface(12.0), label_color, label_room);
-    let label_top = content.top() - 1.0 + (content.height() + 1.0 - label_galley.size().y) / 2.0;
-    text_painter.galley(Pos2::new(label_left, label_top), label_galley, label_color);
+    let nudging = slider_popups::nudge_open(ui.ctx(), nudge_id).is_some();
+    if !nudging {
+        let label_color = color.gamma_multiply(control_opacity);
+        let label_left = content.left() + 10.0;
+        let label_room = value_rect.left() - 8.0 - label_left;
+        let label_galley = fitted_line(ui, label, theme::interface(12.0), label_color, label_room);
+        let label_top = content.top() - 1.0 + (content.height() + 1.0 - label_galley.size().y) / 2.0;
+        text_painter.galley(Pos2::new(label_left, label_top), label_galley, label_color);
+    }
 
-    if let Some(typed) = slider_typing(ui, id, &spec.format(value, true), value_rect, spec) {
-        return typed;
+    // `SliderX_MouseRightButtonUp`: from a tenth of the height before the
+    // value's text on, a box to type in; before that, the nudge bar. Both
+    // start from the value at four decimals.
+    let precise = spec.format(value, true);
+    let asked = slider_popups::take_right_click(ui.ctx(), id);
+    let right_clicked = response.secondary_clicked() || row_response.secondary_clicked() || asked.is_some();
+    if right_clicked && enabled {
+        let pointer = ui.input(|input| input.pointer.interact_pos()).map_or(row.left(), |pointer| pointer.x);
+        let pointer_x = asked.map_or(pointer, |along| row.left() + along * row.width());
+        let typing_from = row.width() - value_rect.width() + row.height() * 0.1;
+        if pointer_x - row.left() < typing_from {
+            slider_popups::open_nudge(ui.ctx(), nudge_id, precise.clone(), None);
+        } else {
+            slider_popups::open_typing(ui.ctx(), typing_id, precise.clone());
+        }
     }
-    if let Some(nudge) = nudge_bar(ui, id, &response, content, spec, color) {
-        let new_value = nudged(nudge, value, spec);
-        return if (new_value - value).abs() > f64::EPSILON { Some(new_value) } else { None };
+    // The box: 8 left of and above the value, as wide as its text and 64
+    // at least (the popup's own units).
+    let popup_scale = slider_popups::popup_scale(ui.ctx());
+    let typing_look = TypingLook {
+        top_left: value_rect.min - Vec2::splat(8.0 * popup_scale),
+        width: BoxWidth::AtLeast(SLIDER_TYPING_MIN_WIDTH * popup_scale),
+        font: slider_popups::value_font(),
+    };
+    if let Some(text) = slider_popups::typing_box(ui, typing_id, &typing_look) {
+        // Taking the text it opened with changes nothing.
+        if text.trim() == precise {
+            return None;
+        }
+        return typed_value(ui.ctx(), &text, spec).filter(|new_value| (new_value - value).abs() > f64::EPSILON);
     }
-    if response.double_clicked() {
-        // The popup starts from the value at four decimals, whatever the
-        // slider shows.
-        ui.data_mut(|data| data.insert_temp(id.with("typing"), spec.format(value, true)));
-        return None;
+    // The bar: 2 left of and above the slider's bar, as wide as the whole
+    // control.
+    let nudge_look = NudgeLook {
+        top_left: track.min - Vec2::splat(2.0 * popup_scale),
+        width: row.width(),
+        color,
+        has_default: spec.default.is_some(),
+    };
+    let nudge = slider_popups::nudge_bar(ui, nudge_id, &nudge_look);
+    if let Some(command) = nudge.command {
+        let new_value = nudged(command, value, spec);
+        // The bar's box shows the value it came to.
+        slider_popups::set_nudge_text(ui.ctx(), nudge_id, spec.format(new_value, true));
+        return ((new_value - value).abs() > f64::EPSILON).then_some(new_value);
     }
-    let pressed = response.is_pointer_button_down_on() || response.dragged();
+    if let Some(text) = nudge.typed {
+        return typed_value(ui.ctx(), &text, spec).filter(|new_value| (new_value - value).abs() > f64::EPSILON);
+    }
+
+    // Only the left button sets the value.
+    let primary_down = ui.input(|input| input.pointer.primary_down());
+    let pressed = response.is_pointer_button_down_on() && primary_down;
     if !pressed || !enabled {
         return None;
     }
@@ -563,93 +646,6 @@ pub fn slider(ui: &mut Ui, id: Id, label: &str, value: f64, spec: &SliderSpec, c
     if (new_value - value).abs() > f64::EPSILON { Some(new_value) } else { None }
 }
 
-/// The double-click editor (`EditablePopup`): monospace 16 over the value,
-/// 16 wider than it (64 at least), starting from `started`; it closes as
-/// [`crate::ui::widgets::popup_outcome`] says. `Some(change)` while
-/// typing.
-fn slider_typing(ui: &mut Ui, id: Id, started: &str, value_rect: Rect, spec: &SliderSpec) -> Option<Option<f64>> {
-    let typing_id = id.with("typing");
-    let mut text: String = ui.data(|data| data.get_temp(typing_id))?;
-    let width = (value_rect.width() + 16.0).max(64.0);
-    let top_left = Pos2::new(value_rect.right() + 8.0 - width, value_rect.top() - 8.0);
-    let area = egui::Area::new(typing_id.with("area")).fixed_pos(top_left).order(egui::Order::Foreground);
-    let response = area.show(ui.ctx(), |ui| {
-        let mut frame = egui::Frame::new();
-        frame.fill = theme::TEXTBOX_BACKGROUND;
-        frame.stroke = Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER);
-        frame.corner_radius = CornerRadius::same(2);
-        frame.show(ui, |ui| {
-            let mut edit = egui::TextEdit::singleline(&mut text);
-            edit = edit.font(theme::monospace(16.0));
-            edit = edit.horizontal_align(egui::Align::RIGHT);
-            edit = edit.desired_width(width - 8.0);
-            edit = edit.frame(egui::Frame::NONE);
-            let edit_response = ui.add(edit);
-            edit_response.request_focus();
-            edit_response
-        })
-    });
-    let edit_response = response.inner.inner;
-    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
-        ui.data_mut(|data| data.insert_temp(typing_id, text));
-        return Some(None);
-    };
-    ui.data_mut(|data| data.remove::<String>(typing_id));
-    if !accepted || text.trim() == started {
-        return Some(None);
-    }
-    let parsed = text.trim().parse::<f64>().ok();
-    let committed = parsed.map(|number| {
-        let clamped = number.clamp(spec.min, spec.max);
-        if spec.integer { clamped.round_ties_even() } else { clamped }
-    });
-    Some(committed)
-}
-
-/// The right-click bar (`NudgePopup`): nine buttons in the accent over the
-/// slider, closed when the pointer leaves it.
-fn nudge_bar(ui: &mut Ui, id: Id, response: &egui::Response, content: Rect, spec: &SliderSpec, color: Color32) -> Option<Nudge> {
-    let open_id = id.with("nudge-open");
-    if response.secondary_clicked() && ui.is_enabled() {
-        ui.data_mut(|data| data.insert_temp(open_id, true));
-    }
-    let open: bool = ui.data(|data| data.get_temp(open_id)).unwrap_or(false);
-    if !open {
-        return None;
-    }
-    let bar_width = NUDGE_BUTTON.x * NUDGES.len() as f32;
-    let top_left = Pos2::new(content.left() - 2.0, content.center().y - NUDGE_BUTTON.y / 2.0 - 2.0);
-    let area = egui::Area::new(open_id.with("area")).fixed_pos(top_left).order(egui::Order::Foreground);
-    let mut chosen = None;
-    let shown = area.show(ui.ctx(), |ui| {
-        let mut frame = egui::Frame::new();
-        frame.fill = theme::NUDGE_BACKGROUND;
-        frame.corner_radius = CornerRadius::same(3);
-        frame.inner_margin = egui::Margin::same(2);
-        frame.show(ui, |ui| {
-            ui.set_width(bar_width);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for (nudge, icon, tooltip) in NUDGES {
-                    let (rect, button) = ui.allocate_exact_size(NUDGE_BUTTON, Sense::click());
-                    let tint = if button.hovered() { theme::LABEL_EMPHASIS } else { color };
-                    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::DEFAULT_SIZE));
-                    icons::paint(ui, icon_rect, icon, tint);
-                    let disabled_default = nudge == Nudge::Default && spec.default.is_none();
-                    if button.on_hover_text(tooltip).clicked() && !disabled_default {
-                        chosen = Some(nudge);
-                    }
-                }
-            });
-        });
-    });
-    let pointer_inside = shown.response.contains_pointer() || response.contains_pointer();
-    if !pointer_inside {
-        ui.data_mut(|data| data.insert_temp(open_id, false));
-    }
-    chosen
-}
-
 /// How a `SliderY` maps its two values.
 #[derive(Clone, Debug)]
 pub struct RangeSpec {
@@ -659,6 +655,25 @@ pub struct RangeSpec {
     /// `Slider.Margin` (none in the layer editor); `None` is the size
     /// theme's.
     pub inset: Option<f32>,
+    /// The type's default range (`DefaultValue`), for the nudge bar's
+    /// Default.
+    pub default: Option<(f64, f64)>,
+    /// `Tag="modifier"`: a borderless bar with smaller corners.
+    pub modifier: bool,
+}
+
+impl RangeSpec {
+    /// A range over `min..max`.
+    pub fn linear(min: f64, max: f64) -> Self {
+        RangeSpec {
+            min,
+            max,
+            integer: false,
+            inset: None,
+            default: None,
+            modifier: false,
+        }
+    }
 }
 
 /// How a `SliderY` is drawn.
@@ -707,7 +722,10 @@ pub fn range_slider(ui: &mut Ui, id: Id, label: &str, low: f64, high: f64, spec:
     styled_range_slider(ui, id, low, high, spec, &look)
 }
 
-/// A `SliderY` in either look.
+/// A `SliderY` in either look. Drag a thumb, or hold Shift and drag to
+/// move the whole range. A right-click on the left fifth opens a box to
+/// type the low value (a formula, like a slider's), on the right fifth the
+/// high one; in between, the nudge bar for the end on that side.
 pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &RangeSpec, look: &RangeLook) -> Option<(f64, f64)> {
     let sizes = theme::sizes(ui.ctx());
     let width = ui.available_width();
@@ -717,21 +735,29 @@ pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &Rang
     };
     let inset = spec.inset.unwrap_or(sizes.slider_inset);
     let (row, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // The whole control takes right-clicks, its padding too.
+    let row_response = ui.interact(row, id.with("range-row"), Sense::click());
     let content = Rect::from_min_max(Pos2::new(row.left() + inset, row.top()), row.max);
     let response = ui.interact(content, id.with("range"), Sense::click_and_drag());
-    let opacity = if ui.is_enabled() { 1.0 } else { 0.5 };
+    let enabled = ui.is_enabled();
+    let opacity = if enabled { 1.0 } else { 0.5 };
     let accent = match look {
         RangeLook::Accent { color, .. } => *color,
         RangeLook::Palette(_) => PALETTE_SLIDER_FOREGROUND,
     };
+    let nudge_id = id.with("nudge");
+    let low_typing_id = id.with("typing-low");
+    let high_typing_id = id.with("typing-high");
 
-    // `border` reaches two pixels past the right edge.
+    // `border` reaches two pixels past the right edge (in a modifier,
+    // corners of 2 and no outline).
     let border = Rect::from_min_max(content.min, content.max + Vec2::new(2.0, 0.0));
+    let corner = if spec.modifier { 2.0 } else { 4.0 };
     let painter = ui.painter();
     let border_stroke = Stroke::new(1.0, theme::SLIDER_BORDER.gamma_multiply(opacity));
     match look {
         RangeLook::Accent { .. } => {
-            painter.rect_filled(border, 4.0, theme::SLIDER_BACKGROUND.gamma_multiply(opacity));
+            painter.rect_filled(border, corner, theme::SLIDER_BACKGROUND.gamma_multiply(opacity));
         }
         // The palette fills the bar from end to end (an `ImageBrush`).
         RangeLook::Palette(Some(fill)) => {
@@ -741,42 +767,45 @@ pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &Rang
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
             };
             let tint = Color32::WHITE.gamma_multiply(opacity);
-            let shape = egui::epaint::RectShape::filled(border, 4.0, tint).with_texture(fill.texture, uv);
+            let shape = egui::epaint::RectShape::filled(border, corner, tint).with_texture(fill.texture, uv);
             painter.add(shape);
         }
         RangeLook::Palette(None) => {
-            painter.rect_filled(border, 4.0, theme::ACCENT_PRIMARY.gamma_multiply(opacity));
+            painter.rect_filled(border, corner, theme::ACCENT_PRIMARY.gamma_multiply(opacity));
         }
     }
-    painter.rect_stroke(border, 4.0, border_stroke, StrokeKind::Inside);
+    if !spec.modifier {
+        painter.rect_stroke(border, corner, border_stroke, StrokeKind::Inside);
+    }
 
     // The two values keep their room; the name sits between them,
     // trimmed, and nothing leaves the bar. The range (`Panel.ZIndex` 50)
-    // and the thumbs (100) lie over them.
+    // and the thumbs (100) lie over them. The name hides while the nudge
+    // bar shows (`NudgePopup_Opened`).
     let text_painter = painter.with_clip_rect(content);
     let text_color = accent.gamma_multiply(opacity);
     let precise = theme::settings(ui.ctx()).precise_values;
-    let format = |value: f64| {
-        if spec.integer {
-            format!("{}", value.round_ties_even() as i64)
-        } else if precise {
-            format!("{value:.4}")
-        } else {
-            format!("{value:.2}")
-        }
-    };
-    let low_galley = painter.layout_no_wrap(format(low), theme::monospace(13.0), text_color);
-    let high_galley = painter.layout_no_wrap(format(high), theme::monospace(13.0), text_color);
-    let low_top = content.top() + 2.0 + (content.height() - 3.0 - 15.0) / 2.0;
-    let low_text_right = content.left() + 8.0 + low_galley.size().x;
-    let high_text_left = content.right() - 8.0 - high_galley.size().x;
-    text_painter.galley(Pos2::new(content.left() + 8.0, low_top), low_galley, text_color);
-    text_painter.galley(Pos2::new(high_text_left, low_top), high_galley, text_color);
-    if let RangeLook::Accent { label, .. } = look {
-        let name_room = (high_text_left - low_text_right - 16.0).min(content.width());
+    let low_text = range_text(low, spec.integer, precise);
+    let high_text = range_text(high, spec.integer, precise);
+    let low_galley = painter.layout_no_wrap(low_text.clone(), theme::monospace(13.0), text_color);
+    let high_galley = painter.layout_no_wrap(high_text.clone(), theme::monospace(13.0), text_color);
+    // `PART_ValueDisplay` and `PART_MaxValueDisplay`: 15 high, 8 in.
+    let value_top = content.top() + 2.0 + (content.height() - 3.0 - 15.0) / 2.0;
+    let low_rect = Rect::from_min_size(Pos2::new(content.left() + 8.0, value_top), Vec2::new(low_galley.size().x, 15.0));
+    let high_rect = Rect::from_min_size(Pos2::new(content.right() - 8.0 - high_galley.size().x, value_top), Vec2::new(high_galley.size().x, 15.0));
+    text_painter.galley(low_rect.min, low_galley, text_color);
+    text_painter.galley(high_rect.min, high_galley, text_color);
+    let nudge_end = slider_popups::nudge_open(ui.ctx(), nudge_id).flatten();
+    if let RangeLook::Accent { label, .. } = look
+        && nudge_end.is_none()
+    {
+        let name_room = (high_rect.left() - low_rect.right() - 16.0).min(content.width());
         let name_galley = fitted_line(ui, label, theme::interface(12.0), text_color, name_room);
         text_painter.galley(content.center() - name_galley.size() / 2.0, name_galley, text_color);
     }
+    // Each value's `ToolTip` is its text.
+    ui.interact(low_rect, id.with("low-value"), Sense::hover()).on_hover_text(low_text);
+    ui.interact(high_rect, id.with("high-value"), Sense::hover()).on_hover_text(high_text);
 
     // The two `SliderBase`s (margin 2) and their thumbs.
     let track = content.shrink(2.0);
@@ -809,17 +838,107 @@ pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &Rang
         painter.rect_filled(thumb, 0.0, accent.gamma_multiply(opacity));
     }
 
-    let active_id = id.with("thumb");
-    if response.drag_started() || response.clicked() {
-        let pointer_x = response.interact_pointer_pos().map(|pointer| pointer.x).unwrap_or(low_left);
-        let grabs_low = (pointer_x - low_left).abs() <= (pointer_x - high_left).abs();
-        ui.data_mut(|data| data.insert_temp(active_id, grabs_low));
+    // `SliderY_MouseRightButtonUp`, by where along the whole control.
+    let asked = slider_popups::take_right_click(ui.ctx(), id);
+    let right_clicked = response.secondary_clicked() || row_response.secondary_clicked() || asked.is_some();
+    if right_clicked && enabled {
+        let pointer = ui.input(|input| input.pointer.interact_pos()).map_or(row.left(), |pointer| pointer.x);
+        let pointer_x = asked.map_or(pointer, |along| row.left() + along * row.width());
+        let along = (pointer_x - row.left()) as f64 / row.width() as f64;
+        match range_click_target(along) {
+            Some(RangeClick::TypeLow) => slider_popups::open_typing(ui.ctx(), low_typing_id, slider_popups::short_decimal_text(low as f32)),
+            Some(RangeClick::NudgeLow) => slider_popups::open_nudge(ui.ctx(), nudge_id, range_text(low, spec.integer, true), Some(RangeEnd::Low)),
+            Some(RangeClick::NudgeHigh) => slider_popups::open_nudge(ui.ctx(), nudge_id, range_text(high, spec.integer, true), Some(RangeEnd::High)),
+            Some(RangeClick::TypeHigh) => slider_popups::open_typing(ui.ctx(), high_typing_id, slider_popups::short_decimal_text(high as f32)),
+            None => {}
+        }
     }
-    let pressed = response.is_pointer_button_down_on() || response.dragged();
-    if !pressed || !ui.is_enabled() {
+    // The boxes (48 wide at the interface scale): the low one 8 left of
+    // and above its value, the high one 38 right of its value's start
+    // (offsets in the popup's own units).
+    let popup_scale = slider_popups::popup_scale(ui.ctx());
+    let changed = |new_low: f64, new_high: f64| {
+        let moved = (new_low - low).abs() > f64::EPSILON || (new_high - high).abs() > f64::EPSILON;
+        moved.then_some((new_low, new_high))
+    };
+    let low_look = TypingLook {
+        top_left: low_rect.min + Vec2::new(-8.0, -8.0) * popup_scale,
+        width: BoxWidth::Fixed(RANGE_TYPING_WIDTH),
+        font: slider_popups::value_font(),
+    };
+    if let Some(text) = slider_popups::typing_box(ui, low_typing_id, &low_look) {
+        let typed = typed_range(ui.ctx(), &text, low, high, spec, RangeEnd::Low)?;
+        return changed(typed.0, typed.1);
+    }
+    let high_look = TypingLook {
+        top_left: high_rect.min + Vec2::new(38.0, -8.0) * popup_scale,
+        width: BoxWidth::Fixed(RANGE_TYPING_WIDTH),
+        font: slider_popups::value_font(),
+    };
+    if let Some(text) = slider_popups::typing_box(ui, high_typing_id, &high_look) {
+        let typed = typed_range(ui.ctx(), &text, low, high, spec, RangeEnd::High)?;
+        return changed(typed.0, typed.1);
+    }
+    // The bar covers the control from 2 before the sliders' corner (they
+    // sit 2 in), as wide as the whole control; its buttons take the
+    // style's accent.
+    let button_color = match look {
+        RangeLook::Accent { color, .. } => *color,
+        RangeLook::Palette(_) => theme::ACCENT_PRIMARY,
+    };
+    let nudge_look = NudgeLook {
+        top_left: content.min + Vec2::splat(2.0 - 2.0 * popup_scale),
+        width: row.width(),
+        color: button_color,
+        has_default: spec.default.is_some(),
+    };
+    let nudge = slider_popups::nudge_bar(ui, nudge_id, &nudge_look);
+    if let (Some(command), Some(end)) = (nudge.command, nudge_end) {
+        let (new_low, new_high) = range_nudged(command, low, high, spec, end);
+        let stepped = if end == RangeEnd::Low { new_low } else { new_high };
+        slider_popups::set_nudge_text(ui.ctx(), nudge_id, range_text(stepped, spec.integer, true));
+        return changed(new_low, new_high);
+    }
+    if let (Some(text), Some(end)) = (nudge.typed, nudge_end) {
+        let typed = typed_range(ui.ctx(), &text, low, high, spec, end)?;
+        return changed(typed.0, typed.1);
+    }
+
+    // The left button: Shift held as it goes down moves the whole range
+    // (`CenterDrag`); otherwise it takes the nearer thumb.
+    let active_id = id.with("thumb");
+    let moving_id = id.with("moving");
+    let (pressed_now, primary_down, shift) = ui.input(|input| (input.pointer.primary_pressed(), input.pointer.primary_down(), input.modifiers.shift));
+    let held = response.is_pointer_button_down_on() && primary_down;
+    if !held || !enabled {
+        ui.data_mut(|data| data.remove::<f32>(moving_id));
         return None;
     }
     let pointer = response.interact_pointer_pos()?;
+    if pressed_now {
+        if shift {
+            ui.data_mut(|data| data.insert_temp(moving_id, pointer.x));
+            return None;
+        }
+        ui.data_mut(|data| data.remove::<f32>(moving_id));
+        let grabs_low = (pointer.x - low_left).abs() <= (pointer.x - high_left).abs();
+        ui.data_mut(|data| data.insert_temp(active_id, grabs_low));
+    }
+    if let Some(last_x) = ui.data(|data| data.get_temp::<f32>(moving_id)) {
+        ui.data_mut(|data| data.insert_temp(moving_id, pointer.x));
+        // It moves only while Shift is held, by the pointer's travel over
+        // the whole control.
+        if !shift {
+            return None;
+        }
+        let delta = (pointer.x - last_x) as f64 / row.width().max(1.0) as f64 * (spec.max - spec.min);
+        let (mut new_low, mut new_high) = center_drag(low, high, delta, spec);
+        if spec.integer {
+            new_low = new_low.round_ties_even();
+            new_high = new_high.round_ties_even();
+        }
+        return changed(new_low, new_high);
+    }
     let grabs_low: bool = ui.data(|data| data.get_temp(active_id)).unwrap_or(true);
     let fraction = ((pointer.x - track.left() - THUMB_WIDTH / 2.0) / travel.max(1.0)).clamp(0.0, 1.0) as f64;
     let mut value = spec.min + span * fraction;
@@ -827,8 +946,117 @@ pub fn styled_range_slider(ui: &mut Ui, id: Id, low: f64, high: f64, spec: &Rang
         value = value.round_ties_even();
     }
     let (new_low, new_high) = if grabs_low { (value.min(high), high) } else { (low, value.max(low)) };
-    let changed = (new_low - low).abs() > f64::EPSILON || (new_high - high).abs() > f64::EPSILON;
-    if changed { Some((new_low, new_high)) } else { None }
+    changed(new_low, new_high)
+}
+
+/// What a right-click does where it lands along a range slider, as a
+/// share of its width (`SliderY_MouseRightButtonUp`): exactly a fifth,
+/// half or four fifths along does nothing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RangeClick {
+    TypeLow,
+    NudgeLow,
+    NudgeHigh,
+    TypeHigh,
+}
+
+fn range_click_target(along: f64) -> Option<RangeClick> {
+    if along > 0.0 && along < 0.2 {
+        Some(RangeClick::TypeLow)
+    } else if along > 0.2 && along < 0.5 {
+        Some(RangeClick::NudgeLow)
+    } else if along > 0.5 && along < 0.8 {
+        Some(RangeClick::NudgeHigh)
+    } else if along > 0.8 && along < 1.0 {
+        Some(RangeClick::TypeHigh)
+    } else {
+        None
+    }
+}
+
+/// A range slider's value as it shows (`FormattedString`): two decimals,
+/// four when `precise`, whole numbers for integers.
+fn range_text(value: f64, integer: bool, precise: bool) -> String {
+    if integer {
+        format!("{}", value.round_ties_even() as i64)
+    } else if precise {
+        format!("{value:.4}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// `SetValue` (each end held to the range), then `UpdateUIElements`, which
+/// keeps the high thumb at or above the low one.
+fn held_range(low: f32, high: f32, spec: &RangeSpec) -> (f64, f64) {
+    let min = spec.min as f32;
+    let max = spec.max as f32;
+    let low = low.clamp(min, max);
+    let high = high.clamp(min, max).max(low);
+    (low as f64, high as f64)
+}
+
+/// `SliderY.EditablePopup_EditSuccess`: the typed formula's value for
+/// one end; nothing when it does not work out (or comes to NaN).
+fn typed_range(ctx: &egui::Context, text: &str, low: f64, high: f64, spec: &RangeSpec, end: RangeEnd) -> Option<(f64, f64)> {
+    let number = crate::ui::formulas::evaluate(ctx, text)?;
+    if number.is_nan() {
+        return None;
+    }
+    let held = match end {
+        RangeEnd::Low => held_range(number, high as f32, spec),
+        RangeEnd::High => held_range(low as f32, number, spec),
+    };
+    Some(held)
+}
+
+/// `SliderY.NudgePopup_CommandClicked`: Down 10 and Up 10 step a
+/// hundredth of the range, Down 1 and Up 1 a thousandth; Default puts the
+/// whole range back first.
+fn range_nudged(nudge: Nudge, low: f64, high: f64, spec: &RangeSpec, end: RangeEnd) -> (f64, f64) {
+    let min = spec.min as f32;
+    let max = spec.max as f32;
+    let step = (max - min) / 100.0;
+    let mut low = low as f32;
+    let mut high = high as f32;
+    let default = spec.default.map(|(default_low, default_high)| (default_low as f32, default_high as f32));
+    if nudge == Nudge::Default
+        && let Some((default_low, default_high)) = default
+    {
+        (low, high) = (default_low.clamp(min, max), default_high.clamp(min, max));
+    }
+    let current = if end == RangeEnd::Low { low } else { high };
+    let default_end = default.map(|(default_low, default_high)| if end == RangeEnd::Low { default_low } else { default_high });
+    let stepped = match nudge {
+        Nudge::Half => current * 0.5,
+        Nudge::Double => current * 2.0,
+        Nudge::Min => min,
+        Nudge::Down10 => current - step,
+        Nudge::Down1 => current - step / 10.0,
+        Nudge::Default => default_end.unwrap_or(current),
+        Nudge::Up1 => current + step / 10.0,
+        Nudge::Up10 => current + step,
+        Nudge::Max => max,
+    };
+    match end {
+        RangeEnd::Low => held_range(stepped, high, spec),
+        RangeEnd::High => held_range(low, stepped, spec),
+    }
+}
+
+/// `CenterDrag`: the range moved by `delta`, keeping its width and
+/// stopping at either end.
+fn center_drag(low: f64, high: f64, delta: f64, spec: &RangeSpec) -> (f64, f64) {
+    let width = high - low;
+    let new_low = low + delta;
+    let new_high = new_low + width;
+    if new_low < spec.min {
+        (spec.min, spec.min + width)
+    } else if new_high > spec.max {
+        (spec.max - width, spec.max)
+    } else {
+        (new_low, new_high)
+    }
 }
 
 /// One line of text no wider than `max_width`, trimmed with an ellipsis
@@ -888,14 +1116,21 @@ fn seed_box(ui: &mut Ui, id: Id, label: &str, seed: i64) -> Edit {
     if button.clicked() && enabled {
         edit = Edit::NewSeed;
     }
-    // `PART_Textbox_MouseRightButtonUp`: an `EditablePopup` over the seed.
+    // `PART_Textbox_MouseRightButtonUp`: an `EditablePopup` 4 above the
+    // button, 32 wider (64 at least), its text taken as a formula.
     let typing_id = id.with("seed-typing");
     if button.secondary_clicked() && enabled {
-        ui.data_mut(|data| data.insert_temp(typing_id, seed.to_string()));
+        slider_popups::open_typing(ui.ctx(), typing_id, seed.to_string());
     }
     let button = button.on_hover_text("New seed");
-    if let Some(typed) = seed_typing(ui, typing_id, button.rect) {
-        edit = typed;
+    let popup_scale = slider_popups::popup_scale(ui.ctx());
+    let typing_look = TypingLook {
+        top_left: Pos2::new(button.rect.left(), button.rect.top() - 4.0 * popup_scale),
+        width: BoxWidth::Fixed(((button.rect.width() + 32.0) * popup_scale).max(64.0 * popup_scale)),
+        font: slider_popups::value_font(),
+    };
+    if let Some(text) = slider_popups::typing_box(ui, typing_id, &typing_look) {
+        edit = Edit::SeedText(text);
     }
 
     let mut menu_ui = ui.new_child(egui::UiBuilder::new().max_rect(menu_rect));
@@ -951,41 +1186,6 @@ fn seed_memory_menu(ui: &mut Ui, saved_id: Id, drawn_id: Id, seed: i64) -> Optio
         ui.data_mut(|data| data.remove::<Vec<i64>>(saved_id));
     }
     chosen
-}
-
-/// The seed's `EditablePopup` (`PlacementMode.RelativePoint` 4 above the
-/// button, 32 wider, 64 at least; monospace 16), closing as
-/// [`crate::ui::widgets::popup_outcome`] says. `Some` once it closes.
-fn seed_typing(ui: &mut Ui, typing_id: Id, button: Rect) -> Option<Edit> {
-    let mut text: String = ui.data(|data| data.get_temp(typing_id))?;
-    let width = (button.width() + 32.0).max(64.0);
-    let top_left = Pos2::new(button.left(), button.top() - 4.0);
-    let area = egui::Area::new(typing_id.with("area")).fixed_pos(top_left).order(egui::Order::Foreground);
-    let response = area.show(ui.ctx(), |ui| {
-        let mut frame = egui::Frame::new();
-        frame.fill = theme::TEXTBOX_BACKGROUND;
-        frame.stroke = Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER);
-        frame.corner_radius = CornerRadius::same(2);
-        frame.show(ui, |ui| {
-            let mut edit = egui::TextEdit::singleline(&mut text);
-            edit = edit.font(theme::monospace(16.0));
-            edit = edit.desired_width(width - 8.0);
-            edit = edit.frame(egui::Frame::NONE);
-            let edit_response = ui.add(edit);
-            edit_response.request_focus();
-            edit_response
-        })
-    });
-    let edit_response = response.inner.inner;
-    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
-        ui.data_mut(|data| data.insert_temp(typing_id, text));
-        return None;
-    };
-    ui.data_mut(|data| data.remove::<String>(typing_id));
-    if !accepted {
-        return Some(Edit::None);
-    }
-    Some(Edit::SeedText(text))
 }
 
 /// `HasShrunk`: how far a labelled editor has narrowed.
@@ -1469,37 +1669,20 @@ fn text_box(ui: &mut Ui, id: Id, label: &str, current: &str) -> Edit {
 
     let typing_id = id.with("text-typing");
     if response.clicked() && ui.is_enabled() {
-        ui.data_mut(|data| data.insert_temp(typing_id, current.to_string()));
+        slider_popups::open_typing(ui.ctx(), typing_id, current.to_string());
     }
-    let Some(mut text) = ui.data(|data| data.get_temp::<String>(typing_id)) else {
-        return Edit::None;
+    // 90 in from the control, as wide as it less 90 (96 at least), in
+    // the popup's own units.
+    let popup_scale = slider_popups::popup_scale(ui.ctx());
+    let typing_look = TypingLook {
+        top_left: Pos2::new(control.left() + 90.0 * popup_scale, control.top()),
+        width: BoxWidth::Fixed(((control.width() - 90.0) * popup_scale).max(96.0 * popup_scale)),
+        font: slider_popups::value_font(),
     };
-    let popup_width = field.width().max(96.0);
-    let area = egui::Area::new(typing_id.with("area")).fixed_pos(field.min).order(egui::Order::Foreground);
-    let shown = area.show(ui.ctx(), |ui| {
-        let mut frame = egui::Frame::new();
-        frame.fill = theme::TEXTBOX_BACKGROUND;
-        frame.stroke = Stroke::new(1.0, theme::TEXTBOX_FOCUSED_BORDER);
-        frame.corner_radius = CornerRadius::same(3);
-        frame.inner_margin = egui::Margin::same(4);
-        frame.show(ui, |ui| {
-            let mut edit = egui::TextEdit::singleline(&mut text);
-            edit = edit.font(theme::monospace(16.0));
-            edit = edit.text_color(theme::LABEL_EMPHASIS);
-            edit = edit.desired_width(popup_width - 10.0);
-            edit = edit.frame(egui::Frame::NONE);
-            let edit_response = ui.add(edit);
-            edit_response.request_focus();
-            edit_response
-        })
-    });
-    let edit_response = shown.inner.inner;
-    let Some(accepted) = crate::ui::widgets::popup_outcome(ui, &edit_response) else {
-        ui.data_mut(|data| data.insert_temp(typing_id, text));
-        return Edit::None;
-    };
-    ui.data_mut(|data| data.remove::<String>(typing_id));
-    if accepted && text != current { Edit::Set(json!(text)) } else { Edit::None }
+    match slider_popups::typing_box(ui, typing_id, &typing_look) {
+        Some(text) if text != current => Edit::Set(json!(text)),
+        _ => Edit::None,
+    }
 }
 
 /// A read-only value beside its name (90 header column).
@@ -1753,7 +1936,7 @@ pub fn macro_variables(ui: &mut Ui, id: Id, variables: &Value, color: Color32) -
             "Range" => {
                 let low = value.get("X").and_then(Value::as_f64).unwrap_or(min);
                 let high = value.get("Y").and_then(Value::as_f64).unwrap_or(max);
-                let spec = RangeSpec { min, max, integer: false, inset: None };
+                let spec = RangeSpec::linear(min, max);
                 range_slider(ui, variable_id, label, low, high, &spec, color).map(|(low, high)| {
                     let mut range = value.clone();
                     if !range.is_object() {
@@ -1800,6 +1983,7 @@ pub fn string_list(value: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerthus_engine::Catalogue;
 
     #[test]
     fn long_text_is_trimmed_to_its_room() {
@@ -1988,5 +2172,242 @@ mod tests {
         assert!(!end.is_empty() && "relative/folder/height.png".ends_with(end), "{}", shown[2]);
         // Not even "..." fits: the whole rest follows it.
         assert_eq!(shown[3], "/.../Users/someone/Documents/Terrains/Heightfields/Alps/height.png".replacen("/.../", "/...", 1));
+    }
+
+    /// Where the sliders under test sit: 300 wide and 26 high, 40 down so
+    /// their popups have room above.
+    const SLIDER_ROW: Rect = Rect::from_min_max(Pos2::new(0.0, 40.0), Pos2::new(300.0, 66.0));
+
+    fn slider_id() -> Id {
+        Id::new("slider-test")
+    }
+
+    fn press(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::NONE }
+    }
+
+    /// One frame with these events, these modifiers held.
+    fn frame_input(events: Vec<egui::Event>, modifiers: egui::Modifiers) -> egui::RawInput {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+        let mut all_events = vec![egui::Event::ModifiersChanged(modifiers)];
+        all_events.extend(events);
+        egui::RawInput { screen_rect: Some(screen), events: all_events, ..Default::default() }
+    }
+
+    /// One frame of a slider holding `value`; what it changed to.
+    fn slider_frame(context: &egui::Context, value: f64, spec: &SliderSpec, events: Vec<egui::Event>) -> Option<f64> {
+        let mut changed = None;
+        let output = context.run_ui(frame_input(events, egui::Modifiers::NONE), |ui| {
+            let mut row = ui.new_child(egui::UiBuilder::new().max_rect(SLIDER_ROW));
+            changed = slider(&mut row, slider_id(), "Scale", value, spec, Color32::WHITE);
+        });
+        output.drop_without_applying_deltas();
+        changed
+    }
+
+    /// A right-click at `at`, a frame per event; what each frame changed.
+    fn right_click(context: &egui::Context, value: f64, spec: &SliderSpec, at: Pos2) -> Vec<Option<f64>> {
+        let events = [egui::Event::PointerMoved(at), press(at, egui::PointerButton::Secondary, true), press(at, egui::PointerButton::Secondary, false)];
+        events.into_iter().map(|event| slider_frame(context, value, spec, vec![event])).collect()
+    }
+
+    /// A left click at `at`, a frame per event.
+    fn left_click(context: &egui::Context, value: f64, spec: &SliderSpec, at: Pos2) -> Vec<Option<f64>> {
+        let events = [egui::Event::PointerMoved(at), press(at, egui::PointerButton::Primary, true), press(at, egui::PointerButton::Primary, false)];
+        events.into_iter().map(|event| slider_frame(context, value, spec, vec![event])).collect()
+    }
+
+    #[test]
+    fn a_value_typed_on_the_number_is_worked_out_as_a_formula() {
+        let context = themed_context();
+        let mut editor = crate::editor::Editor::new(crate::document::Document::new());
+        editor.preview_resolution = 512;
+        crate::ui::formulas::publish(&context, &editor);
+        let spec = SliderSpec::linear(0.0, 1.0);
+        // On the value: the typing box, starting from four decimals.
+        let changes = right_click(&context, 0.25, &spec, Pos2::new(292.0, 53.0));
+        assert!(changes.iter().all(Option::is_none));
+        let typing_id = slider_id().with("typing");
+        assert_eq!(slider_popups::typing_text(&context, typing_id).as_deref(), Some("0.2500"));
+        assert_eq!(slider_frame(&context, 0.25, &spec, vec![egui::Event::Text("PX * 256".to_string())]), None);
+        assert_eq!(slider_frame(&context, 0.25, &spec, vec![key(egui::Key::Enter)]), Some(0.5));
+        assert!(slider_popups::typing_text(&context, typing_id).is_none());
+
+        // Past the range: held to it. Nonsense: nothing.
+        right_click(&context, 0.25, &spec, Pos2::new(292.0, 53.0));
+        slider_frame(&context, 0.25, &spec, vec![egui::Event::Text("3 * 2".to_string())]);
+        assert_eq!(slider_frame(&context, 0.25, &spec, vec![key(egui::Key::Enter)]), Some(1.0));
+        right_click(&context, 0.25, &spec, Pos2::new(292.0, 53.0));
+        slider_frame(&context, 0.25, &spec, vec![egui::Event::Text("two".to_string())]);
+        assert_eq!(slider_frame(&context, 0.25, &spec, vec![key(egui::Key::Enter)]), None);
+        // Escape leaves the value alone.
+        right_click(&context, 0.25, &spec, Pos2::new(292.0, 53.0));
+        slider_frame(&context, 0.25, &spec, vec![egui::Event::Text("0.75".to_string())]);
+        assert_eq!(slider_frame(&context, 0.25, &spec, vec![key(egui::Key::Escape)]), None);
+        assert!(slider_popups::typing_text(&context, typing_id).is_none());
+    }
+
+    #[test]
+    fn a_right_click_off_the_number_opens_the_nudge_bar() {
+        let context = themed_context();
+        let spec = SliderSpec::linear(0.0, 1.0);
+        let nudge_id = slider_id().with("nudge");
+        // A right press does not move the value.
+        let changes = right_click(&context, 0.25, &spec, Pos2::new(100.0, 53.0));
+        assert!(changes.iter().all(Option::is_none), "{changes:?}");
+        assert_eq!(slider_popups::nudge_text(&context, nudge_id).as_deref(), Some("0.2500"));
+        // Up 10, the eighth button: a tenth of the range, and the box
+        // follows.
+        let bar_left = SLIDER_ROW.left() + 20.0 + 3.5 - 2.0;
+        let up_ten = Pos2::new(bar_left + 7.0 * 28.0 + 14.0, SLIDER_ROW.top() + 1.0 - 2.0 + 13.0);
+        let changes = left_click(&context, 0.25, &spec, up_ten);
+        let changed = changes.into_iter().flatten().next().expect("Up 10 changes the value");
+        assert!((changed - 0.35).abs() < 1e-6, "{changed}");
+        assert_eq!(slider_popups::nudge_text(&context, nudge_id).as_deref(), Some("0.3500"));
+        // The box takes a formula with Enter.
+        let field = Pos2::new(bar_left + 9.0 * 28.0 + 6.0 + 20.0, up_ten.y);
+        left_click(&context, 0.35, &spec, field);
+        slider_frame(&context, 0.35, &spec, vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+        slider_frame(&context, 0.35, &spec, vec![egui::Event::Text("1/8".to_string())]);
+        assert_eq!(slider_frame(&context, 0.35, &spec, vec![key(egui::Key::Enter)]), Some(0.125));
+        assert!(slider_popups::nudge_text(&context, nudge_id).is_none());
+        // Leaving it closes it.
+        right_click(&context, 0.25, &spec, Pos2::new(100.0, 53.0));
+        slider_frame(&context, 0.25, &spec, vec![egui::Event::PointerMoved(Pos2::new(120.0, 50.0))]);
+        assert!(slider_popups::nudge_text(&context, nudge_id).is_some());
+        slider_frame(&context, 0.25, &spec, vec![egui::Event::PointerMoved(Pos2::new(120.0, 150.0))]);
+        assert!(slider_popups::nudge_text(&context, nudge_id).is_none());
+    }
+
+    #[test]
+    fn a_popup_whose_slider_went_away_is_gone() {
+        let context = themed_context();
+        let spec = SliderSpec::linear(0.0, 1.0);
+        let typing_id = slider_id().with("typing");
+        right_click(&context, 0.25, &spec, Pos2::new(292.0, 53.0));
+        assert!(slider_popups::typing_text(&context, typing_id).is_some());
+        // Two passes without the slider (another node shown).
+        for _ in 0..2 {
+            let output = context.run_ui(frame_input(Vec::new(), egui::Modifiers::NONE), |_| {});
+            output.drop_without_applying_deltas();
+        }
+        slider_frame(&context, 0.25, &spec, Vec::new());
+        assert!(slider_popups::typing_text(&context, typing_id).is_none());
+    }
+
+    #[test]
+    fn nudges_step_in_single_precision() {
+        let mut spec = SliderSpec::linear(0.0, 1.0);
+        spec.default = Some(0.5);
+        assert_eq!(nudged(Nudge::Up1, 0.3, &spec), (0.3f32 + 0.1f32 / 10.0) as f64);
+        assert_eq!(nudged(Nudge::Default, 0.3, &spec), 0.5);
+        spec.default = None;
+        assert_eq!(nudged(Nudge::Default, 0.3, &spec), 0.3f32 as f64);
+    }
+
+    #[test]
+    fn terrain_marks_fall_between_the_ends() {
+        let mut spec = SliderSpec::linear(0.0, 1.0);
+        spec.ticks = Ticks::TerrainMarks;
+        assert!(spec.tick_positions().is_empty());
+        spec.terrain_range = Some((0.2, 1.0));
+        assert_eq!(spec.tick_positions(), [0.2]);
+        spec.terrain_range = Some((0.1, 0.75));
+        assert_eq!(spec.tick_positions(), [0.1, 0.75]);
+        let snow = Catalogue::get().node("Snow").and_then(|node| node.parameter("SnowLine")).cloned().unwrap();
+        assert_eq!(SliderSpec::of(&snow, None, false).ticks, Ticks::TerrainMarks);
+    }
+
+    /// One frame of a range slider holding `low..high`.
+    fn range_frame(context: &egui::Context, range: (f64, f64), spec: &RangeSpec, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> Option<(f64, f64)> {
+        let mut changed = None;
+        let output = context.run_ui(frame_input(events, modifiers), |ui| {
+            let mut row = ui.new_child(egui::UiBuilder::new().max_rect(SLIDER_ROW));
+            changed = range_slider(&mut row, slider_id(), "Range", range.0, range.1, spec, Color32::WHITE);
+        });
+        output.drop_without_applying_deltas();
+        changed
+    }
+
+    fn range_right_click(context: &egui::Context, range: (f64, f64), spec: &RangeSpec, x: f32) {
+        let at = Pos2::new(x, 53.0);
+        let events = [egui::Event::PointerMoved(at), press(at, egui::PointerButton::Secondary, true), press(at, egui::PointerButton::Secondary, false)];
+        for event in events {
+            assert_eq!(range_frame(context, range, spec, vec![event], egui::Modifiers::NONE), None);
+        }
+    }
+
+    #[test]
+    fn a_range_types_either_end_by_where_it_is_right_clicked() {
+        let context = themed_context();
+        let spec = RangeSpec::linear(0.0, 1.0);
+        let range = (0.2, 0.6);
+        // The left fifth types the low end ("##0.0##"); past the high end,
+        // the high end follows.
+        range_right_click(&context, range, &spec, 30.0);
+        assert_eq!(slider_popups::typing_text(&context, slider_id().with("typing-low")).as_deref(), Some("0.2"));
+        range_frame(&context, range, &spec, vec![egui::Event::Text("0.8".to_string())], egui::Modifiers::NONE);
+        let typed = range_frame(&context, range, &spec, vec![key(egui::Key::Enter)], egui::Modifiers::NONE);
+        assert_eq!(typed.map(|(low, high)| (low as f32, high as f32)), Some((0.8, 0.8)));
+        // The right fifth types the high end; below the low end it stops
+        // there.
+        range_right_click(&context, range, &spec, 290.0);
+        assert_eq!(slider_popups::typing_text(&context, slider_id().with("typing-high")).as_deref(), Some("0.6"));
+        range_frame(&context, range, &spec, vec![egui::Event::Text("0.1".to_string())], egui::Modifiers::NONE);
+        let typed = range_frame(&context, range, &spec, vec![key(egui::Key::Enter)], egui::Modifiers::NONE);
+        assert_eq!(typed.map(|(low, high)| (low as f32, high as f32)), Some((0.2, 0.2)));
+        // Between: the nudge bar for the nearer end.
+        range_right_click(&context, range, &spec, 100.0);
+        assert_eq!(slider_popups::nudge_open(&context, slider_id().with("nudge")), Some(Some(RangeEnd::Low)));
+        assert_eq!(slider_popups::nudge_text(&context, slider_id().with("nudge")).as_deref(), Some("0.2000"));
+    }
+
+    #[test]
+    fn right_click_targets_split_the_range_in_fifths() {
+        assert_eq!(range_click_target(0.1), Some(RangeClick::TypeLow));
+        assert_eq!(range_click_target(0.2), None);
+        assert_eq!(range_click_target(0.3), Some(RangeClick::NudgeLow));
+        assert_eq!(range_click_target(0.5), None);
+        assert_eq!(range_click_target(0.7), Some(RangeClick::NudgeHigh));
+        assert_eq!(range_click_target(0.8), None);
+        assert_eq!(range_click_target(0.9), Some(RangeClick::TypeHigh));
+        assert_eq!(range_click_target(0.0), None);
+        assert_eq!(range_click_target(1.0), None);
+    }
+
+    #[test]
+    fn range_nudges_step_a_hundredth_and_keep_the_order() {
+        let mut spec = RangeSpec::linear(0.0, 1.0);
+        spec.default = Some((0.1, 0.9));
+        let (low, high) = range_nudged(Nudge::Up10, 0.2, 0.6, &spec, RangeEnd::Low);
+        assert_eq!((low as f32, high as f32), (0.2f32 + 0.01f32, 0.6));
+        let (low, high) = range_nudged(Nudge::Max, 0.2, 0.6, &spec, RangeEnd::Low);
+        assert_eq!((low, high), (1.0, 1.0));
+        let (low, high) = range_nudged(Nudge::Min, 0.2, 0.6, &spec, RangeEnd::High);
+        assert_eq!((low as f32, high as f32), (0.2, 0.2));
+        // Default puts the whole range back.
+        let (low, high) = range_nudged(Nudge::Default, 0.3, 0.4, &spec, RangeEnd::High);
+        assert_eq!((low as f32, high as f32), (0.1, 0.9));
+    }
+
+    #[test]
+    fn shift_drags_move_the_whole_range() {
+        let context = themed_context();
+        let spec = RangeSpec::linear(0.0, 1.0);
+        let range = (0.2, 0.6);
+        let shift = egui::Modifiers::SHIFT;
+        let start = Pos2::new(150.0, 53.0);
+        let pressed = egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: shift };
+        assert_eq!(range_frame(&context, range, &spec, vec![egui::Event::PointerMoved(start)], shift), None);
+        assert_eq!(range_frame(&context, range, &spec, vec![pressed], shift), None);
+        // 30 of the control's 300: a tenth of the range.
+        let moved = range_frame(&context, range, &spec, vec![egui::Event::PointerMoved(Pos2::new(180.0, 53.0))], shift);
+        let (low, high) = moved.expect("the range moves");
+        assert!((low - 0.3).abs() < 1e-6 && (high - 0.7).abs() < 1e-6, "{low} {high}");
+        // Stopped at the end, keeping its width.
+        let (low, high) = center_drag(0.7, 0.9, 0.3, &spec);
+        assert!((low - 0.8).abs() < 1e-9 && high == 1.0, "{low} {high}");
+        let (low, high) = center_drag(0.1, 0.3, -0.3, &spec);
+        assert!(low == 0.0 && (high - 0.2).abs() < 1e-9, "{low} {high}");
     }
 }

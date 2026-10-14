@@ -97,6 +97,36 @@ impl Matrix4 {
         ])
     }
 
+    /// `aiMatrix4x4(scaling, rotation, position)`: the quaternion's
+    /// rotation (`GetMatrix`) with its rows scaled, then the position.
+    pub fn compose(scaling: Vector3, rotation: [f32; 4], position: Vector3) -> Matrix4 {
+        let [x, y, z, w] = rotation;
+        let rows = [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ];
+        let mut matrix = Matrix4::IDENTITY;
+        for (row, values) in rows.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                matrix.0[row * 4 + column] = value * scaling[row];
+            }
+            matrix.0[row * 4 + 3] = position[row];
+        }
+        matrix
+    }
+
+    /// `Transpose`.
+    pub fn transpose(&self) -> Matrix4 {
+        let mut result = *self;
+        for row in 0..4 {
+            for column in 0..4 {
+                result.0[row * 4 + column] = self.0[column * 4 + row];
+            }
+        }
+        result
+    }
+
     /// `aiMatrix4x4 * aiVector3D`.
     pub fn transform(&self, vector: Vector3) -> Vector3 {
         let m = &self.0;
@@ -114,6 +144,36 @@ impl Matrix4 {
         matrix.0[7] = vector[1];
         matrix.0[11] = vector[2];
         matrix
+    }
+
+    /// `Scaling`.
+    pub fn scaling(vector: Vector3) -> Matrix4 {
+        let mut matrix = Matrix4::IDENTITY;
+        matrix.0[0] = vector[0];
+        matrix.0[5] = vector[1];
+        matrix.0[10] = vector[2];
+        matrix
+    }
+
+    /// `FromEulerAnglesXYZ` (`cosf`/`sinf`): the rotation about z, then y,
+    /// then x written over the upper 3×3; the rest is left as it was.
+    pub fn set_euler_angles_xyz(&mut self, x: f32, y: f32, z: f32) {
+        let cx = x.cos();
+        let sx = x.sin();
+        let cy = y.cos();
+        let sy = y.sin();
+        let cz = z.cos();
+        let sz = z.sin();
+        let m = &mut self.0;
+        m[0] = cz * cy;
+        m[1] = cz * sy * sx - sz * cx;
+        m[2] = sz * sx + cz * sy * cx;
+        m[4] = sz * cy;
+        m[5] = cz * cx + sz * sy * sx;
+        m[6] = sz * sy * cx - cz * sx;
+        m[8] = -sy;
+        m[9] = cy * sx;
+        m[10] = cy * cx;
     }
 
     /// `Rotation(angle, axis)` (`cosf`/`sinf`).
@@ -156,4 +216,21 @@ impl Matrix4 {
             0.0, 0.0, 0.0, 1.0,
         ])
     }
+}
+
+/// `aiQuaternion(pitch, yaw, roll)` from Euler angles: (x, y, z, w).
+pub fn euler_quaternion(pitch: f32, yaw: f32, roll: f32) -> [f32; 4] {
+    let sin_pitch = (pitch * 0.5).sin();
+    let cos_pitch = (pitch * 0.5).cos();
+    let sin_yaw = (yaw * 0.5).sin();
+    let cos_yaw = (yaw * 0.5).cos();
+    let sin_roll = (roll * 0.5).sin();
+    let cos_roll = (roll * 0.5).cos();
+    let cos_pitch_cos_yaw = cos_pitch * cos_yaw;
+    let sin_pitch_sin_yaw = sin_pitch * sin_yaw;
+    let x = sin_roll * cos_pitch_cos_yaw - cos_roll * sin_pitch_sin_yaw;
+    let y = cos_roll * sin_pitch * cos_yaw + sin_roll * cos_pitch * sin_yaw;
+    let z = cos_roll * cos_pitch * sin_yaw - sin_roll * sin_pitch * cos_yaw;
+    let w = cos_roll * cos_pitch_cos_yaw + sin_roll * sin_pitch_sin_yaw;
+    [x, y, z, w]
 }

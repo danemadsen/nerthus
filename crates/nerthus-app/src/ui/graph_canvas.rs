@@ -865,7 +865,7 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &mut Editor, state: &mut GraphState
     handle_background(ui, editor, state, &layouts, &frame.groups, &background, &connections, hovered_connection, origin, commands);
     handle_drops(ui, editor, state, &layouts, commands);
     draw_drag_overlay(ui, &painter, state, &layouts, origin, pointer);
-    rename_overlay(ui, editor, state, &layouts, origin);
+    rename_overlay(ui, editor, state, &layouts, origin, commands);
     graph_groups::rename_overlay(ui, editor, state, &frame.groups, origin);
     crate::ui::graph_popups::show(ui, editor, state, commands);
 
@@ -2260,7 +2260,8 @@ fn draw_drag_overlay(ui: &Ui, painter: &egui::Painter, state: &GraphState, layou
 
 /// The inline name editor (F2): an `EditablePopup`, closing as
 /// [`crate::ui::widgets::popup_outcome`] says; a blank name is no name.
-fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, layouts: &[NodeLayout], origin: Pos2) {
+/// The name taken goes to [`GraphCommand::RenameNode`].
+fn rename_overlay(ui: &mut Ui, editor: &Editor, state: &mut GraphState, layouts: &[NodeLayout], origin: Pos2, commands: &mut Vec<Command>) {
     let Some(id) = state.renaming else {
         return;
     };
@@ -2285,7 +2286,8 @@ fn rename_overlay(ui: &mut Ui, editor: &mut Editor, state: &mut GraphState, layo
     };
     let name = state.rename_text.trim().to_string();
     if accepted && !name.is_empty() {
-        editor.document.rename(id, &name);
+        let rename = GraphCommand::RenameNode { node: id, name };
+        commands.push(Command::Graph(rename));
     }
     state.renaming = None;
     state.rename_text.clear();

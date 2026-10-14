@@ -26,6 +26,9 @@ pub struct Mesh {
     pub uv_components: [u32; MAX_TEXTURE_COORDS],
     pub faces: Option<Vec<Vec<u32>>>,
     pub material_index: u32,
+    /// Each bone's weights, as the vertices they weigh (their values make
+    /// no mesh here, but the steps index vertices with them).
+    pub bones: Vec<Vec<u32>>,
 }
 
 impl Mesh {
@@ -96,4 +99,23 @@ impl std::error::Error for ImportError {}
 /// Shorthand for an import failure.
 pub fn fail<T>(message: impl Into<String>) -> Result<T, ImportError> {
     Err(ImportError(message.into()))
+}
+
+/// Allocations above this fail as `std::bad_alloc` does on Windows (an
+/// internal error once `ReadFile` catches it).
+pub(crate) const ALLOCATION_LIMIT: u64 = 1 << 31;
+
+/// `std::bad_alloc`, caught as an internal error.
+pub(crate) fn bad_alloc<T>() -> Result<T, ImportError> {
+    fail("Internal error")
+}
+
+/// `new T[count]` for a `T` of `element_size` bytes: `bad_alloc` past the
+/// allocation limit.
+pub(crate) fn check_allocation(count: u64, element_size: u64) -> Result<(), ImportError> {
+    let size = count.saturating_mul(element_size);
+    if size > ALLOCATION_LIMIT {
+        return bad_alloc();
+    }
+    Ok(())
 }

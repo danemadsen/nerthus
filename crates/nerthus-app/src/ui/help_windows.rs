@@ -26,12 +26,22 @@ const WHATS_NEW_TABS: [SideTab; 3] = [
     SideTab { title: "Notes", brush: theme::ACCENT_MUTED_TEAL },
 ];
 
+/// The data folder's note of the version that last showed What's New by
+/// itself.
+const WHATS_NEW_FILE: &str = "whatsnew.dat";
+
+/// Written the first time a version starts; from the next start on, the
+/// status bar's memory readout is teal.
+pub const ECO_FILE: &str = "eco.dat";
+
 /// The help windows open.
 #[derive(Default)]
 pub struct HelpWindows {
     pub shortcuts: bool,
     /// What's New, on this tab.
     pub whats_new: Option<usize>,
+    /// What's New showed by itself: closing it notes the version.
+    pub whats_new_first_run: bool,
     pub about: bool,
     pub update: Option<UpdateDialog>,
     /// Download Update was clicked: the release to download.
@@ -90,6 +100,9 @@ pub fn show(ctx: &egui::Context, help: &mut HelpWindows) {
         && !whats_new_window(ctx, tab)
     {
         help.whats_new = None;
+        if std::mem::take(&mut help.whats_new_first_run) {
+            note_version_shown();
+        }
     }
     if help.about && !about_window(ctx) {
         help.about = false;
@@ -266,6 +279,58 @@ fn whats_new_window(ctx: &egui::Context, tab: &mut usize) -> bool {
         ui.add_space(32.0);
     });
     open
+}
+
+/// `StartExperience.VersionFirstRun`: What's New shows by itself the first
+/// time a version starts, when no version has shown it yet or an older one
+/// did (`whatsnew.dat`); `eco.dat` is written then. A note that cannot be
+/// read keeps it from showing.
+pub fn version_first_run() -> bool {
+    let Some(folder) = crate::user::data_folder() else {
+        return false;
+    };
+    let noted = folder.join(WHATS_NEW_FILE);
+    let first_run = if noted.exists() {
+        let text = std::fs::read_to_string(&noted).unwrap_or_default();
+        let seen = parse_version(&text);
+        let current = parse_version(env!("CARGO_PKG_VERSION"));
+        match (seen, current) {
+            (Some(seen), Some(current)) => seen < current,
+            _ => {
+                log::error!("Cannot read the version in {WHATS_NEW_FILE}: {text:?}");
+                false
+            }
+        }
+    } else {
+        true
+    };
+    if first_run {
+        let written = std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(folder.join(ECO_FILE), "!"));
+        if let Err(error) = written {
+            log::warn!("cannot write {ECO_FILE}: {error}");
+        }
+    }
+    first_run
+}
+
+/// `ShowWhatsNew`, once the window closes: this version showed it.
+fn note_version_shown() {
+    let Some(folder) = crate::user::data_folder() else {
+        return;
+    };
+    let written = std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(folder.join(WHATS_NEW_FILE), env!("CARGO_PKG_VERSION")));
+    if let Err(error) = written {
+        log::error!("cannot write {WHATS_NEW_FILE}: {error}");
+    }
+}
+
+/// A version's two to four numbers (`Version.Parse`), before any
+/// pre-release or build suffix; earlier numbers count first, and a
+/// missing one comes before 0.
+fn parse_version(text: &str) -> Option<Vec<u64>> {
+    let release = text.trim().split(['-', '+']).next().unwrap_or_default();
+    let numbers: Option<Vec<u64>> = release.split('.').map(|part| part.parse().ok()).collect();
+    numbers.filter(|numbers| (2..=4).contains(&numbers.len()))
 }
 
 /// The authors from the package, without their addresses.
@@ -474,5 +539,16 @@ mod tests {
     #[test]
     fn authors_lose_their_addresses() {
         assert!(!authors().contains('<'));
+    }
+
+    #[test]
+    fn versions_compare_number_by_number() {
+        let older = parse_version("0.9.12\n");
+        let newer = parse_version("0.10.0");
+        assert!(older.is_some() && older < newer);
+        assert!(parse_version("2.3") < parse_version("2.3.0"));
+        assert_eq!(parse_version("1.2.0-beta"), parse_version("1.2.0"));
+        assert_eq!(parse_version("1"), None);
+        assert_eq!(parse_version("one.two"), None);
     }
 }

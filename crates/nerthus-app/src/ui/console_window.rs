@@ -1,9 +1,9 @@
 //! The Console (Tools › Console, F12; `DebugConsole` on a `wpfConsole`):
 //! a window of text with a prompt (`» `) that runs a few commands.
-//! `help` (or `list`) lists `clear`, `cls`, `list` and `help`; the others
-//! are hidden: `printlog` (the session's log so far), `copy`, a few jokes,
-//! and `error` and `crash`, which crash Nerthus on purpose so that its
-//! crash handling can be tried.
+//! `help` (or `list`) lists `uninstall` (a joke), `help`, `list`, `cls`
+//! and `clear`; the others are hidden: `printlog` (the session's log so
+//! far), `copy`, more jokes (`eject` among them), and `error` and `crash`,
+//! which crash Nerthus on purpose so that its crash handling can be tried.
 
 use egui::{Id, Key, RichText, ScrollArea, TextEdit, Vec2};
 
@@ -38,21 +38,24 @@ const fn listed(name: &'static str, description: &'static str) -> ConsoleCommand
     ConsoleCommand { name, description, private: false }
 }
 
-/// The commands in the order `help` lists them.
-const COMMANDS: [ConsoleCommand; 13] = [
+/// The commands in the order `help` lists them: the window's, then
+/// `uninstall`, then the console's own (added as it loads).
+const COMMANDS: [ConsoleCommand; 15] = [
     hidden("printlog", "Shows the current log"),
     hidden("copy", ""),
     hidden("iddqd", ""),
     hidden("idclip", ""),
     hidden("crocodile", ""),
     hidden("idkfa", ""),
+    hidden("eject", ""),
     hidden("error", ""),
     hidden("openpodbaydoors", ""),
     hidden("crash", "Internal use only"),
-    listed("clear", "Clears the console."),
-    listed("cls", "Clears the console."),
-    listed("list", "Lists all commands"),
+    listed("uninstall", ""),
     listed("help", "Lists all commands"),
+    listed("list", "Lists all commands"),
+    listed("cls", "Clears the console."),
+    listed("clear", "Clears the console."),
 ];
 
 /// The window while it is open.
@@ -155,6 +158,8 @@ impl ConsoleWindow {
             "iddqd" => self.append_line("God Mode enabled.\n\n\n\n\n\n\n\nOf course not! What do you think this is? DOOM?"),
             "idkfa" => self.append_line("Pew! Pew! Pew!"),
             "idclip" => self.append_line("You can run through nodes now."),
+            "eject" => self.append_line("Local license removed."),
+            "uninstall" => self.append_line("Command not supported in alpha mode."),
             "openpodbaydoors" => self.append_line("\n...\n...\n...\nI cannot do that, Dave."),
             "crocodile" => {
                 self.append_line(CROCODILE);
@@ -273,9 +278,19 @@ mod tests {
         let mut console = ConsoleWindow::open();
         console.output.clear();
         run(&mut console, "HELP");
-        let expected = "help\n    clear: Clears the console.\n    cls: Clears the console.\n    list: Lists all commands\n    help: Lists all commands\n";
+        let expected = "help\n    uninstall: \n    help: Lists all commands\n    list: Lists all commands\n    cls: Clears the console.\n    clear: Clears the console.\n";
         assert!(console.output.starts_with(expected), "{}", console.output);
         assert!(!console.output.contains("printlog"));
+        assert!(!console.output.contains("eject"));
+    }
+
+    #[test]
+    fn eject_and_uninstall_only_answer() {
+        let mut console = ConsoleWindow::open();
+        console.output.clear();
+        run(&mut console, "eject");
+        run(&mut console, "uninstall");
+        assert_eq!(console.output, "eject\nLocal license removed.\nuninstall\nCommand not supported in alpha mode.\n");
     }
 
     #[test]

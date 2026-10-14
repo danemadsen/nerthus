@@ -325,24 +325,19 @@ fn height_text(value: f32, terrain_height: f32) -> String {
     format!("{value:.4} / {sign}{grouped_digits}.{fraction}m")
 }
 
-/// `ByteSize.ToString()`: the largest unit with a whole part, `0.##`.
+/// `ByteSize.ToString()`: the largest unit with a whole part, `0.##`
+/// (nothing at all is "0 b", in bits).
 pub(crate) fn byte_size(bytes: usize) -> String {
-    let units = [("TB", 1u64 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)];
+    let units = [("TB", 1u64 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10), ("B", 1)];
     let value = bytes as u64;
     for (unit, size) in units {
         if value >= size {
             let amount = value as f64 / size as f64;
-            return format!("{} {unit}", trimmed(amount));
+            let digits = nerthus_core::dotnet_format::format_decimals(amount, 2);
+            return format!("{digits} {unit}");
         }
     }
-    format!("{value} B")
-}
-
-/// `0.##`: up to two decimals, trailing zeros dropped.
-fn trimmed(amount: f64) -> String {
-    let text = format!("{amount:.2}");
-    let text = text.trim_end_matches('0');
-    text.trim_end_matches('.').to_string()
+    "0 b".to_string()
 }
 
 /// `Humanize("0.0 GB")`.

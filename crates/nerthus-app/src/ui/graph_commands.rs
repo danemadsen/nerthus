@@ -79,6 +79,16 @@ pub enum GraphCommand {
     SetGroupColor(i32, &'static str),
     SetGroupIcon(i32, &'static str),
     RenameGroup(i32),
+    /// A node's new name from the inline editor (F2, the node menu's
+    /// Rename), then the questions about its export file and its variable.
+    RenameNode { node: i32, name: String },
+    /// "Update Save Definition"'s Yes: the export file takes the name; then
+    /// the variable question.
+    RenameExportFile { node: i32, name: String },
+    /// Its No: on to the variable question.
+    AskRenameVariable(i32),
+    /// "Rename Variable"'s Yes.
+    RenameBoundVariable { key: String, name: String },
     /// Group to Tab, asked first, then done.
     GroupToTab(i32),
     GroupToTabConfirmed(i32),
@@ -302,6 +312,17 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
             let name = editor.document.group(id).map(|group| group.name).unwrap_or_default();
             ui_state.graph.renaming_group = Some((id, name));
         }
+        GraphCommand::RenameNode { node, name } => {
+            if editor.document.rename(node, &name) {
+                ask_rename_export_file(editor, ui_state, node, name);
+            }
+        }
+        GraphCommand::RenameExportFile { node, name } => {
+            editor.document.rename_export_file(node, &name);
+            ask_rename_variable(editor, ui_state, node);
+        }
+        GraphCommand::AskRenameVariable(node) => ask_rename_variable(editor, ui_state, node),
+        GraphCommand::RenameBoundVariable { key, name } => editor.document.rename_variable(&key, &name),
         GraphCommand::GroupToTab(id) => {
             let text = "Are you sure you want to convert this group to Tab.";
             let confirmed = Command::Graph(GraphCommand::GroupToTabConfirmed(id));
@@ -530,9 +551,37 @@ pub fn run(command: GraphCommand, editor: &mut Editor, ui_state: &mut UiState) {
     }
 }
 
+/// After a node's rename (`EditablePopup_EditSuccess`): a node marked for
+/// export is asked about first, whether its export file takes the new
+/// name; then the variable bound to it. Closing the first question
+/// answers No.
+fn ask_rename_export_file(editor: &Editor, ui_state: &mut UiState, node: i32, name: String) {
+    if editor.document.export_settings(node).is_none() {
+        ask_rename_variable(editor, ui_state, node);
+        return;
+    }
+    let text = "Do you want to update the filename to match the new node name?";
+    let yes = Command::Graph(GraphCommand::RenameExportFile { node, name });
+    let next = Command::Graph(GraphCommand::AskRenameVariable(node));
+    let mut question = Prompt::new("Update Save Definition", text, yes);
+    question.no = Some(next.clone());
+    question.dismissed = Some(next);
+    ui_state.prompt = Some(question);
+}
+
+/// Whether the one variable bound to a renamed node takes its name too.
+fn ask_rename_variable(editor: &Editor, ui_state: &mut UiState, node: i32) {
+    let Some((key, name)) = editor.document.bound_variable_rename(node) else {
+        return;
+    };
+    let text = format!("Would you like to rename the associated variable [{key}] to [{name}]?");
+    let yes = Command::Graph(GraphCommand::RenameBoundVariable { key, name });
+    ui_state.prompt = Some(Prompt::new("Rename Variable", &text, yes));
+}
+
 /// The graph menus and windows `--show` opens (for checking the editor
 /// without a person at it).
-const LAUNCH_MENUS: [&str; 7] = ["lazy-menu", "node-search", "find-node", "quick-navigation", "manage-portals", "connection-menu", "create-connection"];
+const LAUNCH_MENUS: [&str; 8] = ["lazy-menu", "node-search", "find-node", "quick-navigation", "manage-portals", "connection-menu", "create-connection", "rename-node"];
 
 pub fn opens_at_launch(panel: &str) -> bool {
     LAUNCH_MENUS.contains(&panel)
@@ -541,9 +590,10 @@ pub fn opens_at_launch(panel: &str) -> bool {
 /// `--show lazy-menu`, `node-search[:<text>]`, `find-node[:<text>]`,
 /// `quick-navigation` and `manage-portals` (for the selected node), or
 /// `connection-menu` (the first connection of the tab shown), opened in
-/// the middle of the graph; or `create-connection`, the Create
-/// Connection window from the selected node's outputs to another node's
-/// inputs.
+/// the middle of the graph; `create-connection`, the Create Connection
+/// window from the selected node's outputs to another node's inputs; or
+/// `rename-node:<name>`, the selected node renamed, with the questions a
+/// rename asks.
 pub fn open_at_launch(show: &str, editor: &mut Editor, ui_state: &mut UiState) {
     let (panel, detail) = show.split_once(':').unwrap_or((show, ""));
     let center = ui_state.graph.rect.center();
@@ -583,6 +633,12 @@ pub fn open_at_launch(show: &str, editor: &mut Editor, ui_state: &mut UiState) {
             if let (Some(source), Some(target)) = (source, target) {
                 let window = crate::ui::create_connection::CreateConnection::new(source, target, true);
                 ui_state.graph.create_connection = Some(window);
+            }
+        }
+        "rename-node" => {
+            if let Some(node) = editor.active_node() {
+                let rename = GraphCommand::RenameNode { node, name: detail.to_string() };
+                run(rename, editor, ui_state);
             }
         }
         _ => {}
@@ -1147,6 +1203,80 @@ mod tests {
         assert_eq!(editor.document.undo_labels()[0], "Nodes combined as inputs.");
         editor.document.undo();
         assert!(editor.document.node(combined).is_none());
+    }
+
+    #[test]
+    fn a_rename_asks_about_the_export_file_then_the_variable() {
+        let mut document = crate::document::Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        document.toggle_export(&[mountain], nerthus_export::FileFormat::Exr);
+        document.bind_new_variable(mountain, "Height");
+        let mut editor = Editor::new(document);
+        let mut ui_state = UiState::default();
+        let rename = GraphCommand::RenameNode { node: mountain, name: "Peak".to_string() };
+        run(rename, &mut editor, &mut ui_state);
+        assert_eq!(editor.document.node(mountain).unwrap().name, "Peak");
+
+        // The export file first; No or closing the box goes on to the variable.
+        let question = ui_state.prompt.take().expect("the export file is asked about");
+        assert_eq!(question.caption, "Update Save Definition");
+        assert_eq!(question.text, "Do you want to update the filename to match the new node name?");
+        let next = Command::Graph(GraphCommand::AskRenameVariable(mountain));
+        assert_eq!(question.no, Some(next.clone()));
+        assert_eq!(question.dismissed, Some(next));
+        let Some(Command::Graph(yes)) = question.yes else {
+            panic!("Yes renames the file");
+        };
+        run(yes, &mut editor, &mut ui_state);
+        assert_eq!(editor.document.export_settings(mountain).unwrap().filename, "Peak");
+
+        let question = ui_state.prompt.take().expect("the variable is asked about");
+        assert_eq!(question.caption, "Rename Variable");
+        assert_eq!(question.text, "Would you like to rename the associated variable [Height] to [Peak]?");
+        let Some(Command::Graph(yes)) = question.yes else {
+            panic!("Yes renames the variable");
+        };
+        run(yes, &mut editor, &mut ui_state);
+        let automation = editor.document.automation();
+        assert!(automation.variables.contains_key("Peak") && !automation.variables.contains_key("Height"));
+        assert_eq!(automation.bindings[0].variable, "Peak");
+        assert!(ui_state.prompt.is_none());
+
+        // The variable's rename is a step of its own; the file goes back
+        // with the name.
+        let labels = editor.document.undo_labels();
+        assert_eq!(labels[..2], ["Variable Height renamed to Peak", "Node renamed: Mountain renamed to Peak."]);
+        editor.document.undo();
+        editor.document.undo();
+        assert_eq!(editor.document.node(mountain).unwrap().name, "Mountain");
+        assert_eq!(editor.document.export_settings(mountain).unwrap().filename, "Mountain");
+        assert!(editor.document.automation().variables.contains_key("Height"));
+    }
+
+    #[test]
+    fn a_rename_asks_only_what_applies() {
+        let mut document = crate::document::Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let mut editor = Editor::new(document);
+        let mut ui_state = UiState::default();
+        // Neither exported nor bound: the name alone.
+        let rename = GraphCommand::RenameNode { node: mountain, name: "Peak".to_string() };
+        run(rename.clone(), &mut editor, &mut ui_state);
+        assert!(ui_state.prompt.is_none());
+        // The same name again: nothing at all.
+        let steps = editor.document.undo_labels().len();
+        run(rename, &mut editor, &mut ui_state);
+        assert_eq!(editor.document.undo_labels().len(), steps);
+
+        // Bound but not exported: straight to the variable, `Name_Id` when
+        // another variable has the name.
+        editor.document.bind_new_variable(mountain, "Height");
+        let other = editor.document.add_variable("Float");
+        editor.document.rename_variable(&other, "Ridge");
+        let rename = GraphCommand::RenameNode { node: mountain, name: "Ridge".to_string() };
+        run(rename, &mut editor, &mut ui_state);
+        let question = ui_state.prompt.take().expect("the variable is asked about");
+        assert_eq!(question.text, format!("Would you like to rename the associated variable [Height] to [Ridge_{mountain}]?"));
     }
 
     #[test]

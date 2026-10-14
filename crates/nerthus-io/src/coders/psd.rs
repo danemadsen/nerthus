@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::pixel_cache::{char_quantum, CacheColorspace, PixelCache, PixelChannel};
+use crate::pixel_cache::{CacheColorspace, PixelCache, PixelChannel, char_quantum};
 
 /// `MaxPSDChannels`.
 const MAX_PSD_CHANNELS: u16 = 56;
@@ -317,7 +317,7 @@ impl Picture {
             Space::Cmyk => CacheColorspace::Cmyk,
             Space::Lab => CacheColorspace::Lab,
         };
-        PixelCache { width: self.width, height: self.height, channels, data: self.data, colorspace, gamma: IMAGE_GAMMA }
+        PixelCache::new(self.width, self.height, channels, self.data, colorspace, IMAGE_GAMMA)
     }
 }
 

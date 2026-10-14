@@ -50,6 +50,8 @@ pub struct BuildRequest {
     /// Force load baked cache: every bake loaded, not only the ones an
     /// unbaked node reads.
     pub load_all_bakes: bool,
+    /// Load Offloaded Cache: these baked nodes' bakes read back from disk.
+    pub load_bakes: Vec<i32>,
     /// The region the editor previews (`CurrentPortion.Region`): the bakes
     /// are cut to it.
     pub region: Option<Region>,
@@ -249,6 +251,9 @@ fn newest(mut request: BuildRequest, requests: &Receiver<BuildRequest>) -> Build
         unbake.append(&mut newer.unbake);
         newer.unbake = unbake;
         newer.load_all_bakes |= request.load_all_bakes;
+        let mut load_bakes = std::mem::take(&mut request.load_bakes);
+        load_bakes.append(&mut newer.load_bakes);
+        newer.load_bakes = load_bakes;
         newer.forget.append(&mut request.forget);
         newer.watched_refresh |= request.watched_refresh;
         let mut node_commands = std::mem::take(&mut request.node_commands);
@@ -331,6 +336,9 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
             && (cleared || bakes_changed || request.load_all_bakes)
         {
             load_editor_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), request.load_all_bakes, &events);
+        }
+        if let Some(store) = &request.bakes {
+            load_node_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), &request.load_bakes);
         }
         disk_cache::run_tasks(&mut disk, &mut engine, &terrain, resolution, &request.disk_cache, disk_tasks, &events);
         let _ = events.send(BuildEvent::Progress(WorkProgress::Prepared(request.generation)));
@@ -591,6 +599,31 @@ fn load_editor_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, 
     }
 }
 
+/// Load Offloaded Cache for each node: the bakes of these nodes, those
+/// still baked in the project, read from disk and fitted as the editor
+/// fits bakes; what reads them builds again.
+fn load_node_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, resolution: Resolution, region: Option<&Region>, nodes: &[i32]) {
+    let fit = editor_fit(resolution, region);
+    for id in nodes {
+        let Some(node) = terrain.nodes.get(id) else {
+            continue;
+        };
+        if StateOverride::of(node) != StateOverride::Baked || !store.has_node(node) {
+            continue;
+        }
+        let Some(maps) = store.read_node(node) else {
+            continue;
+        };
+        // A port that does not fit leaves the node as it was.
+        let fitted: Option<Vec<(String, Map)>> = maps.into_iter().map(|(port, map)| bake::fit_baked(&map, fit).map(|fitted| (port, fitted))).collect();
+        let Some(fitted) = fitted else {
+            continue;
+        };
+        engine.load_baked(*id, fitted);
+        engine.invalidate(terrain, *id);
+    }
+}
+
 /// A built node's maps and what the viewport needs to render them.
 fn watched_node(engine: &Engine, terrain: &Terrain, node: i32, resolution: Resolution) -> Option<WatchedNode> {
     if !matches!(engine.state(node), NodeState::Built | NodeState::Baked) {
@@ -694,4 +727,36 @@ fn node_caches(engine: &Engine) -> HashMap<i32, NodeCache> {
         caches.insert(node, cache);
     }
     caches
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_offloaded_cache_reads_a_baked_node_back() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0);
+        let folder = std::env::temp_dir().join(format!("nerthus-load-bakes-{nanos}"));
+        let store = BakeStore::new(&folder.join("project.terrain"), "test", None);
+        let mut document = crate::document::Document::new();
+        let gate = document.add_node("Gate", [26000.0, 26000.0]).unwrap();
+        let blur = document.add_node("Blur", [26300.0, 26000.0]).unwrap();
+        document.set_member(gate, "StateOverride", Value::from("Baked"), "Bake", true);
+        let terrain = document.terrain().clone();
+        let resolution = Resolution::square(64);
+        store.write(gate, "Out", &Map::filled(resolution, 0.5)).unwrap();
+        store.write(blur, "Out", &Map::filled(resolution, 0.25)).unwrap();
+
+        // Left on disk, the bake builds nothing; read back, it is there.
+        let mut engine = Engine::new(Arc::new(nerthus_nodes::registry()));
+        engine.offload_baked(gate);
+        assert!(engine.cache.get(gate, "Out").is_none());
+        load_node_bakes(&mut engine, &terrain, &store, resolution, None, &[gate, blur]);
+        assert!(engine.is_baked(gate));
+        let loaded = engine.cache.get(gate, "Out").expect("the bake is read back");
+        assert_eq!(loaded.resolution(), resolution);
+        // A node the project no longer marks baked is left alone.
+        assert!(!engine.is_baked(blur));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
 }

@@ -314,60 +314,6 @@ fn is_space_or_new_line(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0 | 0x0C)
 }
 
-/// pugixml's `string_to_integer<unsigned int>`.
-fn string_to_integer(value: &[u8], minimum: u32, maximum: u32) -> u32 {
-    let mut index = 0;
-    while matches!(at(value, index), b' ' | b'\t' | b'\n' | b'\r') {
-        index += 1;
-    }
-    let negative = at(value, index) == b'-';
-    if matches!(at(value, index), b'+' | b'-') {
-        index += 1;
-    }
-    let mut result = 0u32;
-    
-    let overflow = if at(value, index) == b'0' && (at(value, index + 1) | b' ') == b'x' {
-        index += 2;
-        while at(value, index) == b'0' {
-            index += 1;
-        }
-        let start = index;
-        loop {
-            let byte = at(value, index);
-            if byte.wrapping_sub(b'0') < 10 {
-                result = result.wrapping_mul(16).wrapping_add((byte - b'0') as u32);
-            } else if (byte | b' ').wrapping_sub(b'a') < 6 {
-                result = result.wrapping_mul(16).wrapping_add(((byte | b' ') - b'a' + 10) as u32);
-            } else {
-                break;
-            }
-            index += 1;
-        }
-        index - start > 8
-    } else {
-        while at(value, index) == b'0' {
-            index += 1;
-        }
-        let start = index;
-        while at(value, index).wrapping_sub(b'0') < 10 {
-            result = result.wrapping_mul(10).wrapping_add((at(value, index) - b'0') as u32);
-            index += 1;
-        }
-        let digits = index - start;
-        let lead = at(value, start);
-        let fits = digits == 10 && (lead < b'4' || (lead == b'4' && result >> 31 != 0));
-        digits >= 10 && !fits
-    };
-    if negative {
-        let limit = 0u32.wrapping_sub(minimum);
-        if overflow || result > limit { minimum } else { 0u32.wrapping_sub(result) }
-    } else if overflow || result > maximum {
-        maximum
-    } else {
-        result
-    }
-}
-
 /// `xml_attribute::as_string()`: "" when missing.
 fn attribute_string<'a>(node: &'a XmlNode, name: &str) -> &'a [u8] {
     node.attribute(name).unwrap_or(b"")
@@ -376,13 +322,13 @@ fn attribute_string<'a>(node: &'a XmlNode, name: &str) -> &'a [u8] {
 /// `xml_attribute::as_int()` of a present attribute.
 fn attribute_int(node: &XmlNode, name: &str) -> Option<i32> {
     let value = node.attribute(name)?;
-    Some(string_to_integer(value, i32::MIN as u32, i32::MAX as u32) as i32)
+    Some(crate::xml::as_int(value))
 }
 
 /// `xml_attribute::as_uint()` of a present attribute.
 fn attribute_uint(node: &XmlNode, name: &str) -> Option<u32> {
     let value = node.attribute(name)?;
-    Some(string_to_integer(value, 0, u32::MAX))
+    Some(crate::xml::as_uint(value))
 }
 
 /// The text after a reference's '#' (`c_str() + 1`).

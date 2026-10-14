@@ -12,17 +12,20 @@ mod document;
 mod drop_position;
 mod editor;
 mod export_build;
+mod file_association;
 mod files;
 mod icons;
 mod launch;
 mod logging;
 mod mcp;
 mod memory;
+mod nahimic;
 mod node_files;
 mod node_ui;
 mod overlays;
 mod presets;
 mod progress;
+mod start_monitor;
 mod theme;
 mod ui;
 mod updates;
@@ -40,11 +43,16 @@ use nerthus_render::TerrainRenderPlugin;
 
 fn main() {
     let options = launch::LaunchOptions::from_args();
+    // `App.ShowHelp`: `-?` lists the options and Nerthus goes no further.
+    if options.help {
+        launch::show_usage();
+        return;
+    }
     let size = options.size.unwrap_or(launch::DEFAULT_WINDOW_SIZE);
-    let position = match (options.position, options.monitor) {
-        (Some((x, y)), _) => WindowPosition::At(IVec2::new(x, y)),
-        (None, Some(index)) => WindowPosition::Centered(MonitorSelection::Index(index)),
-        (None, None) => WindowPosition::Automatic,
+    // A monitor is chosen once Bevy knows them (`StartMonitorPlugin`).
+    let position = match options.position {
+        Some((x, y)) => WindowPosition::At(IVec2::new(x, y)),
+        None => WindowPosition::Automatic,
     };
     // The editor draws its own title bar (`WindowChrome`); on macOS the
     // native frame stays for resizing and shadows, without title or buttons.
@@ -86,6 +94,13 @@ fn main() {
     app.add_plugins(plugins);
     logging::start(options.verbose || logging::verbose_at_start());
     logging::install_crash_log();
+    for argument in &options.ignored {
+        log::warn!("Ignoring unknown argument: {argument}");
+    }
+    // `OnStartup`'s system work (on Windows): `.terrain` files registered,
+    // then `NahimicCountermeasures`.
+    file_association::register_project_files();
+    nahimic::countermeasures();
     app.add_plugins(app_icon::AppIconPlugin);
     app.insert_resource(egui_settings);
     app.add_plugins(EguiPlugin::default());
@@ -105,12 +120,22 @@ fn main() {
     let screenshot = options.screenshot.is_some();
     ui_state.onboard_at_launch = ui::onboard::should_show(options.onboard, options.skip_onboard, screenshot);
     ui_state.check_updates_at_launch = !screenshot;
+    ui_state.whats_new_at_launch = options.greets();
     let mcp = mcp::McpPlugin {
         enabled: options.mcp,
         port: options.mcp_port,
         screenshot_run: screenshot,
     };
     app.add_plugins(mcp);
+    // Maximised on the monitor chosen, or centred on `--monitor`, unless
+    // the window was put somewhere.
+    if options.position.is_none() && (options.maximised() || options.monitor.is_some()) {
+        let placement = start_monitor::StartMonitorPlugin {
+            monitor: options.monitor,
+            maximised: options.maximised(),
+        };
+        app.add_plugins(placement);
+    }
     app.add_plugins(editor::EditorPlugin { options });
     app.add_plugins(files::FilePlugin);
     app.insert_resource(ui_state);

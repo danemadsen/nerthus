@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use super::bc7_tables::{ANCHORS, PARTITIONS};
-use crate::pixel_cache::{char_quantum, CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel, char_quantum};
 
 const DDSD_CAPS: u32 = 0x1;
 const DDSD_HEIGHT: u32 = 0x2;
@@ -273,7 +273,7 @@ fn into_cache(canvas: Canvas) -> PixelCache {
         }
     }
     let colorspace = if canvas.gray { CacheColorspace::Gray } else { CacheColorspace::SRgb };
-    PixelCache { width: canvas.width, height: canvas.height, channels, data, colorspace, gamma: DEFAULT_GAMMA }
+    PixelCache::new(canvas.width, canvas.height, channels, data, colorspace, DEFAULT_GAMMA)
 }
 
 /// `DDSColors`.

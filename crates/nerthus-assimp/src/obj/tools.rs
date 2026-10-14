@@ -3,6 +3,7 @@
 //! iterators have it; reads past the buffer give 0).
 
 use crate::fast_atof::fast_atof;
+pub(crate) use crate::parsing::{atoi, trim};
 use crate::scene::ImportError;
 
 pub fn at(bytes: &[u8], index: usize) -> u8 {
@@ -22,11 +23,6 @@ pub fn is_line_end(byte: u8) -> bool {
 /// `IsSpaceOrNewLine`.
 pub fn is_space_or_new_line(byte: u8) -> bool {
     is_space(byte) || is_line_end(byte)
-}
-
-/// `std::isspace` in the C locale.
-pub fn is_c_space(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
 /// `isEndOfBuffer`: at the end or the last element.
@@ -133,39 +129,8 @@ pub fn get_float(bytes: &[u8], it: usize, end: usize) -> Result<(usize, f32), Im
     Ok((it, value))
 }
 
-/// MSVC's `atoi`: leading whitespace, a sign, digits, clamped to `int`.
-pub fn atoi(bytes: &[u8], start: usize) -> i32 {
-    let mut index = start;
-    while is_c_space(at(bytes, index)) {
-        index += 1;
-    }
-    let negative = at(bytes, index) == b'-';
-    if negative || at(bytes, index) == b'+' {
-        index += 1;
-    }
-    let mut magnitude = 0u64;
-    while at(bytes, index).is_ascii_digit() {
-        let digit = (at(bytes, index) - b'0') as u64;
-        magnitude = (magnitude * 10 + digit).min(1 << 32);
-        index += 1;
-    }
-    if negative {
-        if magnitude > 1 << 31 { i32::MIN } else { -(magnitude as i64) as i32 }
-    } else if magnitude > i32::MAX as u64 {
-        i32::MAX
-    } else {
-        magnitude as i32
-    }
-}
-
 /// `ASSIMP_strincmp(text + start, prefix, strlen(prefix)) == 0`.
 pub fn starts_with_ignore_case(bytes: &[u8], start: usize, prefix: &[u8]) -> bool {
     prefix.iter().enumerate().all(|(offset, &letter)| at(bytes, start + offset).eq_ignore_ascii_case(&letter))
 }
 
-/// `ai_trim`.
-pub fn trim(bytes: &[u8]) -> Vec<u8> {
-    let start = bytes.iter().position(|&byte| !is_c_space(byte)).unwrap_or(bytes.len());
-    let end = bytes.iter().rposition(|&byte| !is_c_space(byte)).map_or(start, |last| last + 1);
-    bytes[start..end.max(start)].to_vec()
-}

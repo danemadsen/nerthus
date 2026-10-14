@@ -12,6 +12,7 @@ use crate::icons;
 use crate::theme;
 use crate::ui::commands::Command;
 use crate::ui::options_window::OptionsState;
+use crate::ui::tool_commands::{self, ToolCommand};
 use crate::ui::UiState;
 
 /// The Start dialog's size (`Width="770" Height="660"`) and its column of
@@ -162,13 +163,32 @@ fn start_dialog(ctx: &egui::Context, editor: &mut Editor, ui_state: &mut UiState
             editor.files.start_dialog_open = false;
             ui_state.options = Some(OptionsState::new(ui_state.last_options_tab));
         }
+        // `NahimicWarning` beside it (`Button-IconText`, padding 16, 8).
+        if crate::nahimic::detected() {
+            let galley = ui.painter().layout_no_wrap("Nahimic Detected!".to_string(), theme::interface(10.0), theme::ACCENT_MUTED_MAGENTA);
+            let width = 16.0 + 16.0 + 6.0 + galley.size().x + 16.0;
+            let warning_corner = egui::Pos2::new(settings_rect.right() + 8.0, settings_rect.center().y - 16.0);
+            let warning_rect = egui::Rect::from_min_size(warning_corner, Vec2::new(width, 32.0));
+            let warning = ui.put(warning_rect, egui::Button::new("").frame(false));
+            let icon_corner = egui::Pos2::new(warning_rect.left() + 16.0, warning_rect.center().y - 8.0);
+            let icon_rect = egui::Rect::from_min_size(icon_corner, Vec2::splat(16.0));
+            icons::paint(ui, icon_rect, "exclamation-circle", theme::ACCENT_MUTED_MAGENTA);
+            let text_position = egui::Pos2::new(icon_rect.right() + 6.0, warning_rect.center().y - galley.size().y / 2.0);
+            ui.painter().galley(text_position, galley, theme::ACCENT_MUTED_MAGENTA);
+            if warning.clicked() {
+                commands.push(Command::Tools(ToolCommand::ShowNahimicWarning));
+            }
+        }
 
         let column_height = 4.0 + 28.0 + 8.0 + 28.0 + 8.0 + 4.0 + 24.0 + 8.0 + 250.0 + 4.0 + 120.0;
         let column = egui::Rect::from_min_size(egui::Pos2::new(area.right() - 64.0 - START_COLUMN, area.bottom() - 56.0 - column_height), Vec2::new(START_COLUMN, column_height));
         let mut column_ui = ui.new_child(egui::UiBuilder::new().max_rect(column).layout(egui::Layout::top_down(egui::Align::Min)));
         start_column(&mut column_ui, ctx, editor, &mut memory, commands);
     });
-    if !open || ctx.input(|input| input.key_pressed(Key::Escape)) {
+    // Escape belongs to a window over the dialog (What's New, the Nahimic
+    // warning) while one shows.
+    let escaped = !tool_commands::modal_open(ui_state) && ctx.input(|input| input.key_pressed(Key::Escape));
+    if !open || escaped {
         editor.files.start_dialog_open = false;
     }
     store(ctx, memory);

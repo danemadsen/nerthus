@@ -1,5 +1,7 @@
 //! `aiVector3D`/`aiVector2D` arithmetic in Assimp's operation order.
 
+use std::cmp::Ordering;
+
 pub type Vector3 = [f32; 3];
 
 pub fn sub(a: Vector3, b: Vector3) -> Vector3 {
@@ -31,6 +33,18 @@ pub fn square_length(vector: Vector3) -> f32 {
 pub fn normalize(vector: Vector3) -> Vector3 {
     let length = square_length(vector).sqrt();
     if length == 0.0 {
+        return vector;
+    }
+    let inverse = 1.0 / length;
+    [vector[0] * inverse, vector[1] * inverse, vector[2] * inverse]
+}
+
+/// `aiVector3D::NormalizeSafe`: multiplied by the reciprocal length when
+/// the length is positive.
+pub fn normalize_safe(vector: Vector3) -> Vector3 {
+    let length = square_length(vector).sqrt();
+    let positive = length.partial_cmp(&0.0) == Some(Ordering::Greater);
+    if !positive {
         return vector;
     }
     let inverse = 1.0 / length;

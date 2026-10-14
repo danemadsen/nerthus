@@ -120,9 +120,6 @@ impl FileFormat {
 pub struct WriteOptions {
     /// The TIFF 32-bit `Artist` tag: "Nerthus" and its version by default.
     pub artist: String,
-    /// The height range `.graw` files store (the range of
-    /// the last `.graw` read; (0, 1) otherwise).
-    pub graw_range: [f32; 2],
     /// PNG 8-bit's dither colour cache coarseness (`CacheShift`): 2 as in
     /// Windows builds of ImageMagick; Apple builds of ImageMagick use 3.
     pub dither_cache_shift: u32,
@@ -137,7 +134,6 @@ impl Default for WriteOptions {
     fn default() -> Self {
         Self {
             artist: format!("Nerthus {}", env!("CARGO_PKG_VERSION")),
-            graw_range: [0.0, 1.0],
             dither_cache_shift: 2,
             color_space: "sRGB".to_string(),
         }
@@ -160,7 +156,9 @@ pub fn clamp_for_export(map: &Map) -> Map {
 pub fn write_map(format: FileFormat, path: &Path, map: &Map, options: &WriteOptions) -> io::Result<()> {
     let color_space = Colorspace::from_name(&options.color_space);
     match format {
-        FileFormat::PureRaw => raw::write_graw(path, map, options.graw_range),
+        // One-channel maps go out in the stored range, which reading a
+        // `.graw` stored in another range sets.
+        FileFormat::PureRaw => raw::write_graw(path, map, nerthus_nodes::graw::stored_range()),
         FileFormat::HalfRaw | FileFormat::HalfRaw16 => raw::write_half(path, map),
         FileFormat::UshortRaw | FileFormat::UshortRaw16 => raw::write_ushort(path, map),
         FileFormat::FloatRaw | FileFormat::FloatRaw32 => raw::write_float(path, map),

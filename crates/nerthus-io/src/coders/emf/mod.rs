@@ -19,7 +19,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use resvg::tiny_skia::{Color, Pixmap, Transform};
 
-use crate::pixel_cache::{char_quantum, CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel, char_quantum};
 
 pub(crate) const EMR_HEADER: u32 = 1;
 pub(crate) const EMR_EOF: u32 = 14;
@@ -58,7 +58,7 @@ pub fn read(path: &Path) -> Result<PixelCache> {
         data.extend([colour.red(), colour.green(), colour.blue(), colour.alpha()].map(char_quantum));
     }
     let channels = vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue, PixelChannel::Alpha];
-    Ok(PixelCache { width, height, channels, data, colorspace: CacheColorspace::SRgb, gamma: DEFAULT_GAMMA })
+    Ok(PixelCache::new(width, height, channels, data, CacheColorspace::SRgb, DEFAULT_GAMMA))
 }
 
 /// Draws a metafile held in memory over `pixmap`, filling it (a metafile

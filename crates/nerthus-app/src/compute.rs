@@ -24,8 +24,9 @@ pub struct ComputeState {
 impl ComputeState {
     /// `App.SetComputeResources`: CPU-only mode when asked or marked;
     /// otherwise the preferred devices (or all suitable ones) load in the
-    /// background (`SyclLoader`).
-    pub fn start(cpu_only_asked: bool, user: &User) -> ComputeState {
+    /// background (`SyclLoader`). Safe Mode loads all suitable devices and
+    /// leaves the preferences' list alone.
+    pub fn start(cpu_only_asked: bool, safe_mode: bool, user: &User) -> ComputeState {
         let marked = user::data_folder().is_some_and(|folder| folder.join(nerthus_compute::CPU_ONLY_FILE).exists());
         let cpu_only = cpu_only_asked || marked;
         nerthus_compute::set_cpu_only(cpu_only);
@@ -38,7 +39,10 @@ impl ComputeState {
         let (sender, receiver) = crossbeam_channel::bounded(1);
         let spawned = std::thread::Builder::new().name("compute devices".to_string()).spawn(move || {
             let named_none = backends.is_empty();
-            if named_none {
+            if safe_mode {
+                log::info!("SAFE MODE: Loading all suitable devices.");
+                nerthus_compute::load_all_backends();
+            } else if named_none {
                 log::info!("Loading all suitable devices.");
                 nerthus_compute::load_all_backends();
             } else {
@@ -48,7 +52,9 @@ impl ComputeState {
             for device in nerthus_compute::active_devices() {
                 log::debug!("  {} ({})", device.device_name, device.backend_name);
             }
-            let _ = sender.send(named_none);
+            // The preferences keep the devices loaded when they named none
+            // (not in Safe Mode, whose preferences are the defaults).
+            let _ = sender.send(named_none && !safe_mode);
         });
         if let Err(error) = spawned {
             log::warn!("cannot load compute devices: {error}");

@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use image_webp::{UpsamplingMethod, WebPDecoder};
 
-use crate::pixel_cache::{char_quantum, CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel, char_quantum};
 
 pub fn read(path: &Path) -> Result<PixelCache> {
     let file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -28,5 +28,5 @@ pub fn read(path: &Path) -> Result<PixelCache> {
         channels.push(PixelChannel::Alpha);
     }
     let data = samples.iter().map(|&sample| char_quantum(sample)).collect();
-    Ok(PixelCache { width: width as usize, height: height as usize, channels, data, colorspace: CacheColorspace::SRgb, gamma: DEFAULT_GAMMA })
+    Ok(PixelCache::new(width as usize, height as usize, channels, data, CacheColorspace::SRgb, DEFAULT_GAMMA))
 }

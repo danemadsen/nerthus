@@ -29,6 +29,7 @@ pub mod filter_core;
 pub mod fractal_terraces;
 pub mod gpu;
 pub mod gradients;
+pub mod graw;
 pub mod histogram;
 pub mod lighting;
 pub mod magick;

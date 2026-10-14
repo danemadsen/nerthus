@@ -203,6 +203,21 @@ pub fn min_max(data: &[f32]) -> (f32, f32) {
     (minimum, maximum)
 }
 
+/// The lowest and highest value of a square plane `width` wide as the
+/// vectorised scan finds them: each row is read eight floats at a time
+/// from its start, so when the width is not a multiple of eight the last
+/// row's final read runs past the plane into the buffer's padding (zeros
+/// in a fresh buffer), which counts too.
+pub fn square_plane_min_max(data: &[f32], width: usize) -> (f32, f32) {
+    let area = (width * width).min(data.len());
+    let (mut minimum, mut maximum) = min_max(&data[..area]);
+    if !width.is_multiple_of(8) {
+        minimum = minimum.min(0.0);
+        maximum = maximum.max(0.0);
+    }
+    (minimum, maximum)
+}
+
 /// `1 - x` on every channel.
 pub fn invert(map: &mut Map) {
     map.apply(|value| 1.0 - value);

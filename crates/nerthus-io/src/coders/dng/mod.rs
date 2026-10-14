@@ -28,7 +28,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::pixel_cache::{CacheColorspace, PixelCache, PixelChannel, DEFAULT_GAMMA};
+use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel};
 
 pub fn read(path: &Path) -> Result<PixelCache> {
     let bytes = std::fs::read(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -39,7 +39,7 @@ pub fn read(path: &Path) -> Result<PixelCache> {
         (vec![PixelChannel::Red, PixelChannel::Green, PixelChannel::Blue], CacheColorspace::SRgb)
     };
     let data = output.samples.iter().map(|&sample| sample as f32).collect();
-    Ok(PixelCache { width: output.width, height: output.height, channels, data, colorspace, gamma: DEFAULT_GAMMA })
+    Ok(PixelCache::new(output.width, output.height, channels, data, colorspace, DEFAULT_GAMMA))
 }
 
 /// The 16-bit image LibRaw makes of a DNG file.

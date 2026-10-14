@@ -55,6 +55,20 @@ impl FileSystem {
         FileSystem { base, separator }
     }
 
+    /// `Exists` for another file than the imported one: `BuildPath`, then
+    /// `Cleanup`.
+    pub fn exists(&self, path: &str) -> bool {
+        let mut built = path.as_bytes().to_vec();
+        self.build_path(&mut built);
+        cleanup(&mut built, self.separator);
+        exists(&built)
+    }
+
+    /// `getOsSeparator`.
+    pub fn separator(&self) -> char {
+        self.separator as char
+    }
+
     /// `Open`: the path as given, then `BuildPath`, then `Cleanup` and
     /// `BuildPath`.
     pub fn open(&self, path: &str) -> Option<Vec<u8>> {

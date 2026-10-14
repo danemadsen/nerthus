@@ -6,6 +6,8 @@
 //! expanded, a NUL ends the document, and several top-level elements are
 //! fine.
 
+use crate::parsing::at;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     Document,
@@ -54,6 +56,20 @@ impl Node {
     /// `text().as_string()`: the first PCDATA or CDATA child's value.
     pub fn text(&self) -> &[u8] {
         self.children.iter().find(|child| matches!(child.kind, NodeKind::Pcdata | NodeKind::Cdata)).map_or(&[], |child| child.value.as_slice())
+    }
+
+    /// `find_node` with a name predicate: the first node below this one, in
+    /// document order, whatever its kind, with the name.
+    pub fn find_node(&self, name: &str) -> Option<&Node> {
+        for child in &self.children {
+            if child.name == name.as_bytes() {
+                return Some(child);
+            }
+            if let Some(found) = child.find_node(name) {
+                return Some(found);
+            }
+        }
+        None
     }
 
     /// `XmlNodeIterator` in pre-order: every descendant element.
@@ -737,6 +753,69 @@ pub fn parse(bytes: &[u8]) -> Result<Node, XmlError> {
         return Err(XmlError);
     }
     Ok(document)
+}
+
+/// pugixml's `string_to_integer<unsigned int>`.
+fn string_to_integer(value: &[u8], minimum: u32, maximum: u32) -> u32 {
+    let mut index = 0;
+    while matches!(at(value, index), b' ' | b'\t' | b'\n' | b'\r') {
+        index += 1;
+    }
+    let negative = at(value, index) == b'-';
+    if matches!(at(value, index), b'+' | b'-') {
+        index += 1;
+    }
+    let mut result = 0u32;
+    let overflow = if at(value, index) == b'0' && (at(value, index + 1) | b' ') == b'x' {
+        index += 2;
+        while at(value, index) == b'0' {
+            index += 1;
+        }
+        let start = index;
+        loop {
+            let byte = at(value, index);
+            if byte.wrapping_sub(b'0') < 10 {
+                result = result.wrapping_mul(16).wrapping_add((byte - b'0') as u32);
+            } else if (byte | b' ').wrapping_sub(b'a') < 6 {
+                result = result.wrapping_mul(16).wrapping_add(((byte | b' ') - b'a' + 10) as u32);
+            } else {
+                break;
+            }
+            index += 1;
+        }
+        index - start > 8
+    } else {
+        while at(value, index) == b'0' {
+            index += 1;
+        }
+        let start = index;
+        while at(value, index).wrapping_sub(b'0') < 10 {
+            result = result.wrapping_mul(10).wrapping_add((at(value, index) - b'0') as u32);
+            index += 1;
+        }
+        let digits = index - start;
+        let lead = at(value, start);
+        let fits = digits == 10 && (lead < b'4' || (lead == b'4' && result >> 31 != 0));
+        digits >= 10 && !fits
+    };
+    if negative {
+        let limit = 0u32.wrapping_sub(minimum);
+        if overflow || result > limit { minimum } else { 0u32.wrapping_sub(result) }
+    } else if overflow || result > maximum {
+        maximum
+    } else {
+        result
+    }
+}
+
+/// `xml_attribute::as_int()` (and `xml_text::as_int()`).
+pub(crate) fn as_int(value: &[u8]) -> i32 {
+    string_to_integer(value, i32::MIN as u32, i32::MAX as u32) as i32
+}
+
+/// `xml_attribute::as_uint()`.
+pub(crate) fn as_uint(value: &[u8]) -> u32 {
+    string_to_integer(value, 0, u32::MAX)
 }
 
 /// A pugixml string: everything up to the first NUL.

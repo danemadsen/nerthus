@@ -19,7 +19,7 @@ use crate::document::Document;
 use crate::editor::Editor;
 use crate::user::locations;
 
-pub use autosave::{install_disaster_recovery, Autosave, AUTOSAVE_CHOICES};
+pub use autosave::{install_disaster_recovery, try_autosave, Autosave, AUTOSAVE_CHOICES};
 pub use collection::{add_macro, all_recent, consume_documents, export_to, install, installed_macros, ExportForm, MacroCollection};
 pub use thumbnail::thumbnail_path;
 
@@ -107,6 +107,8 @@ pub enum FileCommand {
     /// tabs of their own, or are deleted.
     RecoverOrphans,
     DeleteOrphans,
+    /// Yes to "Obsolete Bake Data Found": the folder goes.
+    DeleteObsoleteBakes(PathBuf),
 }
 
 /// How a file from the Start dialog or the examples opens (their buttons'
@@ -208,6 +210,9 @@ pub struct FileState {
     /// A graph tab to show once an import added it, and whether to frame
     /// its nodes (`ImportTorlet` zooms to extents).
     pub show_tab: Option<(usize, bool)>,
+    /// An alert for the interface to show (`ShowAlert`): a save that did
+    /// not go through, a delete that failed.
+    pub alert: Option<crate::ui::alert::Alert>,
 }
 
 impl FileState {
@@ -256,7 +261,10 @@ fn open_with(editor: &mut Editor, path: &Path, remember: bool) -> bool {
     document.recover_save_definitions();
     editor.set_document(document);
     ask_about_orphans(editor);
+    // An example opens as an untitled copy: nothing is asked about its
+    // bake data, and it stays out of the recent files.
     if remember {
+        ask_about_obsolete_bakes(editor, path);
         editor.user.add_recent(path);
         collection::add_to_all_recent(path);
     }
@@ -280,6 +288,134 @@ fn ask_about_orphans(editor: &mut Editor) {
     question.no = Some(FileCommand::DeleteOrphans);
     question.dismissed = Some(FileCommand::RecoverOrphans);
     editor.files.messages.push(question);
+}
+
+/// The question about bake data the older project format kept beside the
+/// project, which no build reads any more.
+pub const OBSOLETE_BAKES_CAPTION: &str = "Obsolete Bake Data Found";
+pub const OBSOLETE_BAKES_TEXT: &str = "This project contains Baked Data from an older version. This bake is not compatible with the newer version, and you will need to re-bake any nodes.\n\nWould you like to delete this old data?";
+
+/// Where the older format kept a project's bake data: `BakeData/<project
+/// name>` beside the project.
+pub fn obsolete_bakes_folder(project: &Path) -> Option<PathBuf> {
+    let folder = project.parent()?;
+    let stem = project.file_stem()?;
+    Some(folder.join("BakeData").join(stem))
+}
+
+/// `Shell.OpenFile`: when the project has bake data in the older format,
+/// it is offered for deletion, its size in the footer.
+fn ask_about_obsolete_bakes(editor: &mut Editor, path: &Path) {
+    let Some(folder) = obsolete_bakes_folder(path) else {
+        return;
+    };
+    if !folder.is_dir() {
+        return;
+    }
+    let size = folder_size(&folder);
+    let size_text = crate::ui::byte_size(size as usize);
+    let mut question = Message::new(OBSOLETE_BAKES_CAPTION, OBSOLETE_BAKES_TEXT);
+    question.footnote = Some(format!("Obsolete data size is {size_text}"));
+    question.yes = Some(FileCommand::DeleteObsoleteBakes(folder));
+    editor.files.messages.push(question);
+}
+
+/// Yes to the obsolete bake question: the folder and all it holds go. A
+/// failure is logged and shown as an alert that stays until closed.
+pub fn delete_obsolete_bakes(editor: &mut Editor, folder: &Path) {
+    let Err(error) = std::fs::remove_dir_all(folder) else {
+        return;
+    };
+    log::error!("{error}");
+    let alert = crate::ui::alert::Alert::new("Error!", &error.to_string(), crate::ui::alert::AlertKind::Error);
+    editor.files.alert = Some(alert.staying());
+}
+
+/// The bytes of every file in a folder and its subfolders; a folder that
+/// cannot be read ends the count with what was found so far.
+fn folder_size(folder: &Path) -> u64 {
+    let mut total = 0;
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            return total;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return total;
+            };
+            let Ok(metadata) = entry.metadata() else {
+                return total;
+            };
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else {
+                total += metadata.len();
+            }
+        }
+    }
+    total
+}
+
+/// `FileInfo.IsReadOnly`: the read-only attribute on Windows. Elsewhere a
+/// file is read-only when this user may read it but not write it, judged
+/// by its owner's, group's or others' permissions as they apply.
+pub fn is_read_only(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mode = metadata.mode();
+        let read_only = |read: u32, write: u32| mode & read != 0 && mode & write == 0;
+        let user = read_only(0o400, 0o200);
+        let group = read_only(0o040, 0o020);
+        let other = read_only(0o004, 0o002);
+        if user == group && group == other {
+            return user;
+        }
+        // SAFETY: `geteuid` only reads the process's user id.
+        let effective_user = unsafe { libc::geteuid() };
+        if metadata.uid() == effective_user {
+            return user;
+        }
+        if group == other {
+            return group;
+        }
+        if is_member_of_group(metadata.gid()) {
+            return group;
+        }
+        other
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.permissions().readonly()
+    }
+}
+
+/// Whether this process's user belongs to `group`: its effective group or
+/// one of its supplementary groups.
+#[cfg(unix)]
+fn is_member_of_group(group: u32) -> bool {
+    // SAFETY: `getegid` only reads the process's group id.
+    let effective_group = unsafe { libc::getegid() };
+    if effective_group == group {
+        return true;
+    }
+    // SAFETY: a count of 0 only asks how many groups there are.
+    let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if count <= 0 {
+        return false;
+    }
+    let mut groups = vec![0 as libc::gid_t; count as usize];
+    // SAFETY: the buffer holds `count` group ids.
+    let filled = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+    if filled <= 0 {
+        return false;
+    }
+    groups.truncate(filled as usize);
+    groups.contains(&group)
 }
 
 /// `Session_FileOpenFailed`: "Failed to open file: …" with the reason.
@@ -371,7 +507,8 @@ fn dotnet_format_000(number: i64) -> String {
 /// Startup work: an old recovery copy kept aside (`RecoverOldFile`),
 /// files older than 45 days cleared (`PassiveCleanup`, when Clear Old Files
 /// is on), the macro collection read and the crash handler installed.
-pub fn start(editor: &mut Editor) {
+/// The Start dialog opens when asked (see `LaunchOptions::start_dialog`).
+pub fn start(editor: &mut Editor, start_dialog: bool) {
     autosave::recover_old_file();
     if editor.user.options.clear_old_files() {
         autosave::passive_cleanup();
@@ -379,9 +516,7 @@ pub fn start(editor: &mut Editor) {
     editor.files.macros.reload();
     editor.files.autosave.load_interval(editor.user.options.autosave_interval());
     install_disaster_recovery();
-    // The Start dialog greets a plain start; a project or a launch option
-    // (captures, `--show`) goes straight to the editor.
-    editor.files.start_dialog_open = std::env::args().len() == 1;
+    editor.files.start_dialog_open = start_dialog;
 }
 
 /// The files plugin: the timers, drops, close requests, dialogs and
@@ -678,5 +813,40 @@ mod tests {
         assert_eq!(dotnet_int_parse("-12"), Some(-12));
         assert_eq!(dotnet_int_parse("a12"), None);
         assert_eq!(dotnet_format_000(-12), "-012");
+    }
+
+    #[test]
+    fn obsolete_bake_data_sits_beside_the_project() {
+        let folder = std::env::temp_dir().join(format!("nerthus-bakedata-{}", std::process::id()));
+        let project = folder.join("Ridge.terrain");
+        let bakes = obsolete_bakes_folder(&project).unwrap();
+        assert_eq!(bakes, folder.join("BakeData").join("Ridge"));
+        std::fs::create_dir_all(bakes.join("Nodes")).unwrap();
+        std::fs::write(bakes.join("a.graw"), [0u8; 1000]).unwrap();
+        std::fs::write(bakes.join("Nodes").join("b"), [0u8; 536]).unwrap();
+        assert_eq!(folder_size(&bakes), 1536);
+        assert_eq!(crate::ui::byte_size(1536), "1.5 KB");
+        assert_eq!(crate::ui::byte_size(0), "0 b");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_follows_the_write_permission() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = std::env::temp_dir().join(format!("nerthus-readonly-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("Locked.terrain");
+        std::fs::write(&path, "{}").unwrap();
+        assert!(!is_read_only(&path));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(is_read_only(&path));
+        // Owned by this user: only the owner's permissions count.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o466)).unwrap();
+        assert!(is_read_only(&path));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_read_only(&path));
+        assert!(!is_read_only(&folder.join("missing.terrain")));
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

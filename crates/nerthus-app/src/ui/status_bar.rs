@@ -10,12 +10,33 @@ use crate::editor::Editor;
 use crate::icons;
 use crate::theme;
 use crate::ui::commands::Command;
+use crate::ui::help_windows;
 use crate::ui::options_window::OptionsTab;
+use crate::ui::tool_commands::ToolCommand;
 
 pub const HEIGHT: f32 = 20.0;
 
-/// `BrushName.Teal`: the memory readout.
+/// `BrushName.Teal`: the memory readout, once a version has started for
+/// the first time.
 const MEMORY_COLOR: egui::Color32 = egui::Color32::from_rgb(0x47, 0xb4, 0xb3);
+
+/// Whether `eco.dat` was in the data folder as Nerthus started.
+static ECO_MARKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// `SetupInterface`: notes whether a version has started for the first
+/// time before (`eco.dat`), as the interface is set up and before this
+/// start's What's New check can write it.
+pub fn note_eco_mark() {
+    ECO_MARKED.get_or_init(|| crate::user::data_folder().is_some_and(|folder| folder.join(help_windows::ECO_FILE).exists()));
+}
+
+/// The memory readout is teal once a version has started for the first
+/// time before this start, the label colour until then.
+fn memory_colour() -> egui::Color32 {
+    note_eco_mark();
+    let marked = ECO_MARKED.get().copied().unwrap_or(false);
+    if marked { MEMORY_COLOR } else { theme::LABEL_DEFAULT }
+}
 
 /// `process_gib` is the process's memory (`SystemInformationDiagnosticsPlugin`).
 pub fn show(ui: &mut Ui, rect: Rect, editor: &Editor, process_gib: Option<f64>, commands: &mut Vec<Command>) {
@@ -38,12 +59,22 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &Editor, process_gib: Option<f64>, 
             Some(process) => format!("{cached:.1} GB / {process:.1} GB"),
             None => format!("{cached:.1} GB"),
         };
-        icon_text(ui, "binary", &memory, 11.0, MEMORY_COLOR);
+        icon_text(ui, "binary", &memory, 11.0, memory_colour());
         let device = if editor.compute.cpu_only { Some("CPU Only") } else { editor.compute.fastest_disabled.as_deref() };
         if let Some(device) = device
             && icon_text(ui, "cpu-2", device, 10.0, theme::LABEL_DEFAULT).clicked()
         {
             commands.push(Command::ShowOptions(Some(OptionsTab::Compute)));
+        }
+        // `NahimicWarning`: shows the warning again.
+        if crate::nahimic::detected() {
+            ui.add_space(8.0);
+            let warning_text = RichText::new("⚠ Nahimic Detected!").font(theme::interface(10.0)).color(theme::LABEL_DEFAULT);
+            let warning = ui.add(egui::Label::new(warning_text).sense(Sense::click()));
+            let warning = warning.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if warning.clicked() {
+                commands.push(Command::Tools(ToolCommand::ShowNahimicWarning));
+            }
         }
         let state = if !editor.engine_active {
             "Engine suspended"

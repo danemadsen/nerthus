@@ -483,12 +483,9 @@ pub fn samples_to_map(samples: Vec<f32>, size: usize) -> Map {
 }
 
 /// One channel, square, its size from the sample count
-/// (`(int)Math.Sqrt(length)`).
+/// (`(int)Math.Sqrt((float)length)`).
 pub fn single_channel(samples: Vec<f32>) -> Map {
-    let size = (samples.len() as f64).sqrt() as usize;
-    let mut samples = samples;
-    samples.resize(size * size, 0.0);
-    Map::from_data(Resolution::square(size), samples)
+    nerthus_nodes::graw::single_channel(samples)
 }
 
 #[cfg(test)]

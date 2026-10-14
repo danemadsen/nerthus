@@ -21,15 +21,21 @@ pub fn load(path: &Path) -> Option<Mesh> {
 
 /// The Assimp path: every mesh's vertices as (x, z, y) and its
 /// three-index faces, offset by the vertices before it (node transforms
-/// are not applied).
+/// are not applied). The positions are read for the mesh's vertex count
+/// unchecked: a mesh with vertices but no (or too few) positions crashes
+/// it, no mesh here.
 pub fn load_assimp(path: &str) -> Option<Mesh> {
     let scene = nerthus_assimp::read_file(path).ok()?;
     let mut vertices = Vec::new();
     let mut triangles = Vec::new();
     let mut base = 0u32;
     for mesh in &scene.meshes {
-        if let Some(positions) = &mesh.vertices {
-            for position in positions.iter().take(mesh.vertex_count) {
+        if mesh.vertex_count > 0 {
+            let positions = mesh.vertices.as_ref()?;
+            if positions.len() < mesh.vertex_count {
+                return None;
+            }
+            for position in &positions[..mesh.vertex_count] {
                 vertices.push([position[0], position[2], position[1]]);
             }
         }

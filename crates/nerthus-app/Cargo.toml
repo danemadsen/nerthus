@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 nerthus-compute.workspace = true
+nerthus-core.workspace = true
 nerthus-engine.workspace = true
 nerthus-export.workspace = true
 nerthus-nodes.workspace = true
@@ -36,8 +37,10 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
 toml.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["std", "NSApplication", "NSEvent", "NSImage", "NSResponder", "NSView", "NSWindow"] }
 objc2-foundation = { workspace = true, features = ["std", "NSData"] }
@@ -46,7 +49,7 @@ objc2-foundation = { workspace = true, features = ["std", "NSData"] }
 winit.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11-dl.workspace = true

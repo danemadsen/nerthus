@@ -27,6 +27,9 @@ use crate::worker::{BakeJob, BuildEvent, BuildRequest, BuildWorker, NodeCache};
 /// Preview resolutions offered (`Preview > Resolution`).
 pub const PREVIEW_RESOLUTIONS: [usize; 4] = [512, 1024, 2048, 4096];
 
+/// `ShowRegionUnbakeWarning`'s message.
+pub const REGION_UNBAKE_WARNING: &str = "You cannot unbake this node. It requires to be baked for use in Regions.\n\nTo unbake it, you should switch to Standard preview and then unbake it. You will then need to bake it again before Regions can be used again.";
+
 /// `CloseFile`'s progress window.
 const FREEZING_TITLE: &str = "Freezing Cached Data to Disk";
 
@@ -64,6 +67,36 @@ pub struct CopiedNode {
     pub type_name: String,
     pub values: indexmap::IndexMap<String, serde_json::Value>,
     pub document_serial: u64,
+}
+
+/// What stops a bake before it starts, each with the message box that
+/// says so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BakeRefusal {
+    /// Bake Selected on a Macro.
+    MacroNode,
+    /// A node the bake builds is bypassed.
+    BypassedChain,
+    /// A node the bake builds is a Macro.
+    MacroInChain,
+}
+
+impl BakeRefusal {
+    pub fn caption(self) -> &'static str {
+        match self {
+            BakeRefusal::MacroNode => "Cannot bake macro node",
+            BakeRefusal::BypassedChain => "Cannot Start Baking",
+            BakeRefusal::MacroInChain => "Macro Detected in Bake Chain",
+        }
+    }
+
+    pub fn text(self) -> &'static str {
+        match self {
+            BakeRefusal::MacroNode => "Selected node is a Macro and cannot be baked.",
+            BakeRefusal::BypassedChain => "Some nodes required for baking are currently bypassed. Please enable those nodes and try again.",
+            BakeRefusal::MacroInChain => "This node depends on a Macro and cannot be baked.",
+        }
+    }
 }
 
 /// A file dialog the interface asked for; dialogs block, so a main-thread
@@ -222,6 +255,9 @@ pub struct Editor {
     pending_bake: Option<BakeJob>,
     pending_unbake: Vec<i32>,
     pending_load_all_bakes: bool,
+    /// Baked nodes whose bakes are read back from disk (Load Offloaded
+    /// Cache).
+    pending_load_bakes: Vec<i32>,
     /// A request goes to the build thread even with nothing to build, for
     /// its preparation alone (a project closed or opened: previews written,
     /// bakes loaded, previews read back).
@@ -324,6 +360,7 @@ impl Editor {
             pending_bake: None,
             pending_unbake: Vec::new(),
             pending_load_all_bakes: false,
+            pending_load_bakes: Vec::new(),
             pending_preparation: false,
             pending_forget: Vec::new(),
             pending_node_commands: Vec::new(),
@@ -472,6 +509,17 @@ impl Editor {
     }
 
     pub fn save_to(&mut self, path: &Path) {
+        // `SaveFile` leaves a read-only file alone: the changes stay
+        // unsaved, an alert says so until closed, and a safety autosave is
+        // tried.
+        if path.exists() && crate::files::is_read_only(path) {
+            log::warn!("File not saved. Read-only location at {}", path.display());
+            let text = "The file was not saved as it is read-only. You still have unsaved changes. Try saving to a new location.";
+            let alert = crate::ui::alert::Alert::new("File not saved!", text, crate::ui::alert::AlertKind::Error);
+            self.files.alert = Some(alert.staying());
+            crate::files::try_autosave(self);
+            return;
+        }
         // Save As keeps the bakes: the old file's bake folder is copied to
         // the new one's once saved (`oldCachePath`).
         let renamed = self.document.path.as_deref().is_some_and(|current| current != path);
@@ -490,7 +538,8 @@ impl Editor {
                 crate::files::saved(self, path);
             }
             Err(error) => {
-                self.report(format!("{error:#}"));
+                self.files.show_message("Nerthus", "There was an error saving the file.");
+                log::error!("{error:#}");
                 return;
             }
         }
@@ -816,19 +865,34 @@ impl Editor {
         Some(preferences.bake_store(path, &self.document.project_id()))
     }
 
-    /// `ValidateBakeChain`: the nodes a bake builds must not be bypassed
-    /// (the message says so).
-    fn bake_chain_is_valid(&mut self, nodes: &[i32]) -> bool {
+    /// `ValidateBakeChain`: what stops `nodes` from being baked, node by
+    /// node. Baking a node builds it and everything upstream of it; none
+    /// of those may be bypassed, then none may be a Macro.
+    pub fn bake_chain_refusal(&self, nodes: &[i32]) -> Option<BakeRefusal> {
         let terrain = self.document.terrain();
         for node in nodes {
             let chain = nerthus_engine::Engine::build_order(terrain, *node);
-            let bypassed = chain.iter().any(|id| terrain.nodes.get(id).is_some_and(|data| StateOverride::of(data) == StateOverride::Bypassed));
+            let chain_nodes: Vec<&nerthus_engine::NodeData> = chain.iter().filter_map(|id| terrain.nodes.get(id)).collect();
+            let bypassed = chain_nodes.iter().any(|data| StateOverride::of(data) == StateOverride::Bypassed);
             if bypassed {
-                self.report("Cannot Start Baking: Some nodes required for baking are currently bypassed. Please enable those nodes and try again.");
-                return false;
+                return Some(BakeRefusal::BypassedChain);
+            }
+            let has_macro = chain_nodes.iter().any(|data| data.type_name == "Macro");
+            if has_macro {
+                return Some(BakeRefusal::MacroInChain);
             }
         }
-        true
+        None
+    }
+
+    /// `ValidateCurrentNodeBake`: what stops Bake Selected on `node`, which
+    /// must not be a Macro itself, then its chain as above.
+    pub fn bake_selected_refusal(&self, node: i32) -> Option<BakeRefusal> {
+        let is_macro = self.document.node(node).is_some_and(|data| data.type_name == "Macro");
+        if is_macro {
+            return Some(BakeRefusal::MacroNode);
+        }
+        self.bake_chain_refusal(&[node])
     }
 
     /// Saves before baking (`SaveFile`); false when the project has
@@ -843,38 +907,41 @@ impl Editor {
         !self.document.dirty
     }
 
-    /// Graph › Baking › Bake Selected (`BakeSelectedNode`) up to the bake:
-    /// the node to bake once its chain is checked and the project saved.
+    /// Graph › Baking › Bake Selected (`BakeSelectedNode`) up to the bake,
+    /// once [`Self::bake_selected_refusal`] has let it through: the node to
+    /// bake once the project is saved.
     pub fn prepare_bake_selected(&mut self) -> Option<i32> {
         let node = self.active_node()?;
-        let is_macro = self.document.node(node).is_some_and(|data| data.type_name == "Macro");
-        if is_macro {
-            self.report("Cannot bake macro node: Selected node is a Macro and cannot be baked.");
-            return None;
-        }
-        if !self.bake_chain_is_valid(&[node]) || !self.save_for_bake() {
+        if !self.save_for_bake() {
             return None;
         }
         Some(node)
     }
 
-    /// Graph › Baking › Bake Required Nodes, once confirmed
-    /// (`miBakeGates_Click`): every node that needs baking, orphans aside.
+    /// Graph › Baking › Bake Required Nodes as if confirmed
+    /// (`miBakeGates_Click`, for `--show bake-required`): every node that
+    /// needs baking, orphans aside. A refusal goes to the status bar.
     pub fn bake_required(&mut self) {
+        let nodes = bake::required_nodes(self.document.terrain());
+        if let Some(refusal) = self.bake_chain_refusal(&nodes) {
+            self.report(format!("{}: {}", refusal.caption(), refusal.text()));
+            return;
+        }
         if let Some(nodes) = self.prepare_bake_required() {
             self.start_bake(nodes);
         }
     }
 
-    /// Bake Required Nodes up to the bake: the nodes to bake once their
-    /// chains are checked and the project saved.
+    /// Bake Required Nodes up to the bake, once their chains were checked
+    /// ([`Self::bake_chain_refusal`]) and the question answered: the nodes
+    /// to bake once the project is saved.
     pub fn prepare_bake_required(&mut self) -> Option<Vec<i32>> {
         let nodes = bake::required_nodes(self.document.terrain());
         if nodes.is_empty() {
             self.report("No nodes need baking.");
             return None;
         }
-        if !self.bake_chain_is_valid(&nodes) || !self.save_for_bake() {
+        if !self.save_for_bake() {
             return None;
         }
         Some(nodes)
@@ -1064,6 +1131,58 @@ impl Editor {
 
     /// Force load baked cache (`miBakeLoadCache_Click`): every bake
     /// loaded, with the progress window; the project counts as changed.
+    /// A baked node's Load Offloaded Cache: its bake, and those of the
+    /// baked nodes downstream of it, read back from disk; what reads them
+    /// builds again.
+    pub fn load_offloaded_cache(&mut self, node: i32) {
+        let mut nodes = vec![node];
+        nodes.extend(self.baked_downstream(node));
+        self.pending_load_bakes.extend(nodes);
+        self.needs_build = true;
+    }
+
+    /// The Gate's Unbake Node, once confirmed (from the property area):
+    /// the node and the baked nodes downstream of it unbake as with
+    /// Unbake Selected, but the file is left unsaved.
+    pub fn unbake_node(&mut self, node: i32) {
+        let mut nodes = vec![node];
+        nodes.extend(self.baked_downstream(node));
+        for id in &nodes {
+            self.document.apply_build_update(*id, "StateOverride", serde_json::Value::from("None"));
+        }
+        self.document.dirty = true;
+        self.pending_unbake.extend(nodes);
+        self.needs_build = true;
+    }
+
+    /// The bakes Load Offloaded Cache has yet to send to the build.
+    #[cfg(test)]
+    pub fn pending_load_bakes(&self) -> &[i32] {
+        &self.pending_load_bakes
+    }
+
+    /// The baked nodes downstream of `node`.
+    fn baked_downstream(&self, node: i32) -> Vec<i32> {
+        let terrain = self.document.terrain();
+        let downstream = downstream_nodes(terrain, node).into_iter();
+        let baked = downstream.filter(|id| terrain.nodes.get(id).is_some_and(|data| StateOverride::of(data) == StateOverride::Baked));
+        baked.collect()
+    }
+
+    /// `O.ShowRegionUnbakeWarning`'s test: while a region is previewed,
+    /// unbaking is refused when a baked node needs baking (or `node`
+    /// does).
+    pub fn region_needs_bakes(&self, node: Option<i32>) -> bool {
+        if self.preview_region.is_none() {
+            return false;
+        }
+        let terrain = self.document.terrain();
+        let critical = |data: &nerthus_engine::NodeData| nerthus_engine::Catalogue::get().node(&data.type_name).is_some_and(|spec| spec.has_flag("RequiresBaking"));
+        let baked_critical = terrain.nodes.values().any(|data| StateOverride::of(data) == StateOverride::Baked && critical(data));
+        let node_critical = node.and_then(|id| terrain.nodes.get(&id)).is_some_and(critical);
+        baked_critical || node_critical
+    }
+
     pub fn load_baked_cache(&mut self) {
         self.pending_load_all_bakes = true;
         self.needs_build = true;
@@ -1122,6 +1241,7 @@ impl Editor {
         // The build takes every edit made so far, debounced ones too.
         self.build_due = None;
         let bake_work = self.pending_bake.is_some() || !self.pending_unbake.is_empty() || self.pending_load_all_bakes || !self.pending_node_commands.is_empty();
+        let bake_work = bake_work || !self.pending_load_bakes.is_empty();
         let bake_work = bake_work || !self.disk_cache.tasks.is_empty();
         let bake_work = bake_work || self.watched_refresh || self.pending_preparation;
         let bake_work = bake_work || self.pending_cached_export.is_some();
@@ -1177,6 +1297,7 @@ impl Editor {
             bake: self.pending_bake.take(),
             unbake: std::mem::take(&mut self.pending_unbake),
             load_all_bakes: std::mem::take(&mut self.pending_load_all_bakes),
+            load_bakes: std::mem::take(&mut self.pending_load_bakes),
             region: self.previewed_region(),
             forget: std::mem::take(&mut self.pending_forget),
             node_commands: std::mem::take(&mut self.pending_node_commands),
@@ -1737,12 +1858,17 @@ impl Plugin for EditorPlugin {
         let worker = BuildWorker::start();
         let renderer = ViewportRenderer::start();
         let mut editor = Editor::new(Document::new());
-        editor.user = User::load();
+        editor.user = User::load(self.options.safe_mode);
+        if let Some(address) = self.options.proxy.as_deref()
+            && !self.options.safe_mode
+        {
+            editor.user.set_proxy(address);
+        }
         // `SetupServices`: the presets in `Paths.Presets`.
         let presets_folder = editor.user.preferences.documents_folder().join("Presets");
         editor.presets = crate::presets::PresetLibrary::load(presets_folder);
-        crate::files::start(&mut editor);
-        editor.compute = ComputeState::start(self.options.cpu_only, &editor.user);
+        crate::files::start(&mut editor, self.options.start_dialog());
+        editor.compute = ComputeState::start(self.options.cpu_only, self.options.safe_mode, &editor.user);
         editor.mask_gradient = MaskGradient::from_index(editor.user.options.mask_gradient());
         editor.load_macros();
         if let Some(path) = &self.options.project {
@@ -2186,5 +2312,32 @@ mod tests {
         editor.needs_render = false;
         editor.set_render_quality(RenderQuality::Normal);
         assert!(!editor.needs_render);
+    }
+
+    #[test]
+    fn bakes_are_refused_for_bypassed_nodes_and_macros_upstream() {
+        let mut document = Document::new();
+        let macro_node = document.add_node("Macro", [26000.0, 26000.0]).unwrap();
+        let gate = document.add_node("Gate", [26300.0, 26000.0]).unwrap();
+        let mountain = document.add_node("Mountain", [26000.0, 26400.0]).unwrap();
+        let blur = document.add_node("Blur", [26300.0, 26400.0]).unwrap();
+        document.connect(macro_node, "Out", gate, "In");
+        document.connect(mountain, "Out", blur, "In");
+        let mut editor = Editor::new(document);
+        assert_eq!(editor.bake_selected_refusal(macro_node), Some(BakeRefusal::MacroNode));
+        assert_eq!(editor.bake_selected_refusal(gate), Some(BakeRefusal::MacroInChain));
+        assert_eq!(editor.bake_selected_refusal(blur), None);
+
+        // The node itself counts as upstream.
+        editor.document.set_member(blur, "StateOverride", serde_json::json!("Bypassed"), "Bypass", true);
+        assert_eq!(editor.bake_selected_refusal(blur), Some(BakeRefusal::BypassedChain));
+        editor.document.set_member(blur, "StateOverride", serde_json::json!("None"), "Bypass", true);
+        editor.document.set_member(mountain, "StateOverride", serde_json::json!("Bypassed"), "Bypass", true);
+        assert_eq!(editor.bake_selected_refusal(blur), Some(BakeRefusal::BypassedChain));
+
+        // Node by node: the first node with a problem names it.
+        assert_eq!(editor.bake_chain_refusal(&[gate, blur]), Some(BakeRefusal::MacroInChain));
+        assert_eq!(editor.bake_chain_refusal(&[blur, gate]), Some(BakeRefusal::BypassedChain));
+        assert_eq!(editor.bake_chain_refusal(&[]), None);
     }
 }

@@ -27,6 +27,48 @@ pub fn strtoul10(bytes: &[u8], start: usize) -> (u32, usize) {
     (value, position)
 }
 
+/// `strtoul8`: octal digits, wrapping.
+pub fn strtoul8(bytes: &[u8], start: usize) -> (u32, usize) {
+    let mut value = 0u32;
+    let mut index = start;
+    while let Some(&byte) = bytes.get(index) {
+        if !(b'0'..=b'7').contains(&byte) {
+            break;
+        }
+        value = (value << 3).wrapping_add((byte - b'0') as u32);
+        index += 1;
+    }
+    (value, index)
+}
+
+/// `strtoul16`: hex digits, wrapping.
+pub fn strtoul16(bytes: &[u8], start: usize) -> (u32, usize) {
+    let mut value = 0u32;
+    let mut index = start;
+    while let Some(&byte) = bytes.get(index) {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'A'..=b'F' => byte - b'A' + 10,
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => break,
+        };
+        value = (value << 4).wrapping_add(digit as u32);
+        index += 1;
+    }
+    (value, index)
+}
+
+/// `strtoul_cppstyle`: `0x` hex, a leading `0` octal, else decimal.
+pub fn strtoul_cppstyle(bytes: &[u8], start: usize) -> (u32, usize) {
+    if bytes.get(start) == Some(&b'0') {
+        if bytes.get(start + 1) == Some(&b'x') {
+            return strtoul16(bytes, start + 2);
+        }
+        return strtoul8(bytes, start + 1);
+    }
+    strtoul10(bytes, start)
+}
+
 /// `strtol10`: an optional sign, then `strtoul10`; negated unless the
 /// value (as `int`) is `INT_MAX` or `INT_MIN`.
 pub fn strtol10(bytes: &[u8], start: usize) -> (i32, usize) {
@@ -160,6 +202,77 @@ pub fn fast_atoreal_move(bytes: &[u8], start: usize, check_comma: bool) -> Resul
             exponent = -exponent;
         }
         value *= 10.0f32.powf(exponent);
+    }
+    if negative {
+        value = -value;
+    }
+    Ok((value, position))
+}
+
+/// `fast_atoreal_move<double>`: as the float version, in doubles.
+pub fn fast_atoreal_move_f64(bytes: &[u8], start: usize, check_comma: bool) -> Result<(f64, usize), ImportError> {
+    let mut position = start;
+    let negative = at(bytes, position) == b'-';
+    if negative || at(bytes, position) == b'+' {
+        position += 1;
+    }
+    let first = at(bytes, position);
+    if (first == b'N' || first == b'n') && starts_with_ignore_case(bytes, position, b"nan") {
+        return Ok((f64::NAN, position + 3));
+    }
+    if (first == b'I' || first == b'i') && starts_with_ignore_case(bytes, position, b"inf") {
+        let mut value = f64::INFINITY;
+        if negative {
+            value = -value;
+        }
+        position += 3;
+        let next = at(bytes, position);
+        if (next == b'I' || next == b'i') && starts_with_ignore_case(bytes, position, b"inity") {
+            position += 5;
+        }
+        return Ok((value, position));
+    }
+    let is_point = |byte: u8| byte == b'.' || (check_comma && byte == b',');
+    let starts_number = first.is_ascii_digit() || (is_point(first) && at(bytes, position + 1).is_ascii_digit());
+    if !starts_number {
+        return fail("Cannot parse string as a real number: does not start with digit or decimal point followed by digit.");
+    }
+
+    let mut value = 0.0f64;
+    if !is_point(at(bytes, position)) {
+        let (integer, end) = strtoul10_64(bytes, position, None)?;
+        value = integer as f64;
+        if let Some(end) = end {
+            position = end;
+        }
+    }
+    if is_point(at(bytes, position)) && at(bytes, position + 1).is_ascii_digit() {
+        position += 1;
+        let mut digits = 15u32;
+        let (fraction, end) = strtoul10_64(bytes, position, Some(&mut digits))?;
+        if let Some(end) = end {
+            position = end;
+        }
+        value += fraction as f64 * FRACTION_SCALE[digits as usize];
+    } else if at(bytes, position) == b'.' {
+        position += 1;
+    }
+    let marker = at(bytes, position);
+    if marker == b'e' || marker == b'E' {
+        position += 1;
+        let exponent_negative = at(bytes, position) == b'-';
+        if exponent_negative || at(bytes, position) == b'+' {
+            position += 1;
+        }
+        let (magnitude, end) = strtoul10_64(bytes, position, None)?;
+        if let Some(end) = end {
+            position = end;
+        }
+        let mut exponent = magnitude as f64;
+        if exponent_negative {
+            exponent = -exponent;
+        }
+        value *= 10.0f64.powf(exponent);
     }
     if negative {
         value = -value;

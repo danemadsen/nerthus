@@ -216,10 +216,12 @@ impl Map {
         interleaved
     }
 
-    /// A map from interleaved samples (`FromInterleavedArray`).
+    /// A map from interleaved samples (`FromInterleavedArray`); samples
+    /// past the map's area are left out.
     pub fn from_interleaved(resolution: Resolution, interleaved: &[f32], channel_count: usize) -> Self {
         let mut channels = vec![vec![0.0; resolution.area()]; channel_count];
-        for (pixel, samples) in interleaved.chunks_exact(channel_count).enumerate() {
+        let pixels = interleaved.chunks_exact(channel_count).take(resolution.area());
+        for (pixel, samples) in pixels.enumerate() {
             for (channel_index, &value) in samples.iter().enumerate() {
                 channels[channel_index][pixel] = value;
             }

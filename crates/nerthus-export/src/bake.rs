@@ -14,8 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nerthus_engine::{BuildResult, Catalogue, Engine, Map, NodeData, NodeState, Region, RenderIntent, Resolution, StateOverride, Terrain};
-use serde_json::Value;
+use nerthus_engine::{BuildResult, Catalogue, Engine, Map, NodeData, NodeState, Region, Resolution, StateOverride, Terrain};
 
 use crate::raw;
 use crate::tiles;
@@ -72,29 +71,26 @@ impl BakeStore {
         self.folder.join(format!("{node}_{port}.bin"))
     }
 
-    /// `Cache.Offload`: the map written as a `.graw`, its `.meta`
-    /// ending with the cache's thumbprint (`GUID`, a fresh one per build).
+    /// `Cache.Offload`: the map written as a `.graw` (a one-channel map in
+    /// the stored range), its `.meta` ending with the cache's thumbprint
+    /// (`GUID`, a fresh one per build).
     pub fn write(&self, node: i32, port: &str, map: &Map) -> io::Result<()> {
         fs::create_dir_all(&self.folder)?;
         let thumbprint = uuid::Uuid::new_v4().simple().to_string();
         let extra = [("GUID", thumbprint)];
-        raw::write_graw_with(&self.file(node, port), map, [0.0, 1.0], &extra)
+        let range = nerthus_nodes::graw::stored_range();
+        raw::write_graw_with(&self.file(node, port), map, range, &extra)
     }
 
-    /// `Cache.Reload`: the stored map with its intent,
-    /// or `None` when there is no file.
+    /// `Cache.Reload`: the stored map with its intent (a map stored in
+    /// another range comes back in [0, 1] and sets the stored range), or
+    /// `None` when there is no file.
     pub fn read(&self, node: i32, port: &str) -> io::Result<Option<Map>> {
         let path = self.file(node, port);
         if !path.exists() {
             return Ok(None);
         }
-        let meta = read_meta(&path.with_extension("meta"));
-        let samples = tiles::read_samples(&path)?;
-        let mut map = samples_to_map(samples, meta.resolution, meta.channels);
-        if meta.min != 0.0 || meta.max != 1.0 {
-            normalize(&mut map);
-        }
-        map.info.render_intent = meta.render_intent;
+        let (map, _) = nerthus_nodes::graw::read(&path).map_err(io::Error::other)?;
         Ok(Some(map))
     }
 
@@ -124,47 +120,6 @@ impl BakeStore {
     pub fn has_node(&self, node: &NodeData) -> bool {
         node.ports.iter().filter(|port| port.is_output()).all(|port| self.file(node.id, &port.name).exists())
     }
-}
-
-/// A `.meta`'s `MetaDictionary` as it reads back.
-struct BakeMeta {
-    resolution: i64,
-    channels: usize,
-    render_intent: RenderIntent,
-    min: f32,
-    max: f32,
-}
-
-/// The `.meta` beside a stored map; a missing or unreadable one gives
-/// `MetaDictionary`'s constructor values.
-fn read_meta(path: &Path) -> BakeMeta {
-    let text = fs::read_to_string(path).unwrap_or_default();
-    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    let entry = |key: &str, fallback: &str| value.get(key).and_then(Value::as_str).unwrap_or(fallback).to_string();
-    let resolution = entry("Resolution", "-1").parse().unwrap_or(0);
-    let channels = entry("Channels", "1").parse().unwrap_or(0);
-    let render_intent = RenderIntent::from_name(&entry("RenderIntent", "Default")).unwrap_or(RenderIntent::Default);
-    let min = entry("Min", "0").parse().unwrap_or(0.0);
-    let max = entry("Max", "1").parse().unwrap_or(1.0);
-    BakeMeta { resolution, channels, render_intent, min, max }
-}
-
-fn samples_to_map(samples: Vec<f32>, resolution: i64, channels: usize) -> Map {
-    let channels = channels.max(1);
-    let size = if resolution == -1 { ((samples.len() as f32 / channels as f32) as f64).sqrt() as usize } else { resolution.max(0) as usize };
-    if samples.len() <= size * size {
-        return tiles::single_channel(samples);
-    }
-    Map::from_interleaved(Resolution::square(size), &samples, channels)
-}
-
-/// Values stretched from the first
-/// channel's range to [0, 1].
-fn normalize(map: &mut Map) {
-    let (low, high) = nerthus_nodes::maths::min_max(map.data());
-    let scale = (1.0f32 - 0.0f32) / (high - low);
-    let offset = 0.0f32 - low * scale;
-    map.apply(|value| value * scale + offset);
 }
 
 /// A node's `SaveDefinition`, if it has one.
@@ -427,7 +382,8 @@ pub fn load_bakes(engine: &mut Engine, terrain: &Terrain, store: &BakeStore, fit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerthus_engine::ConnectionRecord;
+    use nerthus_engine::{ConnectionRecord, RenderIntent};
+    use serde_json::Value;
 
     fn node(type_name: &str, id: i32) -> NodeData {
         let spec = Catalogue::get().node(type_name).expect("the type is in the catalogue");

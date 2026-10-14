@@ -126,7 +126,7 @@ pub fn passive_tick(editor: &mut Editor, now: f64) {
 /// `TryAutosave`: once the interval has passed since the timer last
 /// started, a safety autosave; with unsaved changes, the file name turns
 /// red.
-fn try_autosave(editor: &mut Editor) {
+pub fn try_autosave(editor: &mut Editor) {
     let elapsed = editor.files.autosave.last_reset.elapsed();
     let interval = Duration::from_secs(editor.files.autosave.interval.max(0) as u64);
     if elapsed <= interval {

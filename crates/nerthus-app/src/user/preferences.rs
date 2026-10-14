@@ -148,6 +148,14 @@ impl Preferences {
         self.changed = true;
     }
 
+    /// `Locations.Proxy` from `proxy.txt`, for the session: it is saved
+    /// only along with a change.
+    pub fn set_session_proxy(&mut self, address: &str) {
+        let changed = self.changed;
+        self.set_member("Locations", "Proxy", json!(address));
+        self.changed = changed;
+    }
+
     fn section(&self, name: &str) -> Option<&Map<String, Value>> {
         self.values.get(name).and_then(Value::as_object)
     }
