@@ -1616,7 +1616,9 @@ fn color_editor(ui: &mut Ui, label: &str, value: &Value) -> Edit {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::hover());
     let header = Rect::from_min_size(rect.min, Vec2::new(90.0 + 20.0, rect.height()));
     header_label(ui, header, label, theme::LABEL_DEFAULT);
-    let swatch = Rect::from_min_max(Pos2::new(header.right(), rect.top() + 4.0), Pos2::new(rect.right() - 4.0, rect.bottom() - 4.0));
+    // A row narrower than the header leaves the swatch no width, not less.
+    let swatch_right = (rect.right() - 4.0).max(header.right());
+    let swatch = Rect::from_min_max(Pos2::new(header.right(), rect.top() + 4.0), Pos2::new(swatch_right, rect.bottom() - 4.0));
     let mut swatch_ui = ui.new_child(egui::UiBuilder::new().max_rect(swatch));
     swatch_ui.spacing_mut().interact_size = swatch.size();
     let changed = egui::color_picker::color_edit_button_rgba(&mut swatch_ui, &mut rgba, egui::color_picker::Alpha::Opaque).changed();
@@ -2008,6 +2010,26 @@ mod tests {
         let whole = whole.unwrap();
         let drawn: String = whole.rows[0].glyphs.iter().map(|glyph| glyph.chr).collect();
         assert_eq!(drawn, "Seed");
+    }
+
+    #[test]
+    fn colour_rows_narrower_than_their_header_lay_out() {
+        // The header and the swatch's margin take 114: a narrower row
+        // leaves the swatch no width, which egui would refuse if negative.
+        let context = themed_context();
+        let value = json!({"R": 1.0, "G": 1.0, "B": 1.0, "A": 1.0});
+        for width in [0.0, 60.0, 113.0, 114.0, 200.0] {
+            let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut edit = Edit::None;
+            let output = context.run_ui(input, |ui| {
+                let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 30.0));
+                let mut row = ui.new_child(egui::UiBuilder::new().max_rect(row));
+                edit = color_editor(&mut row, "Color", &value);
+            });
+            output.drop_without_applying_deltas();
+            assert!(matches!(edit, Edit::None));
+        }
     }
 
     #[test]

@@ -577,7 +577,9 @@ fn color_row(ui: &mut Ui, editor: &mut Editor, key: &str, variable: &Variable) {
     let rect = Rect::from_min_max(outer.min + Vec2::new(24.0, 2.0), outer.max - Vec2::new(4.0, 2.0));
     let galley = ui.painter().layout_no_wrap(variable.name.clone(), theme::interface(12.0), theme::LABEL_DEFAULT);
     ui.painter().galley(Pos2::new(rect.left(), rect.center().y - galley.size().y / 2.0), galley, theme::LABEL_DEFAULT);
-    let swatch = Rect::from_min_max(Pos2::new(rect.left() + 96.0, rect.top()), rect.max);
+    // A row narrower than the name column leaves the swatch no width, not less.
+    let swatch_left = rect.left() + 96.0;
+    let swatch = Rect::from_min_max(Pos2::new(swatch_left, rect.top()), Pos2::new(rect.right().max(swatch_left), rect.bottom()));
     let mut swatch_ui = ui.new_child(egui::UiBuilder::new().max_rect(swatch));
     swatch_ui.spacing_mut().interact_size = swatch.size();
     let changed = egui::color_picker::color_edit_button_rgba(&mut swatch_ui, &mut rgba, egui::color_picker::Alpha::Opaque).changed();
@@ -853,6 +855,26 @@ fn confirm_delete_all(ui: &mut Ui, editor: &mut Editor, state: &mut VariablesSta
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::Document;
+
+    #[test]
+    fn colour_rows_narrower_than_their_name_column_lay_out() {
+        // The margins and the name column take 124: a narrower row leaves
+        // the swatch no width, which egui would refuse if negative.
+        let context = egui::Context::default();
+        let mut editor = Editor::new(Document::new());
+        let variable = Variable::from_json(&json!({"Name": "Tint", "Type": "Color", "Value": {"R": 1.0, "G": 0.5, "B": 0.0}}));
+        for width in [0.0, 60.0, 123.0, 124.0, 200.0] {
+            let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let output = context.run_ui(input, |ui| {
+                let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 30.0));
+                let mut row = ui.new_child(egui::UiBuilder::new().max_rect(row));
+                color_row(&mut row, &mut editor, "Tint", &variable);
+            });
+            output.drop_without_applying_deltas();
+        }
+    }
 
     /// One frame of a row's typing box with these events.
     fn typing_frame(context: &egui::Context, typing_id: egui::Id, events: Vec<egui::Event>) -> Option<RowTyping> {
