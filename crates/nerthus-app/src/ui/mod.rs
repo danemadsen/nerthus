@@ -22,7 +22,7 @@ pub(crate) mod editors;
 mod expression_dialog;
 mod file_commands;
 pub mod file_dialogs;
-mod file_windows;
+pub(crate) mod file_windows;
 pub mod floating_viewport;
 mod formulas;
 mod gizmos;

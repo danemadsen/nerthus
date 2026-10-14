@@ -58,6 +58,13 @@ struct UndoEntry {
     restores_view: bool,
 }
 
+/// A point in the undo history ([`Document::undo_mark`]).
+#[derive(Clone, Copy, Debug)]
+pub struct UndoMark {
+    pushes: u64,
+    dirty: bool,
+}
+
 pub struct Document {
     pub project: Project,
     pub path: Option<PathBuf>,
@@ -78,6 +85,9 @@ pub struct Document {
     /// Counts the undos and redos that put the graph tabs' views
     /// (`ViewportLocation`, `ZoomFactor`) back: the graph takes them again.
     view_generation: u64,
+    /// Counts the undo entries ever pushed, so a run of edits can be told
+    /// apart from what came before it ([`Document::undo_mark`]).
+    pushes: u64,
 }
 
 impl Document {
@@ -101,6 +111,7 @@ impl Document {
             built_intents: HashMap::new(),
             random,
             view_generation: 0,
+            pushes: 0,
         }
     }
 
@@ -180,11 +191,54 @@ impl Document {
             restores_view,
         };
         self.undo.push(entry);
+        self.pushes += 1;
         if self.undo.len() > UNDO_LIMIT {
             self.undo.remove(0);
         }
         self.redo.clear();
         self.dirty = true;
+    }
+
+    /// Where the undo history stands, for [`Document::squash_undo`] and
+    /// [`Document::abandon_edits`] once a run of edits is done.
+    pub fn undo_mark(&self) -> UndoMark {
+        UndoMark { pushes: self.pushes, dirty: self.dirty }
+    }
+
+    /// The undo entries pushed since `mark`, the edits of one command,
+    /// become one named `label`: undoing it returns to the state before
+    /// the first. False when nothing was pushed.
+    pub fn squash_undo(&mut self, mark: UndoMark, label: impl Into<String>) -> bool {
+        let added = self.pushes.saturating_sub(mark.pushes) as usize;
+        let added = added.min(self.undo.len());
+        if added == 0 {
+            return false;
+        }
+        let first = self.undo.len() - added;
+        self.undo.truncate(first + 1);
+        let entry = &mut self.undo[first];
+        entry.label = label.into();
+        entry.merge_key = None;
+        entry.restores_view = true;
+        true
+    }
+
+    /// Takes back every edit since `mark`, leaving nothing to redo: the
+    /// project as it was before them.
+    pub fn abandon_edits(&mut self, mark: UndoMark) {
+        let added = self.pushes.saturating_sub(mark.pushes) as usize;
+        let added = added.min(self.undo.len());
+        if added == 0 {
+            return;
+        }
+        let first = self.undo.len() - added;
+        let Some(entry) = self.undo.drain(first..).next() else {
+            return;
+        };
+        let current = std::mem::replace(&mut self.project, entry.project);
+        self.mark_changed_nodes(&current);
+        self.view_generation += 1;
+        self.dirty = mark.dirty;
     }
 
     /// Labels of the edits that can be undone, newest first.
@@ -1737,7 +1791,7 @@ impl ExportSettings {
     }
 
     /// As projects save it: members at their default left out.
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         let mut members = serde_json::Map::new();
         if self.node != 0 {
             members.insert("Node".to_string(), json!(self.node));

@@ -296,6 +296,10 @@ pub(crate) fn describe(parameter: &ParameterSpec, default: Option<&Value>) -> Ma
     if let Some(default) = default.filter(|default| !default.is_null()) {
         entry.insert("default".to_string(), default.clone());
     }
+    // The slider's exponent: the value does not follow the slider evenly.
+    if let Some(curve) = parameter.curve.as_ref().filter(|curve| !curve.is_empty()) {
+        entry.insert("curve".to_string(), json!(curve));
+    }
     if let Some(description) = &parameter.description {
         entry.insert("description".to_string(), json!(description));
     }

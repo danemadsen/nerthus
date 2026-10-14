@@ -16,6 +16,7 @@ nerthus-compute.workspace = true
 nerthus-core.workspace = true
 nerthus-engine.workspace = true
 nerthus-export.workspace = true
+nerthus-io.workspace = true
 nerthus-nodes.workspace = true
 nerthus-render.workspace = true
 bevy = { workspace = true, features = ["default"] }
@@ -26,6 +27,7 @@ anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
 crossbeam-channel.workspace = true
+half.workspace = true
 image.workspace = true
 indexmap.workspace = true
 pulldown-cmark.workspace = true

@@ -47,11 +47,13 @@ const INTERNAL_ERROR: i64 = -32603;
 /// What clients are told about the tools as they connect.
 const INSTRUCTIONS: &str = "Nerthus is a node-based terrain generator. These tools work on the project open in the user's editor: \
 every edit shows at once in its node graph and can be undone (the undo tool, or Ctrl Z in the editor). Nodes are identified by \
-integer ids (list_nodes, add_node). A typical session: get_project for an overview; search_node_types and describe_node_type to \
-choose nodes; add_node, connect_nodes and set_parameters to build the graph; get_node_image, or capture_view for the 3D view, to \
-look at results; mark_for_export and build_and_export to write files. Heights are fractions (0 to 1) of the terrain's height. \
-Nodes build at the preview resolution (1024 by default); higher resolutions take longer. Calls run one at a time, and a call \
-that builds waits for its build.";
+integer ids (list_nodes, add_node). A typical session: get_project for an overview; search_node_types, describe_node_type and \
+suggest_nodes to choose nodes (list_examples and open_example give finished projects to start from); create_graph to make a \
+whole graph at once, or add_node, connect_nodes and set_parameters a node at a time; validate_graph to check it; get_node_image, \
+analyze_terrain, or capture_view for the 3D view, to look at results; mark_for_export and build_and_export (or run_project, for \
+any saved project with build options) to write files, and analyze_build to read a build folder. Heights are fractions (0 to 1) of \
+the terrain's height. Nodes build at the preview resolution (1024 by default); higher resolutions take longer. Calls run one at a \
+time, and a call that builds waits for its build.";
 
 /// A listening server. It stops when dropped: the listener at once,
 /// each connection at its next request.
