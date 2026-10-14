@@ -82,6 +82,13 @@ pub(crate) fn convert(parameter: &ParameterSpec, given: &Value, current: Option<
             let seed = number.round().clamp(0.0, i32::MAX as f64) as i64;
             Ok(Converted::exact(json!(seed)))
         }
+        ValueType::Int if is_palette_list(parameter) => {
+            let number = number_of(given).ok_or_else(|| format!("{name} takes a whole number."))?;
+            let (min, max) = palette_range();
+            let whole = number.clamp(min, max).round_ties_even();
+            let note = (whole != number).then(|| format!("{name} was set to {whole} (palette numbers from 0 to {max}, or -1 for none chosen)."));
+            Ok(Converted { value: json!(whole as i64), note })
+        }
         ValueType::Int => {
             let number = number_of(given).ok_or_else(|| format!("{name} takes a whole number."))?;
             let slider = SliderSpec::of(parameter, None, true);
@@ -110,6 +117,20 @@ pub(crate) fn convert(parameter: &ParameterSpec, given: &Value, current: Option<
         ValueType::Float4List => gradient_value(name, given),
         _ => Err(format!("{name} cannot be set here.")),
     }
+}
+
+/// A palette's number, chosen from the node's library
+/// (`SatelliteMapListBox`) rather than a slider.
+fn is_palette_list(parameter: &ParameterSpec) -> bool {
+    parameter.editor.as_deref() == Some("SatelliteMapListBox")
+}
+
+/// The numbers a palette list holds: -1 (none chosen yet) to the last
+/// palette of the largest library. The node keeps a number to its own
+/// library as it builds.
+fn palette_range() -> (f64, f64) {
+    let last = nerthus_nodes::colour_library::largest_category().saturating_sub(1);
+    (-1.0, last as f64)
 }
 
 /// An enum member by name or label (any case, spaces aside), or by its
@@ -278,6 +299,11 @@ pub(crate) fn describe(parameter: &ParameterSpec, default: Option<&Value>) -> Ma
             entry.insert("min".to_string(), json!(slider.min));
             entry.insert("max".to_string(), json!(slider.max));
         }
+        ValueType::Int if is_palette_list(parameter) => {
+            let (_, max) = palette_range();
+            entry.insert("min".to_string(), json!(0.0));
+            entry.insert("max".to_string(), json!(max));
+        }
         ValueType::Int if !parameter.is_seed() => {
             let slider = SliderSpec::of(parameter, None, true);
             entry.insert("min".to_string(), json!(slider.min));
@@ -325,6 +351,17 @@ mod tests {
         let clamped = convert(scale, &json!("7"), None).unwrap();
         assert_eq!(clamped.value, json!(1.0));
         assert!(clamped.note.is_some());
+    }
+
+    #[test]
+    fn palettes_reach_past_a_slider() {
+        // Rock has hundreds of palettes; the list is not a 0 to 100 slider.
+        let item = parameter("SatelliteMap", "LibraryItem");
+        let converted = convert(item, &json!(399), None).unwrap();
+        assert_eq!(converted.value, json!(399));
+        assert!(converted.note.is_none());
+        assert_eq!(convert(item, &json!(-1), None).unwrap().value, json!(-1));
+        assert!(convert(item, &json!(1_000_000), None).unwrap().note.is_some());
     }
 
     #[test]
