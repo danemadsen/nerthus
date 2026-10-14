@@ -87,6 +87,7 @@ pub(crate) fn converted_parameters(spec: &nerthus_engine::NodeSpec, given: &Map<
         converted.notes.extend(stored.note);
         converted.values.push((parameter.name.clone(), stored.value));
     }
+    values::fit_palettes(spec, &mut converted.values, node.map(|node| &node.values), &mut converted.notes);
     Ok(converted)
 }
 

@@ -701,9 +701,9 @@ mod tests {
 
     #[test]
     fn defaults_stand_whatever_the_slider() {
-        // SatelliteMap's LibraryItem defaults to -1, below its slider.
+        // Trees' Spread defaults to 0, below its slider's 0.0001.
         let mut document = Document::new();
-        document.add_node("SatelliteMap", [0.0, 0.0]).unwrap();
+        document.add_node("Trees", [0.0, 0.0]).unwrap();
         let findings = check_document(&document, false);
         assert!(findings.fixable.is_empty(), "{:?}", findings.fixable);
     }

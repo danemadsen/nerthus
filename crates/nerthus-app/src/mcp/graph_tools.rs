@@ -125,6 +125,13 @@ fn parameters(editor: &Editor, node: &NodeData) -> (Vec<Value>, Map<String, Valu
             continue;
         }
         let mut entry = values::describe(parameter, spec.defaults.get(&parameter.name));
+        // A palette's number goes as far as the node's own library.
+        if values::is_palette_list(parameter) {
+            let last = values::palette_library(spec, &[], Some(&node.values)).as_deref().and_then(values::last_palette);
+            if let Some(last) = last {
+                entry.insert("max".to_string(), json!(last));
+            }
+        }
         let value = node.values.get(&parameter.name).cloned().unwrap_or(Value::Null);
         entry.insert("value".to_string(), value);
         if !(parameter.visible && rules.visible(&parameter.name)) {
