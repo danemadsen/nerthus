@@ -221,8 +221,8 @@ These parts of Gaea 2.0 are not in Nerthus yet.
   (45 node icons, 13 family and toolbox icons, and interface icons).
   Nerthus shows Tabler icons in their place.
 - Gaea's overlay images and example projects. Nerthus draws its own overlay
-  patterns and ships 16 examples: 12 of its own and 4 shared under the MIT
-  licence.
+  patterns and ships 16 examples: 12 made for Nerthus and 4 contributed
+  under the MIT licence.
 - Gaea's colour library. Nerthus's palettes are its own, taken from
   Sentinel-2 satellite imagery to look like Gaea's palette with the same
   number, so SatelliteMap, SuperColor, Cartography through a SatelliteMap,
@@ -245,5 +245,5 @@ adapted from Gaea 2's documentation, which is published under the MIT licence;
 its licence text is in `crates/nerthus-app/assets/docs/LICENSE.txt`.
 
 Four of the example projects in `crates/nerthus-app/assets/examples`
-(Distance Ridges, Fractal Terraces, Kyrgyzstan Valley and Vosges Geology) are
-shared under the MIT licence.
+(Distance Ridges, Fractal Terraces, Kyrgyzstan Valley and Vosges Geology) were
+contributed to Nerthus under the MIT licence.
