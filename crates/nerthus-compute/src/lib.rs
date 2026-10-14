@@ -9,6 +9,10 @@
 //! of preference, and runs on the first active device of those types that
 //! succeeds.
 
+// The web build leaves out what a browser page cannot do (files, other
+// programs, the network, GPU compute), so code only those use goes unused.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 mod benchmark;
 mod cpu;
 mod devices;

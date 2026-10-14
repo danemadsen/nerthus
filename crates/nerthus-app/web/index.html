@@ -1,0 +1,149 @@
+<!doctype html>
+<!--
+  The page the web build starts from: a canvas filling the window, which
+  the editor draws into (`Window::canvas` in src/main.rs), and the
+  progress of loading the editor until it does. build.sh puts it beside
+  the editor's WebAssembly and wasm-bindgen's JavaScript.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nerthus</title>
+  <link rel="icon" href="nerthus.svg" type="image/svg+xml">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #181818;
+      color: #909090;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    #nerthus {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 0 16px;
+      text-align: center;
+    }
+    #loading img {
+      width: 96px;
+      height: 96px;
+    }
+    #loading progress {
+      width: min(320px, 80vw);
+      accent-color: #ffc900;
+    }
+    #loading.failed #status {
+      color: #e05050;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="nerthus" tabindex="0"></canvas>
+  <div id="loading">
+    <img src="nerthus.svg" alt="">
+    <div id="status">Loading Nerthus…</div>
+    <progress id="progress"></progress>
+  </div>
+  <script type="module">
+    import init from "./nerthus.js";
+
+    const loading = document.getElementById("loading");
+    const status = document.getElementById("status");
+    const progress = document.getElementById("progress");
+
+    function fail(message) {
+      loading.classList.add("failed");
+      progress.remove();
+      status.textContent = message;
+    }
+
+    // The editor's WebAssembly is large: it is fetched here so the page
+    // can show how much has come. A compressed response's length is its
+    // compressed size, so then only the megabytes are shown.
+    async function fetchEditor() {
+      const response = await fetch("nerthus_bg.wasm");
+      if (!response.ok || !response.body) {
+        throw new Error(`The editor could not be loaded (${response.status}).`);
+      }
+      const length = Number(response.headers.get("Content-Length")) || 0;
+      const exact = length > 0 && !response.headers.get("Content-Encoding");
+      if (exact) {
+        progress.max = length;
+      }
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        chunks.push(value);
+        received += value.length;
+        if (exact) {
+          progress.value = received;
+        }
+        status.textContent = `Loading Nerthus… ${(received / 1048576).toFixed(0)} MB`;
+      }
+      const bytes = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return bytes;
+    }
+
+    async function start() {
+      // The editor draws with WebGL 2 (Bevy's `webgl2`).
+      if (!document.createElement("canvas").getContext("webgl2")) {
+        fail("Nerthus needs a browser with WebGL 2.");
+        return;
+      }
+      const bytes = await fetchEditor();
+      status.textContent = "Starting Nerthus…";
+      progress.removeAttribute("value");
+      try {
+        await init({ module_or_path: bytes });
+      } catch (error) {
+        // Bevy leaves its event loop by throwing; anything else is a
+        // failure to start.
+        if (!String(error).includes("Using exceptions for control flow")) {
+          throw error;
+        }
+      }
+    }
+
+    // The loading screen goes once the editor has the canvas: it then
+    // sizes it to the window (a canvas starts at 300 by 150).
+    const hideWhenDrawing = setInterval(() => {
+      const canvas = document.getElementById("nerthus");
+      if (canvas.width !== 300 || canvas.height !== 150) {
+        loading.remove();
+        canvas.focus();
+        clearInterval(hideWhenDrawing);
+      }
+    }, 200);
+
+    start().catch((error) => {
+      clearInterval(hideWhenDrawing);
+      console.error(error);
+      fail(error.message || String(error));
+    });
+  </script>
+</body>
+</html>

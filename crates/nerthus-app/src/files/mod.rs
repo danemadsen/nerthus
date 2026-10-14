@@ -574,6 +574,7 @@ fn take_window_events(mut editor: ResMut<Editor>, mut drops: MessageReader<FileD
 const PROJECT_FILTER: (&str, &[&str]) = ("Nerthus Project File (*.terrain)", &["terrain"]);
 
 /// File dialogs block and must run on the main thread (macOS).
+#[cfg(not(target_arch = "wasm32"))]
 fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
     let Some(request) = editor.files.dialog.take() else {
         return;
@@ -708,6 +709,45 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
             }
             collection::export_to(editor, Some(path));
         }
+    }
+}
+
+/// The web build has no file system: Open picks a project through the
+/// browser (kept for the session under its name, `crate::web`), and saving
+/// downloads; the other dialogs read and write files and folders.
+#[cfg(target_arch = "wasm32")]
+fn show_dialogs(mut editor: ResMut<Editor>, mut picking: Local<Option<crate::web::Picking>>) {
+    if let Some(answer) = picking.as_ref().and_then(crate::web::Picking::poll) {
+        *picking = None;
+        if let Some(path) = answer {
+            open_project(&mut editor, &path);
+        }
+    }
+    let Some(request) = editor.files.dialog.take() else {
+        return;
+    };
+    let editor = editor.as_mut();
+    match request {
+        FileDialog::Open { .. } => *picking = Some(crate::web::Picking::start(PROJECT_FILTER.0, PROJECT_FILTER.1)),
+        FileDialog::SaveAsThenContinue => {
+            let path = with_extension(PathBuf::from(editor.document.file_name()), "terrain");
+            editor.save_to(&path);
+            if editor.document.dirty {
+                editor.files.pending = None;
+                return;
+            }
+            editor.files.requests.push(FileCommand::DiscardChanges);
+        }
+        FileDialog::ExportTorlet { tab } => {
+            let fragment = editor.document.graph_fragment(tab);
+            let text = nerthus_engine::to_fragment_json(&fragment);
+            if let Err(error) = crate::web::write(Path::new("Graph.tfrag"), text) {
+                editor.report(format!("Cannot export the graph: {error}"));
+            }
+        }
+        FileDialog::Repair => editor.report(crate::web::unavailable("Repair File")),
+        FileDialog::InstallMacro | FileDialog::ExportMacro { .. } => editor.report(crate::web::unavailable("Installing and exporting macros")),
+        FileDialog::ImportGraph | FileDialog::ImportTorlet | FileDialog::ImportImage { .. } => editor.report(crate::web::unavailable("Importing files")),
     }
 }
 

@@ -388,7 +388,7 @@ fn write_zip(entries: &[(&str, &[u8])]) -> std::io::Result<Vec<u8>> {
 
 /// The time now (UTC) in MS-DOS form (two-second steps).
 fn dos_date_time() -> (u16, u16) {
-    let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0);
+    let seconds = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0);
     let days = (seconds / 86_400) as i64;
     let of_day = seconds % 86_400;
     let (hour, minute, second) = (of_day / 3600, of_day / 60 % 60, of_day % 60);

@@ -2286,7 +2286,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -4452,6 +4454,7 @@ dependencies = [
  "half",
  "image",
  "indexmap",
+ "js-sys",
  "libc",
  "log",
  "nerthus-compute",
@@ -4471,6 +4474,10 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "windows-sys 0.61.2",
  "winit",
  "x11-dl",
@@ -4514,6 +4521,7 @@ dependencies = [
  "pollster",
  "rayon",
  "serde_json",
+ "web-time",
  "wgpu",
 ]
 
@@ -4528,6 +4536,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -4543,6 +4552,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+ "web-time",
 ]
 
 [[package]]
@@ -4572,6 +4582,7 @@ dependencies = [
  "nerthus-nodes",
  "serde_json",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -4635,6 +4646,7 @@ dependencies = [
  "nerthus-noise",
  "rayon",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]

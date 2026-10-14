@@ -7,10 +7,22 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+use anyhow::{bail, Result};
 
-use crate::pixel_cache::{CacheColorspace, DEFAULT_GAMMA, PixelCache, PixelChannel};
+use crate::pixel_cache::PixelCache;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::pixel_cache::{CacheColorspace, PixelChannel, DEFAULT_GAMMA};
 
+/// OpenJPEG's Rust port calls the C library's allocator, which the web
+/// build (wasm32-unknown-unknown) does not have.
+#[cfg(target_arch = "wasm32")]
+pub fn read(path: &Path) -> Result<PixelCache> {
+    bail!("cannot decode {}: JPEG 2000 images cannot be read in the web version", path.display())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read(path: &Path) -> Result<PixelCache> {
     let bytes = std::fs::read(path).with_context(|| format!("cannot open {}", path.display()))?;
     let image = jpeg2k::Image::from_bytes(&bytes).map_err(|error| anyhow::anyhow!("cannot decode {}: {error}", path.display()))?;

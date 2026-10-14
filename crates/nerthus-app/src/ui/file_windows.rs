@@ -83,7 +83,7 @@ fn thumbnail(ctx: &egui::Context, memory: &mut WindowMemory, path: &Path) -> Opt
 }
 
 fn read_thumbnail(path: &Path) -> Option<egui::ColorImage> {
-    let picture = image::open(path).ok()?;
+    let picture = open_picture(path)?;
     let picture = if picture.width() > THUMBNAIL_WIDTH { picture.resize(THUMBNAIL_WIDTH, u32::MAX, image::imageops::FilterType::Triangle) } else { picture };
     let rgba = picture.to_rgba8();
     let size = [rgba.width() as usize, rgba.height() as usize];
@@ -307,7 +307,36 @@ fn holds_projects(folder: &std::path::Path) -> bool {
     entries.flatten().any(|entry| entry.path().extension().is_some_and(|extension| extension == "terrain"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn open_picture(path: &Path) -> Option<image::DynamicImage> {
+    image::open(path).ok()
+}
+
+/// The web build's pictures are the examples' (`crate::web::read`).
+#[cfg(target_arch = "wasm32")]
+fn open_picture(path: &Path) -> Option<image::DynamicImage> {
+    image::load_from_memory(&crate::web::read(path)?).ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_file(path: &Path) -> bool {
+    crate::web::exists(path)
+}
+
+/// The examples' projects, by name. The web build has no Examples folder:
+/// its examples are the ones it carries, named by their file names.
+#[cfg(target_arch = "wasm32")]
+fn examples() -> Vec<PathBuf> {
+    BUNDLED_EXAMPLES.iter().map(|(name, _)| PathBuf::from(name)).filter(|path| path.extension().is_some_and(|extension| extension == "terrain")).collect()
+}
+
 /// The examples' projects, by name.
+#[cfg(not(target_arch = "wasm32"))]
 fn examples() -> Vec<PathBuf> {
     let Some(folder) = examples_folder() else {
         return Vec::new();
@@ -361,7 +390,7 @@ fn examples_window(ctx: &egui::Context, editor: &mut Editor, commands: &mut Vec<
 fn example_button(ui: &mut Ui, ctx: &egui::Context, memory: &mut WindowMemory, path: &Path, number: usize, width: f32, commands: &mut Vec<Command>) {
     let beside = path.with_extension("jpg");
     let fallback = path.parent().map(|folder| folder.join("null.jpg"));
-    let picture_file = if beside.is_file() { Some(beside) } else { fallback.filter(|file| file.is_file()) };
+    let picture_file = if is_file(&beside) { Some(beside) } else { fallback.filter(|file| is_file(file)) };
     let picture = picture_file.and_then(|file| thumbnail(ctx, memory, &file));
     let image_height = picture.as_ref().map(|picture| width * picture.size_vec2().y / picture.size_vec2().x.max(1.0)).unwrap_or(width * 0.5625);
     let size = Vec2::new(width, image_height + 48.0);

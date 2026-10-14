@@ -1,0 +1,83 @@
+# Builds the web version of the editor (crates/nerthus-app/web/build.sh)
+# and, for main, publishes it with GitHub Pages. Pull requests and other
+# branches only build it, uploading the site as an artifact of the run.
+#
+# Pages has to be set up once: Settings › Pages › Build and deployment ›
+# Source: GitHub Actions.
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - README.md
+      - LICENSE
+  pull_request:
+    paths-ignore:
+      - README.md
+      - LICENSE
+  # Actions › Web › Run workflow builds any branch (and publishes main).
+  workflow_dispatch:
+
+# A newer push replaces a build still running for the same branch or pull
+# request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Only builds of main save the cache; other builds start from main's.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The wasm-bindgen command has to be the version of the library in
+      # Cargo.lock.
+      - name: Find the wasm-bindgen version
+        id: wasm-bindgen
+        run: echo "version=$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;}' Cargo.lock)" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
+
+      - name: Build
+        run: crates/nerthus-app/web/build.sh site --locked
+
+      # The site as Pages takes it, which also leaves it with the run.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          retention-days: 14
+
+  deploy:
+    name: Deploy
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

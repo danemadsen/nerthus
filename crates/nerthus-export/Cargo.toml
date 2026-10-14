@@ -15,9 +15,13 @@ chrono.workspace = true
 crc32fast = "1.5.2"
 directories.workspace = true
 flate2.workspace = true
-gethostname.workspace = true
 half.workspace = true
 jpeg-encoder = "0.7.1"
 log.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
 uuid.workspace = true
+web-time.workspace = true
+
+# The machine's name, which browsers do not give.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gethostname.workspace = true

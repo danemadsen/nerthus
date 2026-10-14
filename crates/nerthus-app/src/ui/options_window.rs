@@ -266,8 +266,14 @@ fn tab_list(ui: &mut Ui, selected: &mut OptionsTab) {
     ui.vertical(|ui| {
         ui.set_width(TAB_WIDTH);
         ui.spacing_mut().item_spacing.y = 2.0;
+        let mut group_gap = false;
         for (tab, name, brush, starts_group) in TABS {
-            if starts_group {
+            group_gap |= starts_group;
+            // The web build has no folders, and computes on the CPU alone.
+            if cfg!(target_arch = "wasm32") && matches!(tab, OptionsTab::Paths | OptionsTab::Compute) {
+                continue;
+            }
+            if std::mem::take(&mut group_gap) {
                 ui.add_space(24.0);
             }
             let (rect, response) = ui.allocate_exact_size(Vec2::new(TAB_WIDTH, 26.0), Sense::click());

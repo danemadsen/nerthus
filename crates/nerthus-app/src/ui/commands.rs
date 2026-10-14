@@ -256,6 +256,35 @@ pub enum Command {
     Tools(crate::ui::tool_commands::ToolCommand),
 }
 
+/// What the web build leaves out, by the command that asks for it: what
+/// needs files and folders, other programs or the network. Menus leave
+/// these out there too; this covers their keys and buttons elsewhere.
+#[cfg(target_arch = "wasm32")]
+fn web_unavailable(command: &Command) -> Option<&'static str> {
+    use crate::files::FileCommand;
+    use crate::ui::tool_commands::ToolCommand;
+    let feature = match command {
+        Command::Exit => "Exit",
+        Command::BuildAndExport | Command::StartBuild { .. } | Command::RunBuild { .. } | Command::ExportCachedBuild { .. } | Command::BatchBuild | Command::ShowBuildCommandLine => "Build and Export",
+        Command::OpenBuildFolder | Command::OpenFolder(_) | Command::OpenScreenshotsFolder => "Opening folders",
+        Command::BakeSelected | Command::BakeRequiredNodes | Command::BakeRequiredNodesConfirmed | Command::BakeAnyway { .. } => "Baking",
+        Command::TogglePersistOnSave | Command::ToggleFreezeWhenIdle | Command::DeleteDiskCache | Command::ReloadSmartCache => "The disk cache",
+        Command::LoadCamera | Command::SaveCamera => "Loading and saving cameras",
+        Command::SaveScreenshot | Command::SaveViewportScreenshotAs | Command::SaveGraphScreenshotAs => "Saving screenshots",
+        Command::ShowTurntable | Command::RecordTurntable(_) => "Recording turntables",
+        Command::File(FileCommand::RepairFile) => "Repair File",
+        Command::File(FileCommand::ImportMacro | FileCommand::ImportGraph | FileCommand::ImportTorlet | FileCommand::ImportImage) => "Importing files",
+        Command::File(FileCommand::ExportMacro) => "Exporting macros",
+        Command::Tools(ToolCommand::ShowArtifactExplorer) => "The Artifact Explorer",
+        Command::Tools(ToolCommand::ShowDiagnostics) => "Diagnostics",
+        Command::Tools(ToolCommand::ToggleVerboseLogging | ToolCommand::SetVerboseLogging(_)) => "Verbose logging",
+        Command::Tools(ToolCommand::ToggleMcpServer) => "The MCP server",
+        Command::Tools(ToolCommand::CheckForUpdates | ToolCommand::InstallUpdate { .. }) => "Updating",
+        _ => return None,
+    };
+    Some(feature)
+}
+
 /// Runs the commands the interface collected this frame.
 pub fn run(commands: Vec<Command>, editor: &mut Editor, ui_state: &mut UiState, window: &mut Window) {
     for command in commands {
@@ -264,6 +293,11 @@ pub fn run(commands: Vec<Command>, editor: &mut Editor, ui_state: &mut UiState, 
 }
 
 fn run_one(command: Command, editor: &mut Editor, ui_state: &mut UiState, window: &mut Window) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(feature) = web_unavailable(&command) {
+        editor.report(crate::web::unavailable(feature));
+        return;
+    }
     match command {
         Command::NewProject => crate::ui::file_commands::run(crate::files::FileCommand::New, editor, ui_state),
         Command::Open => crate::ui::file_commands::run(crate::files::FileCommand::Open, editor, ui_state),

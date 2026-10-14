@@ -45,31 +45,39 @@ pub fn file_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
         commands.push(Command::File(FileCommand::SaveIncremental));
     }
     menu_separator(ui);
-    if menu_item(ui, None, None, "Repair File…", "").clicked() {
+    // The web build has no files to repair or import, nor macros to
+    // export, and its window is the browser's tab.
+    let web = cfg!(target_arch = "wasm32");
+    if !web && menu_item(ui, None, None, "Repair File…", "").clicked() {
         commands.push(Command::File(FileCommand::RepairFile));
     }
-    submenu(ui, None, None, "Import", |ui| {
-        menu_style(ui);
-        let items = [("Macro…", FileCommand::ImportMacro), ("Graph…", FileCommand::ImportGraph), ("TORLET…", FileCommand::ImportTorlet), ("Image…", FileCommand::ImportImage)];
-        for (text, command) in items {
-            if menu_item(ui, None, None, text, "").clicked() {
-                commands.push(Command::File(command));
+    if !web {
+        submenu(ui, None, None, "Import", |ui| {
+            menu_style(ui);
+            let items = [("Macro…", FileCommand::ImportMacro), ("Graph…", FileCommand::ImportGraph), ("TORLET…", FileCommand::ImportTorlet), ("Image…", FileCommand::ImportImage)];
+            for (text, command) in items {
+                if menu_item(ui, None, None, text, "").clicked() {
+                    commands.push(Command::File(command));
+                }
             }
-        }
-    });
+        });
+    }
     submenu(ui, None, None, "Export", |ui| {
         menu_style(ui);
         let items = [("Macro…", FileCommand::ExportMacro), ("TORLET…", FileCommand::ExportTorlet)];
         for (text, command) in items {
-            if menu_item(ui, None, None, text, "").clicked() {
+            let shown = !web || command != FileCommand::ExportMacro;
+            if shown && menu_item(ui, None, None, text, "").clicked() {
                 commands.push(Command::File(command));
             }
         }
     });
     menu_item_enabled(ui, Some("file-barcode"), None, "Share…", "", false);
-    menu_separator(ui);
-    if menu_item(ui, None, Some(theme::ACCENT_RED), "Exit", "Alt F4").clicked() {
-        commands.push(Command::Exit);
+    if !web {
+        menu_separator(ui);
+        if menu_item(ui, None, Some(theme::ACCENT_RED), "Exit", "Alt F4").clicked() {
+            commands.push(Command::Exit);
+        }
     }
 }
 
@@ -249,6 +257,10 @@ pub fn toolbar_bake_items(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Comma
 }
 
 fn bake_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>, reload_item: bool) {
+    // Bakes and the disk cache are files, which the web build cannot keep.
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     submenu(ui, None, None, "Bake", |ui| {
         menu_style(ui);
         let selected = editor.active_node().and_then(|id| editor.document.node(id));
@@ -428,19 +440,23 @@ pub fn preview_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
         commands.push(Command::RefreshAll);
     }
     menu_separator(ui);
-    menu_caption(ui, "Screenshot");
-    if menu_item(ui, Some("camera"), Some(theme::ACCENT_STRONG_GREEN), "Save Screenshot", "F9").clicked() {
-        commands.push(Command::SaveScreenshot);
+    // Screenshots and turntable frames are saved as files, which the web
+    // build cannot write.
+    if !cfg!(target_arch = "wasm32") {
+        menu_caption(ui, "Screenshot");
+        if menu_item(ui, Some("camera"), Some(theme::ACCENT_STRONG_GREEN), "Save Screenshot", "F9").clicked() {
+            commands.push(Command::SaveScreenshot);
+        }
+        submenu(ui, None, None, "Screenshot Options", |ui| {
+            menu_style(ui);
+            crate::ui::viewport_area::screenshot_options(ui, editor, commands);
+        });
+        menu_separator(ui);
+        if menu_item(ui, Some("view-360-number"), None, "Record Turntable Animation", "").clicked() {
+            commands.push(Command::ShowTurntable);
+        }
+        menu_separator(ui);
     }
-    submenu(ui, None, None, "Screenshot Options", |ui| {
-        menu_style(ui);
-        crate::ui::viewport_area::screenshot_options(ui, editor, commands);
-    });
-    menu_separator(ui);
-    if menu_item(ui, Some("view-360-number"), None, "Record Turntable Animation", "").clicked() {
-        commands.push(Command::ShowTurntable);
-    }
-    menu_separator(ui);
     menu_caption(ui, "Preview Renderer");
     let modes = [(RenderMode::Data, "Visualize Data (Render Off)"), (RenderMode::Clay, "Clay Render"), (RenderMode::Realistic, "Realistic Render")];
     for (mode, text) in modes {
@@ -452,23 +468,29 @@ pub fn preview_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
 
 pub fn project_menu(ui: &mut Ui, commands: &mut Vec<Command>) {
     menu_style(ui);
-    if menu_item(ui, Some("atom2"), Some(theme::ACCENT_GREEN), "Build and Export...", "Ctrl Shift B").clicked() {
-        commands.push(Command::BuildAndExport);
+    // Builds are written to folders, which the web build does not have.
+    let web = cfg!(target_arch = "wasm32");
+    if !web {
+        if menu_item(ui, Some("atom2"), Some(theme::ACCENT_GREEN), "Build and Export...", "Ctrl Shift B").clicked() {
+            commands.push(Command::BuildAndExport);
+        }
+        if menu_item(ui, None, Some(theme::ACCENT_MAGENTA), "Execute Batch Build...", "").clicked() {
+            commands.push(Command::BatchBuild);
+        }
+        menu_item_enabled(ui, Some("timeline-event-plus"), Some(theme::ACCENT_MAGENTA), "Execute Network Build...", "", false);
+        menu_separator(ui);
     }
-    if menu_item(ui, None, Some(theme::ACCENT_MAGENTA), "Execute Batch Build...", "").clicked() {
-        commands.push(Command::BatchBuild);
-    }
-    menu_item_enabled(ui, Some("timeline-event-plus"), Some(theme::ACCENT_MAGENTA), "Execute Network Build...", "", false);
-    menu_separator(ui);
     if menu_item(ui, Some("settings"), Some(theme::ACCENT_BLUE), "Build Settings...", "Ctrl B").clicked() {
         commands.push(Command::BuildSettings);
     }
     menu_separator(ui);
-    menu_caption(ui, "Build Stack");
-    if menu_item(ui, None, None, "Open Build Folder", "").clicked() {
-        commands.push(Command::OpenBuildFolder);
+    if !web {
+        menu_caption(ui, "Build Stack");
+        if menu_item(ui, None, None, "Open Build Folder", "").clicked() {
+            commands.push(Command::OpenBuildFolder);
+        }
+        menu_separator(ui);
     }
-    menu_separator(ui);
     menu_caption(ui, "Reports");
     // `ShowStatistics`: the Data View's Build Statistics window.
     if menu_item(ui, Some("histogram"), None, "Statistics", "").clicked() {
@@ -516,26 +538,34 @@ pub fn tools_menu(ui: &mut Ui, editor: &Editor, commands: &mut Vec<Command>) {
         }
     });
     menu_separator(ui);
-    if menu_item(ui, Some("report-medical"), None, "Run Diagnostics...", "").clicked() {
-        commands.push(Command::Tools(ToolCommand::ShowDiagnostics));
+    // Diagnostics restart Nerthus and read its folders, the log files and
+    // the MCP server's socket are not there in a browser: the web build
+    // keeps the Console.
+    let web = cfg!(target_arch = "wasm32");
+    if !web {
+        if menu_item(ui, Some("report-medical"), None, "Run Diagnostics...", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::ShowDiagnostics));
+        }
+        if menu_item(ui, None, None, "Artifact Explorer...", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::ShowArtifactExplorer));
+        }
+        menu_separator(ui);
     }
-    if menu_item(ui, None, None, "Artifact Explorer...", "").clicked() {
-        commands.push(Command::Tools(ToolCommand::ShowArtifactExplorer));
-    }
-    menu_separator(ui);
     if menu_item(ui, Some("terminal-2"), Some(theme::ACCENT_MUTED_GREEN), "Console", "F12").clicked() {
         commands.push(Command::Tools(ToolCommand::ShowConsole));
     }
-    if check_item(ui, crate::logging::verbose(), "Verbose Logging", "").clicked() {
-        commands.push(Command::Tools(ToolCommand::ToggleVerboseLogging));
-    }
-    let mcp_hint = match &editor.mcp.address {
-        Some(address) => format!("Listening on {address}"),
-        None => "Lets AI assistants (MCP clients such as Claude Code) edit and build the open project".to_string(),
-    };
-    let mcp_item = check_item(ui, editor.mcp.address.is_some(), "MCP Server", "");
-    if mcp_item.on_hover_text(mcp_hint).clicked() {
-        commands.push(Command::Tools(ToolCommand::ToggleMcpServer));
+    if !web {
+        if check_item(ui, crate::logging::verbose(), "Verbose Logging", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::ToggleVerboseLogging));
+        }
+        let mcp_hint = match &editor.mcp.address {
+            Some(address) => format!("Listening on {address}"),
+            None => "Lets AI assistants (MCP clients such as Claude Code) edit and build the open project".to_string(),
+        };
+        let mcp_item = check_item(ui, editor.mcp.address.is_some(), "MCP Server", "");
+        if mcp_item.on_hover_text(mcp_hint).clicked() {
+            commands.push(Command::Tools(ToolCommand::ToggleMcpServer));
+        }
     }
     menu_separator(ui);
     if menu_item(ui, Some("settings-2"), Some(theme::ACCENT_MUTED_PURPLE), "Options...", "Ctrl Alt O").clicked() {
@@ -558,12 +588,16 @@ pub fn help_menu(ui: &mut Ui, commands: &mut Vec<Command>) {
     if menu_item(ui, None, None, "What's new in this version?", "").clicked() {
         commands.push(Command::Tools(ToolCommand::ShowWhatsNew));
     }
-    if menu_item(ui, None, None, "Check for updates", "").clicked() {
-        commands.push(Command::Tools(ToolCommand::CheckForUpdates));
-    }
-    menu_separator(ui);
-    if menu_item(ui, Some("report-medical"), None, "Diagnostics...", "").clicked() {
-        commands.push(Command::Tools(ToolCommand::ShowDiagnostics));
+    // The web version is always the one on the page, and has no
+    // diagnostics (see the Tools menu).
+    if !cfg!(target_arch = "wasm32") {
+        if menu_item(ui, None, None, "Check for updates", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::CheckForUpdates));
+        }
+        menu_separator(ui);
+        if menu_item(ui, Some("report-medical"), None, "Diagnostics...", "").clicked() {
+            commands.push(Command::Tools(ToolCommand::ShowDiagnostics));
+        }
     }
     menu_separator(ui);
     if menu_item(ui, Some("versions"), None, "About Nerthus", "").clicked() {

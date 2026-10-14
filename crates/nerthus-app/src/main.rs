@@ -1,6 +1,10 @@
 //! Nerthus: a node-based terrain editor. The editor is egui drawn over
 //! Bevy's 3D viewport.
 
+// The web build leaves out what a browser page cannot do (files, other
+// programs, the network, GPU compute), so code only those use goes unused.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 mod app_icon;
 mod build_profiles;
 mod compute;
@@ -32,6 +36,8 @@ mod updates;
 mod user;
 mod viewport_camera;
 mod viewport_render;
+#[cfg(target_arch = "wasm32")]
+mod web;
 mod worker;
 
 use bevy::camera::visibility::RenderLayers;
@@ -65,6 +71,12 @@ fn main() {
         titlebar_show_title: false,
         titlebar_show_buttons: false,
         fullsize_content_view: true,
+        // The web build draws into the page's canvas (web/index.html),
+        // filling the browser window.
+        #[cfg(target_arch = "wasm32")]
+        canvas: Some("#nerthus".to_string()),
+        #[cfg(target_arch = "wasm32")]
+        fit_canvas_to_parent: true,
         ..default()
     };
     // The close button asks to save changes first (`Shell_Closing`), so
@@ -75,9 +87,12 @@ fn main() {
         ..default()
     };
     // The session's log (`Logging.Initialize`): every message kept, the
-    // terminal shown debugging messages only with Verbose Logging.
+    // terminal shown debugging messages only with Verbose Logging. The web
+    // build's log goes to the browser's console as well, where debugging
+    // messages would slow the page.
+    let log_level = if cfg!(target_arch = "wasm32") { bevy::log::Level::INFO } else { bevy::log::Level::DEBUG };
     let log_plugin = bevy::log::LogPlugin {
-        level: bevy::log::Level::DEBUG,
+        level: log_level,
         custom_layer: logging::session_layer,
         fmt_layer: logging::terminal_layer,
         ..default()
@@ -118,8 +133,11 @@ fn main() {
     ui_state.launch_show = options.show.clone();
     // `App.ShowOnboarding`, and the update check the start window makes.
     let screenshot = options.screenshot.is_some();
-    ui_state.onboard_at_launch = ui::onboard::should_show(options.onboard, options.skip_onboard, screenshot);
-    ui_state.check_updates_at_launch = !screenshot;
+    // The web build keeps no settings, and has no folders or GPUs to set
+    // up: it starts with the defaults.
+    ui_state.onboard_at_launch = ui::onboard::should_show(options.onboard, options.skip_onboard, screenshot) && !cfg!(target_arch = "wasm32");
+    // The web version is always the one on the page.
+    ui_state.check_updates_at_launch = !screenshot && !cfg!(target_arch = "wasm32");
     ui_state.whats_new_at_launch = options.greets();
     let mcp = mcp::McpPlugin {
         enabled: options.mcp,

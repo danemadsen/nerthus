@@ -79,8 +79,8 @@ pub(crate) fn chosen_palette(context: &mut BuildContext, randomize_unset: bool) 
     let mut item = context.i32("LibraryItem");
     if item == -1 && randomize_unset {
         // `UpdateUI` picks a random Rock palette on first use.
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let seed = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_millis() as i32)
             .unwrap_or(1);
         let rock_count = colour_library::category("Rock").map(|rock| rock.len()).unwrap_or(1) as i32;

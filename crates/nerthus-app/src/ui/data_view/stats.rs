@@ -3,11 +3,10 @@
 //! nothing is selected, one node's state, ports and heights, or a sum of
 //! several.
 
-use std::time::Instant;
-
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2};
 use nerthus_engine::{NodeState, RenderIntent};
 use serde_json::Value;
+use web_time::Instant;
 
 use crate::document::ExportSettings;
 use crate::editor::Editor;

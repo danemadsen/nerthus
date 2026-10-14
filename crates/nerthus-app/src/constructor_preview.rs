@@ -211,36 +211,39 @@ fn render(job: &PreviewJob, prepared: &mut HashMap<usize, (PreparedKey, Arc<Map>
     Ok(constructor_render(&terrain, tinted.as_ref(), &job.lighting, job.terrain, job.faster))
 }
 
-/// The thread previews are rendered on.
+/// The thread previews are rendered on. The web build has no threads:
+/// there the jobs wait until `poll` renders the newest.
 pub struct ConstructorRenderer {
     jobs: Sender<PreviewJob>,
     images: Receiver<PreviewImage>,
+    #[cfg(target_arch = "wasm32")]
+    waiting: (Receiver<PreviewJob>, Sender<PreviewImage>, std::sync::Mutex<HashMap<usize, (PreparedKey, Arc<Map>)>>),
 }
 
 impl ConstructorRenderer {
     pub fn start() -> Self {
         let (job_sender, job_receiver) = unbounded::<PreviewJob>();
         let (image_sender, image_receiver) = unbounded::<PreviewImage>();
-        let spawned = thread::Builder::new().name("nerthus-constructor".to_string()).spawn(move || {
-            let mut prepared = HashMap::new();
-            while let Ok(mut job) = job_receiver.recv() {
-                while let Ok(newer) = job_receiver.try_recv() {
-                    job = newer;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let spawned = thread::Builder::new().name("nerthus-constructor".to_string()).spawn(move || {
+                let mut prepared = HashMap::new();
+                while let Ok(job) = job_receiver.recv() {
+                    if !render_newest(job, &job_receiver, &image_sender, &mut prepared) {
+                        return;
+                    }
                 }
-                if job.refresh {
-                    prepared.clear();
-                }
-                let colours = render(&job, &mut prepared);
-                let image = PreviewImage { colours };
-                if image_sender.send(image).is_err() {
-                    return;
-                }
+            });
+            if let Err(error) = spawned {
+                log::error!("cannot start the Constructor's preview thread: {error}");
             }
-        });
-        if let Err(error) = spawned {
-            log::error!("cannot start the Constructor's preview thread: {error}");
         }
-        Self { jobs: job_sender, images: image_receiver }
+        Self {
+            jobs: job_sender,
+            images: image_receiver,
+            #[cfg(target_arch = "wasm32")]
+            waiting: (job_receiver, image_sender, Default::default()),
+        }
     }
 
     pub fn request(&self, job: PreviewJob) {
@@ -249,8 +252,26 @@ impl ConstructorRenderer {
 
     /// The newest preview finished since the last call.
     pub fn poll(&self) -> Option<PreviewImage> {
+        #[cfg(target_arch = "wasm32")]
+        if let (Ok(job), Ok(mut prepared)) = (self.waiting.0.try_recv(), self.waiting.2.lock()) {
+            render_newest(job, &self.waiting.0, &self.waiting.1, &mut prepared);
+        }
         self.images.try_iter().last()
     }
+}
+
+/// Renders `job`, or the newest of the jobs that came after it; false once
+/// nothing takes the images.
+fn render_newest(mut job: PreviewJob, jobs: &Receiver<PreviewJob>, images: &Sender<PreviewImage>, prepared: &mut HashMap<usize, (PreparedKey, Arc<Map>)>) -> bool {
+    while let Ok(newer) = jobs.try_recv() {
+        job = newer;
+    }
+    if job.refresh {
+        prepared.clear();
+    }
+    let colours = render(&job, prepared);
+    let image = PreviewImage { colours };
+    images.send(image).is_ok()
 }
 
 #[cfg(test)]

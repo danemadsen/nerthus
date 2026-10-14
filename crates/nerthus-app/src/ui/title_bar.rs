@@ -52,8 +52,11 @@ pub fn show(ui: &mut Ui, rect: Rect, editor: &Editor, ui_state: &UiState, comman
 
     bar.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        window_buttons(ui, commands);
-        ui.add_space(24.0);
+        // The browser's tab is the web build's window.
+        if !cfg!(target_arch = "wasm32") {
+            window_buttons(ui, commands);
+            ui.add_space(24.0);
+        }
         // `bAbout` (About Nerthus), and `bUpdate` once a newer version is
         // known.
         if version_button(ui, concat!("Nerthus ", env!("CARGO_PKG_VERSION")), theme::LABEL_DEFAULT, true).clicked() {

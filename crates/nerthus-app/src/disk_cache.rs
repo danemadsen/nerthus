@@ -24,11 +24,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use nerthus_engine::{Catalogue, Engine, NodeState, Resolution, StateOverride, Terrain};
 use nerthus_export::bake::BakeStore;
+use web_time::Instant;
 
 use crate::progress::WorkProgress;
 

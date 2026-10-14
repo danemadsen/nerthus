@@ -35,9 +35,16 @@ fn user_name() -> String {
     variable.unwrap_or_default()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn machine_name() -> String {
     let host = gethostname::gethostname();
     host.to_string_lossy().into_owned()
+}
+
+/// A browser does not tell pages the machine's name.
+#[cfg(target_arch = "wasm32")]
+fn machine_name() -> String {
+    String::new()
 }
 
 /// Expands the build location template. A trailing `[+++]` is

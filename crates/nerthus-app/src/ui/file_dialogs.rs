@@ -55,6 +55,7 @@ impl FileDialogs {
 }
 
 /// Shows the queued dialogs, one a frame.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run(_main_thread: NonSendMarker, mut ui_state: ResMut<UiState>) {
     let Some(request) = ui_state.file_dialogs.requests.first().cloned() else {
         return;
@@ -80,4 +81,14 @@ pub fn run(_main_thread: NonSendMarker, mut ui_state: ResMut<UiState>) {
     let dialogs = &mut ui_state.file_dialogs;
     dialogs.requests.remove(0);
     dialogs.answers.push((request.key, picked));
+}
+
+/// The web build has no files or folders to choose: each dialog is
+/// answered as cancelled.
+#[cfg(target_arch = "wasm32")]
+pub fn run(mut ui_state: ResMut<UiState>) {
+    let dialogs = &mut ui_state.file_dialogs;
+    for request in std::mem::take(&mut dialogs.requests) {
+        dialogs.answers.push((request.key, None));
+    }
 }

@@ -616,26 +616,34 @@ fn to_byte(value: f32) -> u8 {
 }
 
 /// The render thread: it renders the newest job, dropping any it never
-/// got to.
+/// got to. The web build has no threads: there the jobs wait until `poll`
+/// renders the newest.
 #[derive(Resource)]
 pub struct ViewportRenderer {
     jobs: Sender<RenderJob>,
     views: Receiver<RenderedView>,
+    #[cfg(target_arch = "wasm32")]
+    waiting: (Receiver<RenderJob>, Sender<RenderedView>),
 }
 
 impl ViewportRenderer {
     pub fn start() -> Self {
         let (job_sender, job_receiver) = unbounded::<RenderJob>();
         let (view_sender, view_receiver) = unbounded::<RenderedView>();
-        let spawned = thread::Builder::new().name("nerthus-viewport-render".to_string()).spawn(move || {
-            run(job_receiver, view_sender);
-        });
-        if let Err(error) = spawned {
-            log::error!("cannot start the viewport render thread: {error}");
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let spawned = thread::Builder::new().name("nerthus-viewport-render".to_string()).spawn(move || {
+                run(job_receiver, view_sender);
+            });
+            if let Err(error) = spawned {
+                log::error!("cannot start the viewport render thread: {error}");
+            }
         }
         Self {
             jobs: job_sender,
             views: view_receiver,
+            #[cfg(target_arch = "wasm32")]
+            waiting: (job_receiver, view_sender),
         }
     }
 
@@ -645,25 +653,36 @@ impl ViewportRenderer {
 
     /// The newest render finished since the last call.
     pub fn poll(&self) -> Option<RenderedView> {
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(job) = self.waiting.0.try_recv() {
+            render_newest(job, &self.waiting.0, &self.waiting.1);
+        }
         self.views.try_iter().last()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run(jobs: Receiver<RenderJob>, views: Sender<RenderedView>) {
-    while let Ok(mut job) = jobs.recv() {
-        while let Ok(newer) = jobs.try_recv() {
-            job = newer;
-        }
-        let colours = render(&job);
-        let view = RenderedView {
-            generation: job.generation,
-            heights: job.heightfield.clone(),
-            colours: colours.map(Arc::new),
-        };
-        if views.send(view).is_err() {
+    while let Ok(job) = jobs.recv() {
+        if !render_newest(job, &jobs, &views) {
             return;
         }
     }
+}
+
+/// Renders `job`, or the newest of the jobs that came after it; false once
+/// nothing takes the views.
+fn render_newest(mut job: RenderJob, jobs: &Receiver<RenderJob>, views: &Sender<RenderedView>) -> bool {
+    while let Ok(newer) = jobs.try_recv() {
+        job = newer;
+    }
+    let colours = render(&job);
+    let view = RenderedView {
+        generation: job.generation,
+        heights: job.heightfield.clone(),
+        colours: colours.map(Arc::new),
+    };
+    views.send(view).is_ok()
 }
 
 #[cfg(test)]

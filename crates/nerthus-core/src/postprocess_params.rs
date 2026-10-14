@@ -16,7 +16,7 @@ pub fn seed_param_named(name: &str) -> Param {
 /// A process-unique pseudo random seed (as `new Random(Environment.TickCount)` gives).
 pub fn random_seed() -> i32 {
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use web_time::{SystemTime, UNIX_EPOCH};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos() as u64).unwrap_or(0);

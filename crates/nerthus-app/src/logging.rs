@@ -132,11 +132,22 @@ pub fn resume_after_crash() {
 
 /// A random id for the session.
 fn uuid_text() -> String {
-    let nanoseconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
-    let process = std::process::id() as u128;
+    let nanoseconds = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
+    let process = process_id() as u128;
     let mixed = nanoseconds ^ (process << 64) ^ 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834;
     let hex = format!("{mixed:032x}");
     format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn process_id() -> u32 {
+    std::process::id()
+}
+
+/// A browser page has no process id.
+#[cfg(target_arch = "wasm32")]
+fn process_id() -> u32 {
+    0
 }
 
 fn open_file(verbose_logging: bool) {

@@ -47,11 +47,22 @@ pub struct DestinationContext {
     pub machine: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn machine_name() -> String {
+    gethostname::gethostname().to_string_lossy().into_owned()
+}
+
+/// A browser does not tell pages the machine's name.
+#[cfg(target_arch = "wasm32")]
+fn machine_name() -> String {
+    String::new()
+}
+
 impl DestinationContext {
     /// The context of a build of `project_path` now, by this user on this
     /// machine.
     pub fn new(template: &str, project_path: &Path, resolution: usize) -> Self {
-        let machine = gethostname::gethostname().to_string_lossy().into_owned();
+        let machine = machine_name();
         let user_name = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_default();
         // .NET's `UserDomainName` is the machine name outside a Windows
         // domain.

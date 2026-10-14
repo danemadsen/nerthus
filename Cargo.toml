@@ -82,7 +82,12 @@ libloading = "0.8.9"
 log = "0.4.34"
 env_logger = "0.11.11"
 directories = "6.0.0"
-chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# `wasmbind`: the web build reads the clock from JavaScript's `Date` (it
+# changes nothing elsewhere).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "wasmbind"] }
+# `Instant` and `SystemTime` that work in a browser, where the standard
+# library's panic; elsewhere they are the standard library's.
+web-time = "1.1.0"
 gethostname = "1.1.0"
 clap = { version = "4.6.7", features = ["derive"] }
 rfd = "0.17.2"
@@ -90,6 +95,12 @@ rfd = "0.17.2"
 # draws with, with the same features, so one build of it serves both.
 wgpu = { version = "30.0.1", default-features = false, features = ["wgsl", "dx12", "metal", "vulkan"] }
 pollster = "0.4.0"
+# The web build's own calls into the browser: downloads, and waiting on a
+# file the user picks.
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = "0.3.106"
 
 bevy = { version = "0.20.0", default-features = false }
 # UI: egui inside Bevy (one window and wgpu device for the viewport and the

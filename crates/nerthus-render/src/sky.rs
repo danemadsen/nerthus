@@ -16,6 +16,7 @@
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
 use bevy::asset::RenderAssetUsages;
@@ -589,34 +590,66 @@ fn sun_colour(request: SkyRequest, dip: f32) -> Option<Rgb> {
     Some(tables.tone_map(seen))
 }
 
-/// The thread that works skies out, the newest request first.
+/// The thread that works skies out, the newest request first. The web
+/// build has no threads: there the requests wait until `finished` works
+/// out the newest.
 #[derive(Resource)]
 pub(crate) struct SkyWorker {
     requests: Sender<SkyRequest>,
     results: std::sync::Mutex<Receiver<SkyImage>>,
+    #[cfg(target_arch = "wasm32")]
+    waiting: std::sync::Mutex<(Receiver<SkyRequest>, Sender<SkyImage>, Option<SkyTable>)>,
 }
 
 impl Default for SkyWorker {
     fn default() -> Self {
         let (request_sender, request_receiver) = channel::<SkyRequest>();
         let (result_sender, result_receiver) = channel::<SkyImage>();
-        let spawned = thread::Builder::new().name("nerthus-sky".to_string()).spawn(move || {
-            let mut table = None;
-            while let Ok(mut request) = request_receiver.recv() {
-                while let Ok(newer) = request_receiver.try_recv() {
-                    request = newer;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let spawned = thread::Builder::new().name("nerthus-sky".to_string()).spawn(move || {
+                let mut table = None;
+                while let Ok(request) = request_receiver.recv() {
+                    if !build_newest(request, &request_receiver, &result_sender, &mut table) {
+                        return;
+                    }
                 }
-                let image = build_sky(request, &mut table);
-                if result_sender.send(image).is_err() {
-                    return;
-                }
+            });
+            if let Err(error) = spawned {
+                error!("cannot start the sky thread: {error}");
             }
-        });
-        if let Err(error) = spawned {
-            error!("cannot start the sky thread: {error}");
         }
-        Self { requests: request_sender, results: std::sync::Mutex::new(result_receiver) }
+        Self {
+            requests: request_sender,
+            results: std::sync::Mutex::new(result_receiver),
+            #[cfg(target_arch = "wasm32")]
+            waiting: std::sync::Mutex::new((request_receiver, result_sender, None)),
+        }
     }
+}
+
+impl SkyWorker {
+    /// The newest sky finished since the last call.
+    fn finished(&self) -> Option<SkyImage> {
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(mut waiting) = self.waiting.lock() {
+            let (requests, results, table) = &mut *waiting;
+            if let Ok(request) = requests.try_recv() {
+                build_newest(request, requests, results, table);
+            }
+        }
+        self.results.lock().ok().and_then(|results| results.try_iter().last())
+    }
+}
+
+/// Works out the sky for `request`, or for the newest of the requests that
+/// came after it; false once nothing takes the skies.
+fn build_newest(mut request: SkyRequest, requests: &Receiver<SkyRequest>, results: &Sender<SkyImage>, table: &mut Option<SkyTable>) -> bool {
+    while let Ok(newer) = requests.try_recv() {
+        request = newer;
+    }
+    let image = build_sky(request, table);
+    results.send(image).is_ok()
 }
 
 /// The sky's state between frames.
@@ -735,7 +768,7 @@ pub(crate) fn update_sky(
         let _ = worker.requests.send(request);
         state.requested = Some(request);
     }
-    let finished = worker.results.lock().ok().and_then(|results| results.try_iter().last());
+    let finished = worker.finished();
     if let Some(image) = finished {
         let extent = Extent3d { width: DOME_WIDTH as u32, height: DOME_HEIGHT as u32, depth_or_array_layers: 1 };
         let mut texture = Image::new(extent, TextureDimension::D2, image.pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());

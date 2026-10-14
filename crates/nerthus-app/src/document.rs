@@ -14,6 +14,13 @@ use nerthus_export::build::BuildDefinition;
 use nerthus_export::FileFormat;
 use serde_json::{json, Value};
 
+/// Where projects are read and written: files, or in the web build the
+/// browser (the examples, the files picked, downloads).
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs as project_files;
+#[cfg(target_arch = "wasm32")]
+use crate::web as project_files;
+
 mod import;
 mod macros;
 
@@ -116,7 +123,7 @@ impl Document {
     }
 
     pub fn open(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+        let text = project_files::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         let project = Project::parse(&text).with_context(|| format!("cannot open {}", path.display()))?;
         let random = SmallRandom::from_time();
         Ok(Self::with_project(project, Some(path.to_path_buf()), random))
@@ -128,7 +135,7 @@ impl Document {
         stamp_saved(&mut self.project.extra, &now);
         stamp_saved(&mut self.project.terrain_mut().extra, &now);
         let text = to_terrain_json(&self.project);
-        std::fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))?;
+        project_files::write(path, text).with_context(|| format!("cannot write {}", path.display()))?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         Ok(())
@@ -1960,7 +1967,7 @@ struct SmallRandom {
 
 impl SmallRandom {
     fn from_time() -> Self {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_nanos() as u64).unwrap_or(0x9e37_79b9_7f4a_7c15);
+        let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|duration| duration.as_nanos() as u64).unwrap_or(0x9e37_79b9_7f4a_7c15);
         Self { state: nanos | 1 }
     }
 

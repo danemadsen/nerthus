@@ -14,12 +14,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender};
 use nerthus_engine::macros::load_project_macros_from;
 use nerthus_engine::{Engine, NodeData, NodeState, Project, Region, StateOverride, Terrain};
 use nerthus_export::build::{self, BuildDefinition, BuildEvent, BuildReport, ExportPreferences, OutputType};
+use web_time::Instant;
 
 use crate::editor::{DialogRequest, Editor};
 use crate::files::FileCommand;
@@ -534,6 +534,12 @@ fn launch_in_terminal(program: &Path, project: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// A browser page cannot start programs.
+#[cfg(not(any(unix, windows)))]
+fn launch_in_terminal(_program: &Path, _project: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, crate::web::unavailable("Running the command-line build")))
+}
+
 /// The first terminal emulator there is runs the script.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn launch_in_terminal(program: &Path, project: &Path) -> std::io::Result<()> {
@@ -578,6 +584,7 @@ pub fn open_folder(folder: &Path) {
 }
 
 /// Opens a web page in the default browser.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn open_url(address: &str) {
     let program = if cfg!(target_os = "macos") {
         "open"
@@ -588,6 +595,15 @@ pub fn open_url(address: &str) {
     };
     if let Err(error) = std::process::Command::new(program).arg(address).spawn() {
         log::warn!("cannot open {address}: {error}");
+    }
+}
+
+/// The web build opens it in a new tab.
+#[cfg(target_arch = "wasm32")]
+pub fn open_url(address: &str) {
+    let opened = web_sys::window().and_then(|window| window.open_with_url_and_target(address, "_blank").ok().flatten());
+    if opened.is_none() {
+        log::warn!("cannot open {address}");
     }
 }
 

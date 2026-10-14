@@ -53,6 +53,36 @@ between them: the first run starts it, later runs hand their project and
 options to it and print its output, and `nerthus-build host --exit` closes
 it.
 
+## Web version
+
+The editor also runs in a browser with WebGL 2. The Web workflow builds it
+for every pull request and publishes main's with GitHub Pages, at
+<https://danemadsen.github.io/nerthus/>.
+
+To build it yourself, add the WebAssembly target and the `wasm-bindgen`
+command of the version in `Cargo.lock`, then run the build script, which
+writes the site to `target/web`:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version <version in Cargo.lock> --locked
+crates/nerthus-app/web/build.sh
+python3 -m http.server --directory target/web
+```
+
+A web page has no files, threads or other programs to use, so the web
+version differs from the desktop one:
+
+- Nodes build on the CPU alone and on the page's one thread, a node at a
+  time between frames, so builds take longer.
+- Projects are the examples it comes with and files you pick with Open;
+  saving downloads the project. Settings, recent files and autosaves are
+  not kept between visits.
+- Build and Export, baking and the disk cache, screenshots and turntables,
+  importing files, installing and exporting macros, loading and saving
+  cameras, File nodes reading from disk, Diagnostics, update checks and the
+  MCP server are left out.
+
 ## MCP server
 
 The editor can run an [MCP](https://modelcontextprotocol.io) server, so AI

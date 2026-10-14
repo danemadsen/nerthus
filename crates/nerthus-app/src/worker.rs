@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
 
 use bevy::prelude::Resource;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
@@ -18,6 +17,7 @@ use nerthus_engine::macros::MacroLibrary;
 use nerthus_engine::{BuildResult, Catalogue, Engine, EnginePreferences, Map, NodeState, PortIntents, Region, RenderIntent, Resolution, StateOverride, Terrain};
 use nerthus_export::bake::{self, BakeFit, BakeStore};
 use serde_json::Value;
+use web_time::Instant;
 
 use crate::disk_cache::{self, DiskCache, DiskCacheSettings, DiskCacheTask};
 use crate::progress::WorkProgress;
@@ -199,6 +199,10 @@ pub struct BuildWorker {
     events: Receiver<BuildEvent>,
     /// Set to stop the running build at the next node.
     cancel: Arc<AtomicBool>,
+    /// The web build has no threads: its builds go a little at a time as
+    /// the editor polls (`step`).
+    #[cfg(target_arch = "wasm32")]
+    stepping: std::sync::Mutex<Stepping>,
 }
 
 impl BuildWorker {
@@ -206,17 +210,27 @@ impl BuildWorker {
         let (request_sender, request_receiver) = unbounded::<BuildRequest>();
         let (event_sender, event_receiver) = unbounded::<BuildEvent>();
         let cancel = Arc::new(AtomicBool::new(false));
-        let thread_cancel = cancel.clone();
-        let spawned = thread::Builder::new().name("nerthus-build".to_string()).spawn(move || {
-            run(request_receiver, event_sender, thread_cancel);
-        });
-        if let Err(error) = spawned {
-            log::error!("cannot start the build thread: {error}");
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let thread_cancel = cancel.clone();
+            let spawned = thread::Builder::new().name("nerthus-build".to_string()).spawn(move || {
+                run(request_receiver, event_sender, thread_cancel);
+            });
+            if let Err(error) = spawned {
+                log::error!("cannot start the build thread: {error}");
+            }
         }
         Self {
             requests: request_sender,
             events: event_receiver,
             cancel,
+            #[cfg(target_arch = "wasm32")]
+            stepping: std::sync::Mutex::new(Stepping {
+                builder: Builder::new(),
+                running: None,
+                requests: request_receiver,
+                events: event_sender,
+            }),
         }
     }
 
@@ -231,7 +245,73 @@ impl BuildWorker {
     }
 
     pub fn poll(&self) -> Vec<BuildEvent> {
+        #[cfg(target_arch = "wasm32")]
+        self.step();
         self.events.try_iter().collect()
+    }
+
+    /// The web build's turn at building (`Stepping::step`), a frame's
+    /// worth.
+    #[cfg(target_arch = "wasm32")]
+    fn step(&self) {
+        /// How long a frame builds for, once its first node is built.
+        const STEP_TIME: std::time::Duration = std::time::Duration::from_millis(25);
+        if let Ok(mut stepping) = self.stepping.lock() {
+            stepping.step(&self.cancel, STEP_TIME);
+        }
+    }
+}
+
+/// The web build's builder, the request it is building, and its ends of
+/// the channels.
+#[cfg(any(target_arch = "wasm32", test))]
+struct Stepping {
+    builder: Builder,
+    running: Option<Running>,
+    requests: Receiver<BuildRequest>,
+    events: Sender<BuildEvent>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl Stepping {
+    /// Builds nodes, each in one go, until `time` has gone (at least one
+    /// node, or one request's preparation), so the interface keeps drawing
+    /// between them. Requests, supersession and cancels go as on the build
+    /// thread (`run`).
+    fn step(&mut self, cancel: &AtomicBool, time: std::time::Duration) {
+        let started = Instant::now();
+        loop {
+            let Some(running) = self.running.as_mut() else {
+                let Ok(request) = self.requests.try_recv() else {
+                    return;
+                };
+                let request = newest(request, &self.requests);
+                // A cancel is for the build running when it was asked.
+                cancel.store(false, Ordering::Relaxed);
+                self.running = Some(self.builder.start(request, &self.events));
+                if started.elapsed() >= time {
+                    return;
+                }
+                continue;
+            };
+            let ending = match self.builder.next_node(running) {
+                None => Some(Ending::Finished),
+                Some(_) if !self.requests.is_empty() => Some(Ending::Superseded),
+                Some(_) if cancel.swap(false, Ordering::Relaxed) => Some(Ending::Cancelled),
+                Some(node) => {
+                    self.builder.build_node(running, node, &self.events);
+                    None
+                }
+            };
+            if let Some(ending) = ending
+                && let Some(running) = self.running.take()
+            {
+                self.builder.finish(running, ending, &self.events);
+            }
+            if started.elapsed() >= time {
+                return;
+            }
+        }
     }
 }
 
@@ -270,37 +350,112 @@ fn newest(mut request: BuildRequest, requests: &Receiver<BuildRequest>) -> Build
     request
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc<AtomicBool>) {
-    let registry = Arc::new(nerthus_nodes::registry());
-    let mut engine = Engine::new(registry);
-    let mut resolution = Resolution::default();
-    let mut region: Option<Region> = None;
+    let mut builder = Builder::new();
     let mut carried: Option<BuildRequest> = None;
-    // The disk cache, and the project and settings it idles with.
-    let mut disk = DiskCache::default();
-    let mut idle_terrain: Option<Arc<Terrain>> = None;
-    let mut idle_settings = DiskCacheSettings::default();
     loop {
         let request = match carried.take() {
             Some(request) => request,
             None => match requests.recv_timeout(disk_cache::PULSE) {
                 Ok(request) => request,
                 Err(RecvTimeoutError::Timeout) => {
-                    if let Some(terrain) = &idle_terrain {
-                        disk.pulse(&mut engine, terrain, &idle_settings);
-                    }
+                    builder.idle();
                     continue;
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
             },
         };
-        let mut request = newest(request, &requests);
+        let request = newest(request, &requests);
         // A cancel is for the build running when it was asked.
         cancel.store(false, Ordering::Relaxed);
+        let mut running = builder.start(request, &events);
+        let mut ending = Ending::Finished;
+        while let Some(node) = builder.next_node(&mut running) {
+            if !requests.is_empty() {
+                ending = Ending::Superseded;
+                break;
+            }
+            if cancel.swap(false, Ordering::Relaxed) {
+                ending = Ending::Cancelled;
+                break;
+            }
+            builder.build_node(&mut running, node, &events);
+        }
+        let superseded = matches!(ending, Ending::Superseded);
+        builder.finish(running, ending, &events);
+        if superseded {
+            // Its stale nodes are already invalidated; the next request
+            // builds from here.
+            carried = requests.recv().ok();
+            if carried.is_none() {
+                return;
+            }
+        }
+    }
+}
+
+/// How a request's build ended.
+enum Ending {
+    Finished,
+    /// A newer request took over before it finished.
+    Superseded,
+    Cancelled,
+}
+
+/// The engine (and its cached results), and what the builds keep between
+/// requests.
+struct Builder {
+    engine: Engine,
+    resolution: Resolution,
+    region: Option<Region>,
+    /// The disk cache, and the project and settings it idles with.
+    disk: DiskCache,
+    idle_terrain: Option<Arc<Terrain>>,
+    idle_settings: DiskCacheSettings,
+}
+
+/// A request being built: the project as its bakes left it, the nodes it
+/// builds in order and how far it got.
+struct Running {
+    request: BuildRequest,
+    terrain: Arc<Terrain>,
+    order: std::vec::IntoIter<i32>,
+    /// What the disk cache read back for it.
+    read: Vec<i32>,
+    built_now: std::collections::HashSet<i32>,
+}
+
+impl Builder {
+    fn new() -> Self {
+        let registry = Arc::new(nerthus_nodes::registry());
+        Self {
+            engine: Engine::new(registry),
+            resolution: Resolution::default(),
+            region: None,
+            disk: DiskCache::default(),
+            idle_terrain: None,
+            idle_settings: DiskCacheSettings::default(),
+        }
+    }
+
+    /// Between requests: the disk cache's pulse.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn idle(&mut self) {
+        if let Some(terrain) = &self.idle_terrain {
+            self.disk.pulse(&mut self.engine, terrain, &self.idle_settings);
+        }
+    }
+
+    /// A request's preparation, up to its first node: what it clears and
+    /// makes stale, its bakes, and the disk cache's tasks.
+    fn start(&mut self, mut request: BuildRequest, events: &Sender<BuildEvent>) -> Running {
+        let engine = &mut self.engine;
+        let disk = &mut self.disk;
         // A closing project's previews go to disk before anything forgets
         // them.
         let disk_tasks = std::mem::take(&mut request.disk_cache_tasks);
-        disk_cache::freeze_closing(&mut disk, &engine, &disk_tasks, &events);
+        disk_cache::freeze_closing(disk, engine, &disk_tasks, events);
 
         if let Some(macros) = request.macros.take() {
             engine.macros = macros;
@@ -308,115 +463,124 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         // Another underlay changes what colour and mask nodes fall back on;
         // another region, what the bakes give.
         let underlay_changed = engine.underlay != request.underlay;
-        let region_changed = region != request.region;
+        let region_changed = self.region != request.region;
         // Results clamped or not differ throughout.
         let range_changed = engine.preferences.allow_values_beyond_range != request.engine_preferences.allow_values_beyond_range;
-        let cleared = request.clear || request.resolution != resolution || underlay_changed || region_changed || range_changed;
+        let cleared = request.clear || request.resolution != self.resolution || underlay_changed || region_changed || range_changed;
         if cleared {
             engine.clear();
             disk.clear();
-            resolution = request.resolution;
+            self.resolution = request.resolution;
             engine.underlay = request.underlay;
             engine.preferences = request.engine_preferences.clone();
-            region = request.region.clone();
+            self.region = request.region.clone();
         }
+        let resolution = self.resolution;
+        let region = self.region.as_ref();
         for node in request.forget.drain(..) {
             engine.forget_memory(node);
         }
         for node in &request.stale {
             engine.invalidate(&request.terrain, *node);
         }
-        disk.forget_stale(&engine, &request.terrain, request.disk_cache.store.as_ref());
+        disk.forget_stale(engine, &request.terrain, request.disk_cache.store.as_ref());
         engine.automation = request.automation.clone();
         engine.project_path = request.project_path.clone();
 
         let mut terrain = request.terrain.clone();
-        let bakes_changed = run_bakes(&mut engine, &mut terrain, &mut request, resolution, &events);
+        let bakes_changed = run_bakes(engine, &mut terrain, &mut request, resolution, events);
         if let Some(store) = &request.bakes
             && (cleared || bakes_changed || request.load_all_bakes)
         {
-            load_editor_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), request.load_all_bakes, &events);
+            load_editor_bakes(engine, &terrain, store, resolution, region, request.load_all_bakes, events);
         }
         if let Some(store) = &request.bakes {
-            load_node_bakes(&mut engine, &terrain, store, resolution, region.as_ref(), &request.load_bakes);
+            load_node_bakes(engine, &terrain, store, resolution, region, &request.load_bakes);
         }
-        disk_cache::run_tasks(&mut disk, &mut engine, &terrain, resolution, &request.disk_cache, disk_tasks, &events);
+        disk_cache::run_tasks(disk, engine, &terrain, resolution, &request.disk_cache, disk_tasks, events);
         let _ = events.send(BuildEvent::Progress(WorkProgress::Prepared(request.generation)));
         let order = Engine::build_order(&terrain, request.target);
         let mut read = order.clone();
         if request.underlay != 0 {
             read.extend(Engine::build_order(&terrain, request.underlay));
         }
-        disk.reload_for(&mut engine, &terrain, request.disk_cache.store.as_ref(), &read);
-        idle_terrain = Some(terrain.clone());
-        idle_settings = request.disk_cache.clone();
-        let mut superseded = false;
-        let mut cancelled = false;
-        let mut built_now = std::collections::HashSet::new();
-        for node in order {
-            if engine.state(node) == NodeState::Built {
-                continue;
-            }
-            if !requests.is_empty() {
-                superseded = true;
-                break;
-            }
-            if cancel.swap(false, Ordering::Relaxed) {
-                cancelled = true;
-                break;
-            }
-            let _ = events.send(BuildEvent::NodeStarted(node));
-            let started = Instant::now();
-            let result = engine.build(&terrain, node, resolution);
-            disk.rebuilt(node);
-            built_now.insert(node);
-            let milliseconds = started.elapsed().as_secs_f32() * 1000.0;
-            let error = match result {
-                BuildResult::Failed(error) => Some(error.to_string()),
-                _ => engine.error(node).map(ToString::to_string),
-            };
-            let state = engine.state(node);
-            let range = main_range(&engine, node);
-            let finished = BuildEvent::NodeFinished { node, milliseconds, state, error, range };
-            let _ = events.send(finished);
+        disk.reload_for(engine, &terrain, request.disk_cache.store.as_ref(), &read);
+        self.idle_terrain = Some(terrain.clone());
+        self.idle_settings = request.disk_cache.clone();
+        Running {
+            request,
+            terrain,
+            order: order.into_iter(),
+            read,
+            built_now: std::collections::HashSet::new(),
         }
+    }
+
+    /// The next node of the request's order not built yet.
+    fn next_node(&self, running: &mut Running) -> Option<i32> {
+        running.order.by_ref().find(|node| self.engine.state(*node) != NodeState::Built)
+    }
+
+    /// Builds `node`, telling the editor as it starts and finishes.
+    fn build_node(&mut self, running: &mut Running, node: i32, events: &Sender<BuildEvent>) {
+        let engine = &mut self.engine;
+        let _ = events.send(BuildEvent::NodeStarted(node));
+        let started = Instant::now();
+        let result = engine.build(&running.terrain, node, self.resolution);
+        self.disk.rebuilt(node);
+        running.built_now.insert(node);
+        let milliseconds = started.elapsed().as_secs_f32() * 1000.0;
+        let error = match result {
+            BuildResult::Failed(error) => Some(error.to_string()),
+            _ => engine.error(node).map(ToString::to_string),
+        };
+        let state = engine.state(node);
+        let range = main_range(engine, node);
+        let finished = BuildEvent::NodeFinished { node, milliseconds, state, error, range };
+        let _ = events.send(finished);
+    }
+
+    /// The request's end: Save cached build, then what the editor hears of
+    /// how it went.
+    fn finish(&mut self, running: Running, ending: Ending, events: &Sender<BuildEvent>) {
+        let Running { mut request, terrain, read, built_now, .. } = running;
+        let engine = &mut self.engine;
+        let resolution = self.resolution;
         // Save cached build, whether or not the preview build got to the
         // end: the maps marked for export were built before it was asked.
         if let Some(job) = request.cached_export.take() {
-            job.run(&terrain, &engine);
+            job.run(&terrain, engine);
         }
 
         // The node is asked for its colours as it renders, as its build
         // left it (member changes not yet handed back).
-        let custom_colours = if superseded || cancelled { None } else { target_custom_colours(&engine, &terrain, request.target, resolution) };
+        let custom_colours = match ending {
+            Ending::Finished => target_custom_colours(engine, &terrain, request.target, resolution),
+            Ending::Superseded | Ending::Cancelled => None,
+        };
         let updates = engine.take_member_updates();
         if !updates.is_empty() {
             let _ = events.send(BuildEvent::MemberUpdates(updates));
         }
-        if cancelled {
-            log::info!("Build cancelled.");
-            let _ = events.send(BuildEvent::Cancelled { generation: request.generation });
-            continue;
-        }
-        if superseded {
-            let _ = events.send(BuildEvent::Superseded);
-            // Its stale nodes are already invalidated; the next request
-            // builds from here.
-            request.stale.clear();
-            request.clear = false;
-            carried = requests.recv().ok();
-            if carried.is_none() {
+        match ending {
+            Ending::Finished => {}
+            Ending::Cancelled => {
+                log::info!("Build cancelled.");
+                let _ = events.send(BuildEvent::Cancelled { generation: request.generation });
                 return;
             }
-            continue;
+            Ending::Superseded => {
+                let _ = events.send(BuildEvent::Superseded);
+                return;
+            }
         }
 
         for command in std::mem::take(&mut request.node_commands) {
-            if let Some(done) = run_node_command(&mut engine, &terrain, &command, resolution) {
+            if let Some(done) = run_node_command(engine, &terrain, &command, resolution) {
                 let _ = events.send(done);
             }
         }
-        disk.used(&read);
+        self.disk.used(&read);
 
         let target = request.target;
         let mut outputs: Vec<(String, Arc<Map>)> = engine.cache.ports(target).map(|(port, map)| (port.clone(), map.clone())).collect();
@@ -426,7 +590,7 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
         let custom_underlay = engine.custom_underlay(&terrain, target, request.resolution);
         let port_intents = engine.port_intents(target).cloned().unwrap_or_default();
         let cache_bytes = engine.cache.bytes();
-        let node_caches = node_caches(&engine);
+        let node_caches = node_caches(engine);
         let finished = BuildEvent::Finished {
             generation: request.generation,
             target,
@@ -445,7 +609,7 @@ fn run(requests: Receiver<BuildRequest>, events: Sender<BuildEvent>, cancel: Arc
             if !(rebuilt || request.watched_refresh) {
                 continue;
             }
-            if let Some(watched) = watched_node(&engine, &terrain, node, resolution) {
+            if let Some(watched) = watched_node(engine, &terrain, node, resolution) {
                 let _ = events.send(BuildEvent::Watched(watched));
             }
         }
@@ -732,6 +896,126 @@ fn node_caches(engine: &Engine) -> HashMap<i32, NodeCache> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Mountain into a Blur, and a request to build the Blur at 32 by 32.
+    fn mountain_and_blur(generation: u64) -> (i32, i32, BuildRequest) {
+        let mut document = crate::document::Document::new();
+        let mountain = document.add_node("Mountain", [26000.0, 26000.0]).unwrap();
+        let blur = document.add_node("Blur", [26300.0, 26000.0]).unwrap();
+        document.connect(mountain, "Out", blur, "In");
+        let asset = &document.project.assets[0];
+        let request = BuildRequest {
+            generation,
+            terrain: Arc::new(asset.terrain.clone()),
+            automation: asset.automation.clone(),
+            project_path: None,
+            target: blur,
+            resolution: Resolution::square(32),
+            stale: Vec::new(),
+            clear: false,
+            macros: None,
+            underlay: 0,
+            bakes: None,
+            bake: None,
+            unbake: Vec::new(),
+            load_all_bakes: false,
+            load_bakes: Vec::new(),
+            region: None,
+            forget: Vec::new(),
+            node_commands: Vec::new(),
+            disk_cache: DiskCacheSettings::default(),
+            disk_cache_tasks: Vec::new(),
+            watched: Vec::new(),
+            watched_refresh: false,
+            cached_export: None,
+            engine_preferences: EnginePreferences::default(),
+        };
+        (mountain, blur, request)
+    }
+
+    /// The nodes started and what ended the build, of the events given.
+    fn summary(events: impl IntoIterator<Item = BuildEvent>) -> (Vec<i32>, Option<String>) {
+        let mut started = Vec::new();
+        let mut ending = None;
+        for event in events {
+            match event {
+                BuildEvent::NodeStarted(node) => started.push(node),
+                BuildEvent::Finished { generation, target, outputs, .. } => ending = Some(format!("finished {generation} {target} {}", outputs.len())),
+                BuildEvent::Superseded => ending = Some("superseded".to_string()),
+                BuildEvent::Cancelled { generation } => ending = Some(format!("cancelled {generation}")),
+                _ => {}
+            }
+        }
+        (started, ending)
+    }
+
+    #[test]
+    fn the_build_thread_builds_the_target_and_what_feeds_it() {
+        let worker = BuildWorker::start();
+        let (mountain, blur, request) = mountain_and_blur(1);
+        worker.request(request);
+        let deadline = Instant::now() + std::time::Duration::from_secs(120);
+        let mut events = Vec::new();
+        while !events.iter().any(|event| matches!(event, BuildEvent::Finished { .. })) {
+            assert!(Instant::now() < deadline, "the build never finished");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            events.extend(worker.poll());
+        }
+        assert_eq!(summary(events), (vec![mountain, blur], Some(format!("finished 1 {blur} 1"))));
+    }
+
+    /// The web build's builds: a step prepares the request, then each step
+    /// builds a node, and the step after the last node finishes it.
+    #[test]
+    fn stepped_builds_go_a_node_a_step() {
+        let (request_sender, requests) = unbounded();
+        let (events, received) = unbounded();
+        let mut stepping = Stepping { builder: Builder::new(), running: None, requests, events };
+        let cancel = AtomicBool::new(false);
+        let (mountain, blur, request) = mountain_and_blur(1);
+        request_sender.send(request).unwrap();
+        let mut steps = Vec::new();
+        for _ in 0..5 {
+            stepping.step(&cancel, std::time::Duration::ZERO);
+            steps.push(summary(received.try_iter()));
+        }
+        let finished = Some(format!("finished 1 {blur} 1"));
+        assert_eq!(steps, vec![(vec![], None), (vec![mountain], None), (vec![blur], None), (vec![], finished), (vec![], None)]);
+    }
+
+    #[test]
+    fn a_newer_request_or_a_cancel_ends_a_stepped_build() {
+        let (request_sender, requests) = unbounded();
+        let (events, received) = unbounded();
+        let mut stepping = Stepping { builder: Builder::new(), running: None, requests, events };
+        let cancel = AtomicBool::new(false);
+        let step = |stepping: &mut Stepping| {
+            stepping.step(&cancel, std::time::Duration::ZERO);
+            summary(received.try_iter())
+        };
+        let (mountain, blur, request) = mountain_and_blur(1);
+        request_sender.send(request).unwrap();
+        step(&mut stepping);
+        assert_eq!(step(&mut stepping), (vec![mountain], None));
+        // A newer request takes over before the Blur, and builds from what
+        // the first one left.
+        let (_, _, mut newer) = mountain_and_blur(2);
+        newer.terrain = stepping.running.as_ref().unwrap().terrain.clone();
+        newer.target = blur;
+        request_sender.send(newer).unwrap();
+        assert_eq!(step(&mut stepping), (vec![], Some("superseded".to_string())));
+        step(&mut stepping);
+        assert_eq!(step(&mut stepping), (vec![blur], None));
+        assert_eq!(step(&mut stepping), (vec![], Some(format!("finished 2 {blur} 1"))));
+
+        // A cancel stops the next build before its first node.
+        let (_, _, mut again) = mountain_and_blur(3);
+        again.clear = true;
+        request_sender.send(again).unwrap();
+        step(&mut stepping);
+        cancel.store(true, Ordering::Relaxed);
+        assert_eq!(step(&mut stepping), (vec![], Some("cancelled 3".to_string())));
+    }
 
     #[test]
     fn load_offloaded_cache_reads_a_baked_node_back() {

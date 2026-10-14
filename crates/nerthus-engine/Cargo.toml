@@ -17,3 +17,4 @@ serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"
 thiserror.workspace = true
 # The node catalogue's tables keep their order: defaults are saved in it.
 toml = { workspace = true, features = ["preserve_order"] }
+web-time.workspace = true

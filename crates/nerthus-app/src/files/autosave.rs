@@ -8,9 +8,10 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use nerthus_engine::macros::{compare_versions, parse_version, FORMAT_VERSION};
+use web_time::Instant;
 
 use crate::document::Document;
 use crate::editor::Editor;

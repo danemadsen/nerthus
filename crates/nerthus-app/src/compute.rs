@@ -28,7 +28,9 @@ impl ComputeState {
     /// leaves the preferences' list alone.
     pub fn start(cpu_only_asked: bool, safe_mode: bool, user: &User) -> ComputeState {
         let marked = user::data_folder().is_some_and(|folder| folder.join(nerthus_compute::CPU_ONLY_FILE).exists());
-        let cpu_only = cpu_only_asked || marked;
+        // The web build computes on the CPU alone (`nerthus_compute` finds
+        // no GPUs in a browser).
+        let cpu_only = cpu_only_asked || marked || cfg!(target_arch = "wasm32");
         nerthus_compute::set_cpu_only(cpu_only);
         if cpu_only {
             log::info!("CPU Only mode");

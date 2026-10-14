@@ -192,6 +192,7 @@ struct FoundAdapter {
     problem: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn find_adapters() -> Vec<FoundAdapter> {
     let adapters = pollster::block_on(INSTANCE.enumerate_adapters(BACKENDS));
     let mut found = Vec::new();
@@ -224,6 +225,13 @@ fn find_adapters() -> Vec<FoundAdapter> {
         found.push(FoundAdapter { adapter, info, problem });
     }
     found
+}
+
+/// None in a browser: its GPU (WebGPU) answers only asynchronously, and
+/// the kernels wait on it, which a web page cannot do; the CPU computes.
+#[cfg(target_arch = "wasm32")]
+fn find_adapters() -> Vec<FoundAdapter> {
+    Vec::new()
 }
 
 /// The GPUs wgpu finds, and a line for each one that cannot run the

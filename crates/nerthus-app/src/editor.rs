@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::{App, DetectChanges, Plugin, Res, ResMut, Resource, Single, Update, Window, With};
@@ -12,6 +12,7 @@ use nerthus_engine::{Map, NodeState, PortIntents, RenderIntent, Resolution, Stat
 use nerthus_export::bake::{self, BakeStore};
 use bevy::math::URect;
 use nerthus_render::{CameraValues, ScreenshotRequest, TerrainPreview};
+use web_time::Instant;
 
 use crate::compute::ComputeState;
 use crate::document::Document;
@@ -576,6 +577,12 @@ impl Editor {
     }
 
     pub(crate) fn launch_export_build(&mut self, path: &Path) {
+        // Builds are written to folders, and run on a thread of their own:
+        // the web build has neither.
+        if cfg!(target_arch = "wasm32") {
+            self.report("Build and Export is not available in the web version of Nerthus.");
+            return;
+        }
         // As the build will see it: a region it builds sets the resolution.
         let mut definition = self.document.build_definition();
         let region = nerthus_export::build::set_up_region(self.document.terrain(), &mut definition, None);
@@ -1965,6 +1972,7 @@ fn update_window_title(editor: Res<Editor>, mut window: Single<&mut Window, With
 }
 
 /// File dialogs block and must run on the main thread (macOS).
+#[cfg(not(target_arch = "wasm32"))]
 fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
     let Some(request) = editor.dialog.take() else {
         return;
@@ -2115,6 +2123,38 @@ fn show_dialogs(_main_thread: NonSendMarker, mut editor: ResMut<Editor>) {
             let value = serde_json::Value::String(folder.to_string_lossy().to_string());
             editor.document.set_build_setting("Destination", value);
         }
+    }
+}
+
+/// The web build saves by downloading, so Save As and the 2D view's Save
+/// to file name the download and ask nothing; the other dialogs choose
+/// files and folders, which a browser page does not have.
+#[cfg(target_arch = "wasm32")]
+fn show_dialogs(mut editor: ResMut<Editor>) {
+    let Some(request) = editor.dialog.take() else {
+        return;
+    };
+    match request {
+        DialogRequest::SaveAs => {
+            // Build and Export does not follow: it writes to folders.
+            editor.pending_build = None;
+            let path = with_extension(PathBuf::from(editor.document.file_name()), "terrain");
+            editor.save_to(&path);
+        }
+        DialogRequest::Save2DView { colours } => {
+            let mut png = Vec::new();
+            let encoder = image::codecs::png::PngEncoder::new(&mut png);
+            let encoded = image::ImageEncoder::write_image(encoder, &colours.rgb, colours.width as u32, colours.height as u32, image::ExtendedColorType::Rgb8);
+            let saved = encoded.map_err(|error| error.to_string()).and_then(|()| crate::web::write(Path::new("2D Preview.png"), &png).map_err(|error| error.to_string()));
+            if let Err(error) = saved {
+                editor.report(format!("Cannot save the 2D preview: {error}"));
+            }
+        }
+        DialogRequest::BrowseFile { .. } | DialogRequest::CustomOverlay => editor.report(crate::web::unavailable("Reading files from disk")),
+        DialogRequest::BuildDestination { .. } => editor.report(crate::web::unavailable("Build and Export")),
+        DialogRequest::LoadCamera | DialogRequest::SaveCamera { .. } => editor.report(crate::web::unavailable("Loading and saving cameras")),
+        DialogRequest::SaveScreenshot { .. } => editor.report(crate::web::unavailable("Saving screenshots")),
+        DialogRequest::ExportSynthColours { .. } => editor.report(crate::web::unavailable("Exporting colours")),
     }
 }
 

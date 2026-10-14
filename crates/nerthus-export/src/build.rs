@@ -30,7 +30,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use chrono::{DateTime, Local};
 
