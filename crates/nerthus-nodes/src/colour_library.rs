@@ -1,22 +1,24 @@
 //! The colour library (`data/color/*.clut`):
 //! categories of 512-entry RGB palettes, as SatelliteMap and the texture nodes
-//! use them. Each file is an `i32` palette count followed by the palettes'
-//! RGB bytes.
+//! use them, read from Copernicus Sentinel-2 imagery (`data/color/README.md`
+//! says where each one comes from). Each file is an `i32` palette count
+//! followed by the palettes' RGB bytes.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
+
+/// The notice the Copernicus Sentinel data terms ask to go with the palettes.
+pub const NOTICE: &str = "Contains modified Copernicus Sentinel data 2023–2024";
 
 /// One palette: 512 RGB colours from low to high.
 pub type Palette = [[u8; 3]; 512];
 
 const PALETTE_BYTES: usize = 512 * 3;
 
-const FILES: [(&str, &[u8]); 8] = [
-    ("2D", include_bytes!("../data/color/2D.clut")),
+const FILES: [(&str, &[u8]); 6] = [
     ("Blue", include_bytes!("../data/color/Blue.clut")),
     ("Color", include_bytes!("../data/color/Color.clut")),
     ("Green", include_bytes!("../data/color/Green.clut")),
-    ("Masks", include_bytes!("../data/color/Masks.clut")),
     ("New", include_bytes!("../data/color/New.clut")),
     ("Rock", include_bytes!("../data/color/Rock.clut")),
     ("Sand", include_bytes!("../data/color/Sand.clut")),

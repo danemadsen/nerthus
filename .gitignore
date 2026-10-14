@@ -1,3 +1,6 @@
 /target
 /tools
 .DS_Store
+
+# Images build_palettes.py downloads
+/crates/nerthus-nodes/data/color/.cache
