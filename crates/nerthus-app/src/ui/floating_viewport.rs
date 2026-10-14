@@ -51,6 +51,7 @@ pub fn manage(
     mut ui_state: ResMut<UiState>,
     mut windows: Query<(Entity, &mut Window), With<FloatingViewportWindow>>,
     interfaces: Query<Entity, With<FloatingViewportUi>>,
+    cameras: Query<(Entity, &RenderTarget), Without<FloatingViewportUi>>,
     mut main_interface: Single<&mut Camera, With<PrimaryEguiContext>>,
     viewport_camera: Single<Entity, With<ViewportCamera>>,
     monitors: Query<&Monitor>,
@@ -76,13 +77,22 @@ pub fn manage(
         clear_color: main_clear,
     };
     if !floating {
+        // Every camera drawing into the window (the 3D view's and the
+        // position handle's) goes back to the main window as the window
+        // goes: one left behind would look for the window that is gone.
+        for (camera, target) in &cameras {
+            if let RenderTarget::Window(WindowRef::Entity(window)) = target
+                && windows.contains(*window)
+            {
+                commands.entity(camera).insert(RenderTarget::Window(WindowRef::Primary));
+            }
+        }
         for (window, _) in &windows {
             commands.entity(window).despawn();
         }
         for interface in &interfaces {
             commands.entity(interface).despawn();
         }
-        commands.entity(*viewport_camera).insert(RenderTarget::Window(WindowRef::Primary));
         return;
     }
 
@@ -113,16 +123,17 @@ pub fn manage(
     commands.entity(*viewport_camera).insert(target);
 }
 
-/// Whether the floating window's interface has been styled yet.
+/// The interface whose context has been styled: each time the window
+/// opens, it opens with a new one.
 #[derive(Default)]
-pub struct Styled(bool);
+pub struct Styled(Option<Entity>);
 
 /// Draws the viewport area over the whole floating window and fits the
 /// 3D view into it; what it asks for runs with the main window's
 /// commands next frame.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
-    mut context: Single<&mut EguiContext, With<FloatingViewportUi>>,
+    context: Single<(Entity, &mut EguiContext), With<FloatingViewportUi>>,
     editor: Res<Editor>,
     mut ui_state: ResMut<UiState>,
     mut settings: ResMut<ViewportSettings>,
@@ -132,12 +143,13 @@ pub fn draw(
     window: Single<&Window, With<FloatingViewportWindow>>,
     mut styled: Local<Styled>,
 ) {
+    let (interface, mut context) = context.into_inner();
     let ctx = context.get_mut().clone();
-    if !styled.0 {
+    if styled.0 != Some(interface) {
         theme::apply(&ctx);
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
         egui_extras::install_image_loaders(&ctx);
-        styled.0 = true;
+        styled.0 = Some(interface);
         ctx.request_repaint();
         return;
     }

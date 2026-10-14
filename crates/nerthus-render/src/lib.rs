@@ -11,6 +11,7 @@ mod sky;
 mod terrain;
 mod turntable;
 
+use bevy::camera::{CameraUpdateSystems, RenderTarget};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 
@@ -54,6 +55,7 @@ impl Plugin for TerrainRenderPlugin {
         app.add_systems(Update, gizmo3d::update_handle.before(camera::strategy_camera));
         app.add_systems(Update, turntable::record_turntable.after(sky::update_sky));
         app.add_systems(PostUpdate, (screenshot::finish_captures, screenshot::take_screenshots).chain());
+        app.add_systems(PostUpdate, refresh_moved_cameras.before(CameraUpdateSystems));
     }
 }
 
@@ -82,6 +84,17 @@ fn setup_scene(
     helpers::spawn_helpers(&mut commands, &mut meshes, &mut materials, &mut images);
     sky::spawn_sky(&mut commands, &mut meshes, &mut materials);
     gizmo3d::spawn_handle(&mut commands, &mut meshes, &mut materials);
+}
+
+/// Bevy works a camera's window out again (its size, which sizes the
+/// textures the window's cameras share) when the camera's projection or
+/// viewport changes, but not when the camera moves to another window, as
+/// the 3D view's do when the floating viewport's window opens and closes.
+/// Marking the projection changed has it do so the frame the camera moves.
+fn refresh_moved_cameras(mut cameras: Query<&mut Projection, Changed<RenderTarget>>) {
+    for mut projection in &mut cameras {
+        projection.set_changed();
+    }
 }
 
 /// Behind the terrain: the viewport background (`SetSkyColor`), which the

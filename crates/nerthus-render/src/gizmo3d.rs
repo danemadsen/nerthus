@@ -244,10 +244,10 @@ fn drag_point(ray: Ray3d, drag: &HandleDrag) -> Option<Vec3> {
 }
 
 /// The view's camera as the handle reads it.
-type ViewQuery<'a> = (&'a Camera, &'a GlobalTransform, &'a Projection, Option<&'a RenderTarget>);
+type ViewQuery<'a> = (&'a Camera, &'a GlobalTransform, Ref<'a, Projection>, &'a RenderTarget);
 type ViewFilter = (With<ViewportCamera>, Without<HandleCamera>);
 /// The handle's own camera, made to match the view's.
-type HandleCameraQuery<'a> = (Entity, &'a mut Camera, &'a mut Transform, &'a mut Projection, Option<&'a RenderTarget>);
+type HandleCameraQuery<'a> = (&'a mut Camera, &'a mut Transform, &'a mut Projection, &'a mut RenderTarget);
 type HandleCameraFilter = (With<HandleCamera>, Without<ViewportCamera>, Without<HandleRoot>);
 type RootFilter = (With<HandleRoot>, Without<HandleCamera>);
 
@@ -264,23 +264,25 @@ pub(crate) fn update_handle(
     mut parts: Query<(&HandlePart, &mut Visibility, &Children), Without<HandleRoot>>,
     pieces: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut commands: Commands,
 ) {
     handle.started = false;
     handle.finished = false;
     handle.moved = None;
-    let (camera, camera_transform, projection, target) = *viewport;
-    let (handle_entity, mut handle_view, mut handle_transform, mut handle_projection, handle_target) = handle_camera.into_inner();
-    // The handle's camera sees what the view's camera sees.
+    let (camera, camera_transform, projection, target) = viewport.into_inner();
+    let (mut handle_view, mut handle_transform, mut handle_projection, mut handle_target) = handle_camera.into_inner();
+    // The handle's camera sees what the view's camera sees, in the same
+    // window.
     handle_view.viewport = camera.viewport.clone();
     handle_view.is_active = handle.shown.is_some();
     *handle_transform = camera_transform.compute_transform();
-    *handle_projection = projection.clone();
-    let wanted_target = target.cloned().unwrap_or_default();
     // `RenderTarget` cannot be compared; its description can.
-    let same_target = handle_target.is_some_and(|current| format!("{current:?}") == format!("{wanted_target:?}"));
-    if !same_target {
-        commands.entity(handle_entity).insert(wanted_target.clone());
+    if format!("{:?}", *handle_target) != format!("{target:?}") {
+        *handle_target = target.clone();
+    }
+    // Only when it changes: a changed projection has Bevy work the camera's
+    // window out again.
+    if projection.is_changed() {
+        *handle_projection = Projection::clone(&projection);
     }
 
     let Some((position, axes)) = handle.shown else {
@@ -294,7 +296,7 @@ pub(crate) fn update_handle(
     let size = distance * SIZE_PER_DISTANCE;
 
     // The pointer, in the window the view is in.
-    let window = match &wanted_target {
+    let window = match target {
         RenderTarget::Window(bevy::window::WindowRef::Entity(entity)) => windows.iter().find(|(candidate, ..)| candidate == entity),
         _ => windows.iter().find(|(.., primary)| *primary),
     };
