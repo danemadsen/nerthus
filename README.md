@@ -12,6 +12,62 @@ same heightfields, masks and colour maps that Gaea does.
 Nerthus is an independent project. It is not affiliated with or endorsed by
 the makers of Gaea.
 
+![The Nerthus editor](media/editor.png)
+
+## A look around
+
+A terrain is built as a graph of nodes. The viewport shows the selected node in
+3D as it builds, and the property panel beside it changes the node's settings.
+Most terrains take the same few steps: a shape to start from, simulations that
+wear it down, detail on its surface, then colour.
+
+![The Volcanic Isle example a node at a time: Volcano, ErosionPro, Sea, then its colour](media/workflow.gif)
+
+### Create
+
+Primitives and terrain nodes make the first shape: mountains, ranges, ridges,
+canyons, volcanoes, islands, dunes, craters and noises.
+
+![Volcano, MountainRange, DuneSea and CraterField](media/create.jpg)
+
+### Simulate
+
+Erosion, rivers, lakes, the sea, thermal erosion, snow and glaciers work the
+shape over.
+
+![ErosionPro, Lichtenberg, Snow and Glacier](media/simulate.jpg)
+
+### Surface
+
+Surface nodes add the rock: strata, terraces, sandstone, shattered stone and
+outcrops.
+
+![Stratify, Sandstone, Shatter and Outcrops](media/surface.jpg)
+
+### Colorize
+
+Colour nodes paint the terrain from palettes, gradients and the masks the
+other nodes make.
+
+![The Badlands example as a heightfield, and coloured by CLUTer](media/colorize.jpg)
+
+### Export
+
+Build and Export writes the nodes marked for export as heightfields, masks and
+colour maps (EXR, PNG, TIFF, JPEG or RAW), as one image each or as tiles.
+
+![Height, flow, wear, deposits and colour maps from the Erosion Data Maps example](media/maps.jpg)
+
+![Build Settings listing the nodes marked for export](media/build-settings.png)
+
+### Examples
+
+File › Open Examples… opens one of the 16 example projects Nerthus comes with.
+
+![The Fractal Terraces example turning in the viewport](media/turntable.gif)
+
+![The example projects](media/examples.jpg)
+
 ## Building
 
 Nerthus needs Rust 1.99 or newer. It is developed on macOS; Windows and Linux
@@ -90,6 +146,8 @@ assistants such as Claude Code can work on the open project: add and connect
 nodes, set parameters, build nodes and look at the results, and run Build and
 Export. Their edits show in the editor as they happen and can be undone.
 
+![A graph built over MCP: a Mountain, ErosionPro and SatelliteMap added, the Mountain's seed changed and the camera moved](media/mcp.gif)
+
 Turn it on with Tools › MCP Server (it stays on for later starts), or start
 the editor with `--mcp`. It listens on `http://127.0.0.1:47110/mcp`;
 `--mcp-port <port>` picks another port. To connect Claude Code:
@@ -163,7 +221,7 @@ These parts of Gaea 2.0 are not in Nerthus yet.
   (45 node icons, 13 family and toolbox icons, and interface icons).
   Nerthus shows Tabler icons in their place.
 - Gaea's overlay images and example projects. Nerthus draws its own overlay
-  patterns and ships 12 examples of its own.
+  patterns and ships 16 examples of its own.
 - Gaea's colour library. Nerthus's palettes are its own, taken from
   Sentinel-2 satellite imagery to look like Gaea's palette with the same
   number, so SatelliteMap, SuperColor, Cartography through a SatelliteMap,
