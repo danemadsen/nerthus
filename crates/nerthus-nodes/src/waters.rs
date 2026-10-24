@@ -303,6 +303,9 @@ pub struct LakesSettings {
     pub shore_size: f32,
     pub altitude_bias: f32,
     pub size_bias: f32,
+    /// Fill the terrain up to the water surface; off leaves the terrain as
+    /// it came in and only the masks show the lakes.
+    pub render_surface: bool,
 }
 
 /// What [`lakes`] returns.
@@ -334,11 +337,59 @@ pub fn lakes(heightmap: &Map, precipitation_map: Option<&Map>, settings: &LakesS
     let output = cw::erode_lakes(&engine, heightmap.data(), precipitation);
     let water: Vec<f32> = output.depth.iter().map(|&depth| if depth > 0.0 { 1.0 } else { 0.0 }).collect();
     let plane = |values: Vec<f32>| Map::from_data(Resolution::square(resolution.x), values);
+    let height = if settings.render_surface { plane(output.results) } else { heightmap.clone() };
     LakeMaps {
-        height: plane(output.results),
+        height,
         depth: plane(output.depth),
         shore: plane(output.shore),
         surface: plane(output.surface),
         water: plane(water),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A round basin: low in the middle, rising to the edges.
+    fn basin(size: usize) -> Map {
+        let centre = (size as f32 - 1.0) * 0.5;
+        let mut heights = Vec::with_capacity(size * size);
+        for y in 0..size {
+            for x in 0..size {
+                let dx = (x as f32 - centre) / centre;
+                let dy = (y as f32 - centre) / centre;
+                heights.push(0.2 + 0.5 * (dx * dx + dy * dy).min(1.0));
+            }
+        }
+        Map::from_data(Resolution::square(size), heights)
+    }
+
+    fn settings(render_surface: bool) -> LakesSettings {
+        LakesSettings {
+            precipitation: 10.0,
+            small_lakes: 0.0,
+            flood_control: true,
+            water_floor: 0.0,
+            shore_size: 0.25,
+            altitude_bias: 0.5,
+            size_bias: 0.0,
+            render_surface,
+        }
+    }
+
+    #[test]
+    fn without_the_surface_the_terrain_stays_as_it_came_in() {
+        let heightmap = basin(64);
+        let terrain = (5000.0, 2500.0);
+        let surfaced = lakes(&heightmap, None, &settings(true), terrain);
+        let masks_only = lakes(&heightmap, None, &settings(false), terrain);
+
+        assert!(surfaced.water.data().iter().any(|&wet| wet == 1.0), "the basin holds a lake");
+        assert_ne!(surfaced.height.data(), heightmap.data());
+        assert_eq!(masks_only.height.data(), heightmap.data());
+        assert_eq!(masks_only.water.data(), surfaced.water.data());
+        assert_eq!(masks_only.depth.data(), surfaced.depth.data());
+        assert_eq!(masks_only.surface.data(), surfaced.surface.data());
     }
 }

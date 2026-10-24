@@ -1183,6 +1183,7 @@ impl NodeBuilder for Lake {
             shore_size: context.f32("ShoreSize"),
             altitude_bias: context.f32("AltitudeBias"),
             size_bias: context.f32("SizeBias"),
+            render_surface: context.bool("RenderSurface"),
         };
         let terrain = (context.terrain_width(), context.terrain_height());
         let maps = waters::lakes(&input, precipitation.as_deref(), &settings, terrain);
