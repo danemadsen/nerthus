@@ -81,7 +81,8 @@ with plist_path.open("wb") as plist_file:
     plistlib.dump(bundle_info, plist_file)
 PY
 
-# Draw the same SVG as the Dock icon, with the same 100/1024 inset.
+# Draw the macOS icon (the logo's rune on a yellow tile in the rounded-square
+# icon shape) as the Dock icon does, with the same 100/1024 inset.
 # iconutil requires each point size at both 1x and 2x scale.
 iconset_dir="$staging_dir/nerthus.iconset"
 mkdir -p "$iconset_dir"
@@ -99,7 +100,7 @@ for point_size in 16 32 128 256 512; do
             --width "$artwork_size" --height "$artwork_size" \
             --page-width "$pixel_size" --page-height "$pixel_size" \
             --left "$inset" --top "$inset" \
-            --output "$icon_path" "$repo_root/crates/nerthus-app/assets/nerthus.svg"
+            --output "$icon_path" "$repo_root/crates/nerthus-app/assets/nerthus-macos.svg"
     done
 done
 iconutil --convert icns --output "$resources_dir/nerthus.icns" "$iconset_dir"

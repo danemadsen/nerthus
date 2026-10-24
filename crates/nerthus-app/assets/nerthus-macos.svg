@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The macOS app icon: the rune of nerthus.svg on a tile of the logo's
+     yellow, in the rounded-square shape of macOS app icons (macOS 26 puts
+     icons of any other shape on a light tile of this shape). The tile is an
+     824 square with continuous corners of radius 210; src/app_icon.rs and
+     packaging/package-macos.sh draw it with the 100/1024 margin of Apple's
+     icon grid. The rune keeps its proportions from the logo: the logo's
+     200-unit canvas, scaled by 4.12, puts its disc inside the tile. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="824" height="824" viewBox="0 0 824 824">
+  <path fill="#ffcc00" d="M 321.02 0 L 502.98 0 C 595.42 0 641.63 0 691.39 15.73 C 745.71 35.5 788.5 78.29 808.27 132.61 C 824 182.37 824 228.58 824 321.02 L 824 502.98 C 824 595.42 824 641.63 808.27 691.39 C 788.5 745.71 745.71 788.5 691.39 808.27 C 641.63 824 595.42 824 502.98 824 L 321.02 824 C 228.58 824 182.37 824 132.61 808.27 C 78.29 788.5 35.5 745.71 15.73 691.39 C 0 641.63 0 595.42 0 502.98 L 0 321.02 C 0 228.58 0 182.37 15.73 132.61 C 35.5 78.29 78.29 35.5 132.61 15.73 C 182.37 0 228.58 0 321.02 0 Z"/>
+  <g transform="translate(412 412) scale(4.12)" fill="none" stroke="#000000" stroke-width="16.72" stroke-linecap="round" stroke-linejoin="miter">
+    <path d="M -45.384126 -65.747569 L 0 0 L 45.384126 -65.747569"/>
+    <path d="M 0 -71.659147 V 71.659143"/>
+  </g>
+</svg>

@@ -1,12 +1,18 @@
-//! The app icon: assets/nerthus.svg drawn for the Dock on macOS and for the
-//! window and taskbar on Windows and X11 (Wayland compositors take icons from
-//! .desktop files instead). build.rs puts the same logo in the Windows
-//! executable for Explorer.
+//! The app icon: assets/nerthus.svg drawn for the window and taskbar on
+//! Windows and X11 (Wayland compositors take icons from .desktop files
+//! instead), and assets/nerthus-macos.svg, the logo's rune on a yellow tile
+//! in the rounded-square shape of macOS app icons, drawn for the Dock on
+//! macOS. build.rs puts the logo in the Windows executable for Explorer;
+//! packaging/package-macos.sh draws the macOS icon into the bundle's .icns.
 
 use bevy::prelude::*;
 use resvg::{tiny_skia, usvg};
 
+#[cfg(not(target_os = "macos"))]
 const LOGO_SVG: &[u8] = include_bytes!("../assets/nerthus.svg");
+
+#[cfg(target_os = "macos")]
+const MACOS_ICON_SVG: &[u8] = include_bytes!("../assets/nerthus-macos.svg");
 
 pub struct AppIconPlugin;
 
@@ -19,11 +25,11 @@ impl Plugin for AppIconPlugin {
     }
 }
 
-/// The logo drawn into a `size`² square, `inset` (a fraction of `size`) in
-/// from each side.
-fn render_logo(size: u32, inset: f32) -> Option<tiny_skia::Pixmap> {
+/// An icon's SVG drawn into a `size`² square, `inset` (a fraction of `size`)
+/// in from each side.
+fn render_icon(svg: &[u8], size: u32, inset: f32) -> Option<tiny_skia::Pixmap> {
     let options = usvg::Options::default();
-    let tree = match usvg::Tree::from_data(LOGO_SVG, &options) {
+    let tree = match usvg::Tree::from_data(svg, &options) {
         Ok(tree) => tree,
         Err(error) => {
             warn!("Cannot read the app icon: {error}");
@@ -32,12 +38,12 @@ fn render_logo(size: u32, inset: f32) -> Option<tiny_skia::Pixmap> {
     };
     let mut pixmap = tiny_skia::Pixmap::new(size, size)?;
 
-    // The logo's longer side fills the room inside the inset, centred.
-    let logo_size = tree.size();
+    // The drawing's longer side fills the room inside the inset, centred.
+    let drawing_size = tree.size();
     let room = size as f32 * (1.0 - 2.0 * inset);
-    let scale = room / logo_size.width().max(logo_size.height());
-    let left = (size as f32 - logo_size.width() * scale) / 2.0;
-    let top = (size as f32 - logo_size.height() * scale) / 2.0;
+    let scale = room / drawing_size.width().max(drawing_size.height());
+    let left = (size as f32 - drawing_size.width() * scale) / 2.0;
+    let top = (size as f32 - drawing_size.height() * scale) / 2.0;
     let transform = tiny_skia::Transform::from_row(scale, 0.0, 0.0, scale, left, top);
 
     resvg::render(&tree, transform, &mut pixmap.as_mut());
@@ -45,7 +51,9 @@ fn render_logo(size: u32, inset: f32) -> Option<tiny_skia::Pixmap> {
 }
 
 /// A bare executable has no bundle icon, so the Dock shows the generic
-/// executable icon until the application gives it an image.
+/// executable icon until the application gives it an image. The image is
+/// the tile-shaped macOS icon, not the round logo: macOS 26 puts an icon of
+/// any other shape on a light tile.
 #[cfg(target_os = "macos")]
 mod dock {
     use bevy::ecs::system::NonSendMarker;
@@ -56,13 +64,13 @@ mod dock {
 
     /// The Dock's largest: 256 points magnified, at 2x.
     const DOCK_ICON_SIZE: u32 = 512;
-    /// Apple's icon grid keeps the artwork to 824 of 1024 pixels, so the logo
+    /// Apple's icon grid keeps the artwork to 824 of 1024 pixels, so the tile
     /// matches the size of the other apps in the Dock.
     const DOCK_ICON_INSET: f32 = 100.0 / 1024.0;
 
     pub fn set_dock_icon(_main_thread: NonSendMarker) {
         let Some(main_thread) = MainThreadMarker::new() else { return };
-        let Some(pixmap) = super::render_logo(DOCK_ICON_SIZE, DOCK_ICON_INSET) else { return };
+        let Some(pixmap) = super::render_icon(super::MACOS_ICON_SVG, DOCK_ICON_SIZE, DOCK_ICON_INSET) else { return };
         let png = match pixmap.encode_png() {
             Ok(png) => png,
             Err(error) => {
@@ -138,7 +146,7 @@ mod window_icons {
 
     /// The logo as straight-alpha RGBA, which winit wants.
     fn icon(size: u32) -> Option<Icon> {
-        let pixmap = super::render_logo(size, 0.0)?;
+        let pixmap = super::render_icon(super::LOGO_SVG, size, 0.0)?;
         let mut rgba = Vec::with_capacity(pixmap.data().len());
         for pixel in pixmap.pixels() {
             let color = pixel.demultiply();
